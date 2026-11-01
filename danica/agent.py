@@ -20,7 +20,9 @@ from danica.llm import stream_chat
 from danica.tools import run_tool, tool_schemas
 from danica.workspace import Workspace
 from danica.config import CONFIG
-from danica.context import ContextTracker
+from danica.compaction import (build_message, fallback_narrative, find_cut, harvest,
+                               is_summary, render, summarize)
+from danica.context import CHARS_PER_TOKEN, ContextTracker, estimate_tokens
 from danica.permissions import PermissionPolicy, classify
 from danica.audit import AuditLog
 from danica.secret_scan import redact
@@ -92,6 +94,14 @@ class Agent:
         # Tracks how full the context window is (exactly numbers from the server)
         self.tracker = ContextTracker(CONFIG["model"]["context"])
 
+        # Compaction state: the model-written narrative, plus facts the harness
+        # collects itself. They roll forward across every compaction.
+        self.summary = ""
+        self.user_requests: list[str] = []
+        self.files_changed: list[str] = []
+        self.files_read: list[str] = []
+        self.compactions = 0
+
         # Decides whether each tool call may run (asks the user when needed)
         self.policy = policy or PermissionPolicy()
         # Consecutive permissions denials. Two "no"s in a row means the user is
@@ -102,12 +112,16 @@ class Agent:
 
     # ------------------------------------------------------------------ helpers
 
+    def _write_transcript(self, record: dict) -> None:
+        """Append one JSON line to the transcript (messages, and event records)."""
+        if self.transcript_path:
+            with open(self.transcript_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
     def _add(self, message: dict) -> None:
         """Append a message to the conversation AND to the JSONL transcript."""
         self.messages.append(message)
-        if self.transcript_path:
-            with open(self.transcript_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(message, ensure_ascii=False) + "\n")
+        self._write_transcript(message)
 
     def _messages_for_model(self) -> list[dict]:
         """The history PLUS the current TODO.md as a final message.
@@ -170,6 +184,56 @@ class Agent:
             self._log("prune", changed=changed, saved_tokens=saved)
             self.on_event("notice", f"[context] pruned {changed} old item(s), freed ~{saved:,} tokens")
         return changed
+
+    def compact(self) -> bool:
+        """Replace the old part of the conversation with a summary.
+        Returns False if there was nothing worth summarizing."""
+        window = self.tracker.window
+        cut = find_cut(self.messages, int(window * CONFIG["compaction"]["tail_fraction"]))
+        if cut is None:
+            return False
+
+        self.on_event("notice", "[context] compacting: summarizing earlier messages (takes a moment)...")
+        before = self.tracker.used(self.messages)
+        old = self.messages[1:cut]                        # index 0 is the system prompt
+        tail = self.messages[cut:]
+        body = [m for m in old if not is_summary(m)]      # the old summary is rolled in via self.summary
+
+        # Facts collected by CODE: the model can't forget or invent these
+        requests, changed, read = harvest(body)
+        self.user_requests = list(dict.fromkeys(self.user_requests + requests))
+        self.files_changed = list(dict.fromkeys(self.files_changed + changed))
+        self.files_read = list(dict.fromkeys(self.files_read + read))
+
+        # The summarizer prompt may use at most 40% of the window
+        max_chars = int(window * 0.4 * CHARS_PER_TOKEN)
+        narrative, problem = summarize(self.summary, render(body, max_chars))
+        if narrative is None:
+            narrative = fallback_narrative(self.summary, body)
+            self.on_event("notice", f"[context] summarizer failed ({problem}); used a basic summary instead")
+        self.summary = narrative
+
+        msg = build_message(self.summary, self.user_requests, self.files_changed, self.files_read)
+        removed = estimate_tokens(old)
+        self.messages = [self.messages[0], msg] + tail
+        self.compactions += 1
+
+        # The exact size is unknown until the server answers again, so estimate it
+        # from the old exact number. The next model call replaces this guess.
+        after = max(before - removed + estimate_tokens([msg]), 0)
+        self.tracker.record(after, len(self.messages))
+
+        # The transcript keeps the full history; this marker lets /resume rebuild
+        # the same state later (replace everything but the last tail_len messages).
+        self._write_transcript({"event": "compaction", "tail_len": len(tail), "summary": msg["content"]})
+        if self.transcript_path:
+            folder = self.transcript_path.parent / "summaries"
+            folder.mkdir(exist_ok=True)
+            (folder / f"{self.compactions:03d}.md").write_text(msg["content"], encoding="utf-8")
+        self._log("compact", number=self.compactions, tokens_before=before,
+                  tokens_after=after, summarizer_ok=problem == "" or narrative is not None)
+        self.on_event("notice", f"[context] compacted: {before:,} -> about {after:,} tokens")
+        return True
 
     def _execute(self, call: dict) -> str:
         """Parse one tool call, check permission, run it, scrub the output. Returns a string."""
@@ -237,18 +301,18 @@ class Agent:
         nudged = False          # the open-TODO reminder is sent at most once per request
 
         for _ in range(self.max_steps):
-            # Tiered pressure: at 60%+ trim old tool output first
+            # Tiered pressure: prune first, compact only if pruning was not enough
             if self.tracker.level(self.messages) != "ok":
                 self.prune()
-                # Still near the limit? Be more aggressive: keep only 2 recent results.
                 if self.tracker.level(self.messages) in ("compact", "stop"):
-                    self.prune(keep_recent=2)
+                    self.prune(keep_recent=2)     # more aggressive second pass
+                if self.tracker.level(self.messages) in ("compact", "stop"):
+                    self.compact()
 
-            # Hard stop: a call at 90%+ could overflow the window.
-            # (Compaction, built next, will rescue this case.)
+            # Hard stop: a call at 90%+ could overflow the window
             if self.tracker.level(self.messages) == "stop":
-                return ("[stopped: context is still 90% full after pruning. Compaction arrives "
-                        "in the next chunk; for now use /undo or start a new session.]")
+                return ("[stopped: context is still 90% full even after pruning and compaction. "
+                        "Use /undo or start a new session.]")
             content, calls = self._model_turn()
 
             # Build the assistant message exactly as the API expects it

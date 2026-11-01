@@ -20,6 +20,7 @@ from danica.permissions import PermissionPolicy, Tier
 from danica.audit import AuditLog, verify
 from danica.checkpoints import CheckpointError, Checkpoints
 from danica.tools.todo import read_todo
+from danica.compaction import is_summary
 
 console = Console()
 
@@ -218,6 +219,18 @@ def main() -> None:
             # Manual prune, keeping only the 2 newest tool results (handy for testing)
             if not agent.prune(keep_recent=2):
                 console.print("nothing to prune", style="yellow", markup=False)
+            continue
+
+        if text == "/compact":
+            if not agent.compact():
+                console.print("nothing worth compacting yet", style="yellow", markup=False)
+            continue
+        if text == "/summary":
+            # The summary message always sits right after the system prompt
+            if len(agent.messages) > 1 and is_summary(agent.messages[1]):
+                console.print(agent.messages[1]["content"], markup=False)
+            else:
+                console.print("(no compaction has happened yet)", markup=False)
             continue
 
 

@@ -17,6 +17,7 @@ DEFAULTS = {
     "model": {"context": 65536},
     "sandbox": {"memory_mb": 2048, "max_processes": 64},
     "pruning": {"keep_recent": 6, "min_chars": 400},
+    "compaction": {"tail_fraction": 0.12},
 }
 
 def load_config() -> dict:
