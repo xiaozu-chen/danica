@@ -24,6 +24,7 @@ from danica.context import ContextTracker
 from danica.permissions import PermissionPolicy, classify
 from danica.audit import AuditLog
 from danica.secret_scan import redact
+from danica.checkpoints import Checkpoints
 
 SYSTEM_PROMPT = """You are Danica, a careful coding assistant running locally in a terminal on Windows.
 You work inside a workspace folder. All file paths are relative to it.
@@ -70,6 +71,7 @@ class Agent:
         on_event: EventCallback | None = None,
         policy: PermissionPolicy | None = None,
         audit: AuditLog | None = None,
+        checkpoints: Checkpoints | None = None,
         
     ):
         self.ws = ws
@@ -91,6 +93,7 @@ class Agent:
         # telling us to stop, so we hand control back instead of probing more.
         self.denied_in_row = 0
         self.audit = audit # None = no logging (tests)
+        self.checkpoints = checkpoints # None = no /undo support (tests)
 
     # ------------------------------------------------------------------ helpers
 
@@ -176,6 +179,13 @@ class Agent:
 
     def run(self, user_text: str) -> str:
         """Handle one user request. Returns the model's final text answer."""
+        # Snapshot the workspace BEFORE anything changes, so /undo can return here
+        if self.checkpoints and self.checkpoints.available:
+            try:
+                snap = self.checkpoints.begin_request(user_text)
+                self._log("checkpoint", id=snap)
+            except Exception as e: # a failed snapshot must never block the user's work
+                self.on_event("notice", f"WARNING: checkpoint failed ({e}). /undo will not cover this")
         self._add({"role": "user", "content": user_text})
 
         self.denied_in_row = 0

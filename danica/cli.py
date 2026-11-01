@@ -18,6 +18,7 @@ from danica.workspace import Workspace
 from danica.context import breakdown
 from danica.permissions import PermissionPolicy, Tier
 from danica.audit import AuditLog, verify
+from danica.checkpoints import CheckpointError, Checkpoints
 
 console = Console()
 
@@ -50,6 +51,9 @@ def make_event_printer():
             if len(preview) > 400:
                 preview = preview[:400] + f"... ({len(str(data)) - 400} more chars)"
             console.print(preview, style="dim", markup=False, highlight=False)
+        elif kind == "notice":
+            newline_if_needed()
+            console.print(data, style="yellow", markup=False)
 
     def finish() -> None:
         newline_if_needed()
@@ -89,6 +93,13 @@ def main() -> None:
     audit = AuditLog(APP_DIR / "logs" / "audit.jsonl", session=session_id)
     audit.append("session_start", workspace=str(ws.root))
 
+    # Shadow git repo lives OUTSIDE the workspace, so the model can never touch it
+
+    checkpoints = Checkpoints(ws, session_dir / "checkpoints" / "git")
+    if not checkpoints.available:
+        console.print("git was not found, so /undo and /    rewind are disabled. "
+                      "Install it with: winget install Git.Git", style="yellow", markup=False)
+
     on_event, finish = make_event_printer()
     policy = PermissionPolicy(ask=make_ask(finish))
     agent = Agent(
@@ -96,7 +107,8 @@ def main() -> None:
         transcript_path=session_dir / "transcript.jsonl",
         on_event=on_event,
         policy=policy,
-        audit=audit
+        audit=audit,
+        checkpoints=checkpoints,
     )
 
     # FileHistory gives up-arrow recall across restarts
@@ -155,6 +167,28 @@ def main() -> None:
             else:
                 console.print("full access off", style="yellow", markup=False)
             continue
+        if text.split()[0] in ("/undo", "/rewind"):
+            if not checkpoints.available:
+                console.print("checkpoints are disabled (git not found)", style="yellow", markup=False)
+                continue
+            parts = text.split()
+            try:
+                if parts[0] == "/undo":
+                    summary, safety = checkpoints.undo()
+                elif len(parts) == 1:
+                    # "/rewind" on its own just lists recent checkpoints
+                    for ident, when, label in checkpoints.list_checkpoints():
+                        console.print(f"{ident} {when} {label}", markup=False, highlight=False)
+                    continue
+                else:
+                    summary, safety = checkpoints.rewind(parts[1])
+                console.print(summary, style="green", markup=False)
+                if safety:
+                    audit.append("restore", command=parts[0], safety=safety)
+            except CheckpointError as e:
+                console.print(f"ERROR: {e}", style="red", markup=False)
+            continue
+
 
         # --- normal request: hand it to the agent ---
         try:
