@@ -25,6 +25,9 @@ from danica.permissions import PermissionPolicy, classify
 from danica.audit import AuditLog
 from danica.secret_scan import redact
 from danica.checkpoints import Checkpoints
+from danica.pruning import prune_messages
+from danica.tools.todo import read_todo
+from danica.tools.todo import counts, open_items, read_todo
 
 SYSTEM_PROMPT = """You are Danica, a careful coding assistant running locally in a terminal on Windows.
 You work inside a workspace folder. All file paths are relative to it.
@@ -38,6 +41,8 @@ Rules:
 - If a tool returns ERROR, read the message and correct your call.
 - Keep going until the task is done, then reply with a short summary.
 - The shell has a deliberately minimal environment: variables like APPDATA or API keys are NOT available. Empty output for an environment variable is expected, so do not try to work around it.
+- Old tool results and file contents in earlier messages may be replaced by short [pruned] notes to save space. Never copy a [pruned] note into a file or a command. If you need the content again, read the file or re-run the tool.
+- For any task with three or more steps, first call the todo tool with action "set": a goal line plus a checklist of "- [ ]" steps. Tick each step off with action "done" (item "2", or "1,2,3") right after you finish it, not at the end. Your TODO is shown to you again every turn; trust it over your memory. Skip it for simple one-step requests. If the TODO belongs to an old, unrelated task, call action "clear".
 """
 
 # Callback signature: on_event(kind, data). Kinds used below:
@@ -104,6 +109,23 @@ class Agent:
             with open(self.transcript_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(message, ensure_ascii=False) + "\n")
 
+    def _messages_for_model(self) -> list[dict]:
+        """The history PLUS the current TODO.md as a final message.
+        Built fresh on every call and never stored: the scratchpad is always
+        the latest version, never duplicated, and never pruned or compacted.
+        Role is "user" because Qwen's chat template only allows a system
+        message at the very start."""
+        text = read_todo(self.ws)
+        if not text:
+            return self.messages
+        note = {
+            "role": "user",
+            "content": ("[TODO.md: your current plan, shown again every turn. This is a reminder "
+                        "from the harness, not a new request from the user. Update it with the "
+                        "todo tool.]\n" + text),
+        }
+        return self.messages + [note]   # new list: self.messages itself is not modified
+
     def _model_turn(self) -> tuple[str, list[dict]]:
         """Call the model once; stream text to the UI; return (content, tool_calls)."""
         content_parts: list[str] = []
@@ -112,7 +134,7 @@ class Agent:
         msg_count = len(self.messages)
 
         for piece in stream_chat(
-            self.messages,
+            self._messages_for_model(),
             thinking=self.thinking,
             temperature=0.3,       # low: tool calls should be steady, not creative
             max_tokens=4096,
@@ -137,6 +159,17 @@ class Agent:
         "Write an audit entry if auditing is on."
         if self.audit:
             self.audit.append(event, **data)
+
+    def prune(self, keep_recent: int | None = None) -> int:
+        """Replace old tool output with stubs. Returns how many items changed."""
+        cfg = CONFIG["pruning"]
+        keep = cfg["keep_recent"] if keep_recent is None else keep_recent
+        changed, saved = prune_messages(self.messages, keep, cfg["min_chars"])
+        if changed:
+            self.tracker.adjust(saved)   # keep the exact-count bookkeeping honest
+            self._log("prune", changed=changed, saved_tokens=saved)
+            self.on_event("notice", f"[context] pruned {changed} old item(s), freed ~{saved:,} tokens")
+        return changed
 
     def _execute(self, call: dict) -> str:
         """Parse one tool call, check permission, run it, scrub the output. Returns a string."""
@@ -186,6 +219,12 @@ class Agent:
                 self._log("checkpoint", id=snap)
             except Exception as e: # a failed snapshot must never block the user's work
                 self.on_event("notice", f"WARNING: checkpoint failed ({e}). /undo will not cover this")
+                # A finished (or empty) plan from the previous request must not leak into
+        # this one. An UNFINISHED plan stays, so "continue" still works.
+        if self.ws.todo_path and self.ws.todo_path.exists():
+            total, done = counts(read_todo(self.ws))
+            if total == 0 or done == total:
+                self.ws.todo_path.unlink()
         self._add({"role": "user", "content": user_text})
 
         self.denied_in_row = 0
@@ -195,12 +234,21 @@ class Agent:
 
         last_signature = None   # what the previous step called
         repeats = 0             # how many steps in a row had the identical calls
+        nudged = False          # the open-TODO reminder is sent at most once per request
 
         for _ in range(self.max_steps):
-            # Hard stop: a call at 90&+ could overflow the window and crash the server.
-            # (Phase 3 replaces this with pruning and compaction.)
+            # Tiered pressure: at 60%+ trim old tool output first
+            if self.tracker.level(self.messages) != "ok":
+                self.prune()
+                # Still near the limit? Be more aggressive: keep only 2 recent results.
+                if self.tracker.level(self.messages) in ("compact", "stop"):
+                    self.prune(keep_recent=2)
+
+            # Hard stop: a call at 90%+ could overflow the window.
+            # (Compaction, built next, will rescue this case.)
             if self.tracker.level(self.messages) == "stop":
-                return ("[stopped: context is 90% full. Compaction arrives in Phase 3; for now start a new session.]")
+                return ("[stopped: context is still 90% full after pruning. Compaction arrives "
+                        "in the next chunk; for now use /undo or start a new session.]")
             content, calls = self._model_turn()
 
             # Build the assistant message exactly as the API expects it
@@ -218,6 +266,17 @@ class Agent:
 
             # No tool calls = the model considers the task finished
             if not calls:
+                # ...but if the plan still has open items, ask ONCE whether that is
+                # really true. Small models forget to tick things off.
+                left = open_items(read_todo(self.ws))
+                if left and not nudged:
+                    nudged = True
+                    self._add({"role": "user", "content": (
+                        "[harness reminder, not from the user] Your TODO.md still has open "
+                        f"items: {', '.join(map(str, left))}. If they are finished, tick them "
+                        "with the todo tool (action 'done', item like '1,2,3'). If not, keep "
+                        "working. Then give your final summary.")})
+                    continue
                 return content
 
             # Repeat detector: same tool + same arguments, step after step

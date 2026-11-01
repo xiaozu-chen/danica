@@ -51,6 +51,12 @@ class ContextTracker:
         self.known_tokens = prompt_tokens
         self.known_count = message_count
 
+    def adjust(self, saved: int) -> None:
+        """Subtraction tokens freed by pruning from the last exact count.
+        Message COUNT is unchanged (we edit in place), so known_count stays valid."""
+        if self.known_tokens is not None:
+            self.known_tokens = max(0, self.known_tokens - saved)
+
     def used(self, messages: list[dict]) -> int:
         """Best current estimate of how many tokens the next call would send."""
         if self.known_tokens is None:

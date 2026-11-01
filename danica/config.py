@@ -16,6 +16,7 @@ DEFAULTS = {
     "server": {"base_url": "http://127.0.0.1:8080"},
     "model": {"context": 65536},
     "sandbox": {"memory_mb": 2048, "max_processes": 64},
+    "pruning": {"keep_recent": 6, "min_chars": 400},
 }
 
 def load_config() -> dict:
@@ -25,7 +26,7 @@ def load_config() -> dict:
     cfg = {section: dict(values) for section, values in DEFAULTS.items()}
 
     if CONFIG_PATH.exists():
-        with open(CONFIG_PATH, "rb") as f: # tomllib needs binary mode
+        with open(CONFIG_PATH, "rb") as f:  # tomllib needs binary mode
             user = tomllib.load(f)
         # Merge section by section so a partial file doesn't wipe defaults
         for section, values in user.items():

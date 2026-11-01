@@ -34,6 +34,7 @@ TOOL_TIERS = {
     "write_file": Tier.WRITE,
     "edit_file": Tier.WRITE,
     "run_shell": Tier.EXECUTE,
+    "todo": Tier.WRITE,
 }
 
 # (regex, reason) pairs for commands that can destroy things or pull in code.

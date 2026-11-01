@@ -19,6 +19,7 @@ from danica.context import breakdown
 from danica.permissions import PermissionPolicy, Tier
 from danica.audit import AuditLog, verify
 from danica.checkpoints import CheckpointError, Checkpoints
+from danica.tools.todo import read_todo
 
 console = Console()
 
@@ -87,7 +88,7 @@ def main() -> None:
     # Every run is a new session: sessions/<id>/{workspace/, transcript.jsonl}
     session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
     session_dir = APP_DIR / "sessions" / session_id
-    ws = Workspace(session_dir / "workspace")
+    ws = Workspace(session_dir / "workspace", todo_path=session_dir / "TODO.md")
 
     # One audit log for ALL sessions, so the chain spans everything Danica ever did
     audit = AuditLog(APP_DIR / "logs" / "audit.jsonl", session=session_id)
@@ -204,6 +205,21 @@ def main() -> None:
                 markup=False
             )
             continue
+        if text.split()[0] == "/todo":
+            if text.split()[1:] == ["clear"]:
+                if ws.todo_path and ws.todo_path.exists():
+                    ws.todo_path.unlink()
+                console.print("TODO cleared", style="yellow", markup=False)
+            else:
+                console.print(read_todo(ws) or "(no TODO yet)", markup=False)
+            continue
+
+        if text == "/prune":
+            # Manual prune, keeping only the 2 newest tool results (handy for testing)
+            if not agent.prune(keep_recent=2):
+                console.print("nothing to prune", style="yellow", markup=False)
+            continue
+
 
 
         # --- normal request: hand it to the agent ---

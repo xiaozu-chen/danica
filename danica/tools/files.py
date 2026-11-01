@@ -38,6 +38,11 @@ def _protected(ws: Workspace, p) -> str | None:
 
 def _secret_check(text: str) -> str | None:
     """Error message if text contains something that looks like a real secret."""
+    # Not a secret check, but this is the one gate every written text passes
+    # through: refuse the model copying a pruning stub into a real file.
+    if text.lstrip().startswith("[pruned"):
+        return ("ERROR: refused to write this: it is a [pruned] placeholder, not real "
+                "content. Read the file or re-run the tool to get the real content first.")
     kinds = sorted({kind for kind, _, _ in find_secrets(text)})
     if kinds:
         return (f"ERROR: refused to write this: it contains what looks like a secret "
