@@ -7,7 +7,7 @@ Ctrl+C stops the current task. Ctrl+D or /exit quits.
 
 from datetime import datetime
 
-from prompt_toolkit import PromptSession
+from prompt_toolkit import PromptSession, prompt
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.formatted_text import HTML
 from rich.console import Console
@@ -16,6 +16,7 @@ from danica.agent import Agent
 from danica.config import APP_DIR
 from danica.workspace import Workspace
 from danica.context import breakdown
+from danica.permissions import PermissionPolicy, Tier
 
 console = Console()
 
@@ -55,16 +56,40 @@ def make_event_printer():
     return on_event, finish
 
 
+def make_ask(finish):
+    """Build the callback that asks the user for permission in the terminal."""
+
+    def ask(tool: str, summary: str, tier: Tier, reason: str, can_remember: bool) -> str:
+        finish() # make sure we're on a fresh line after streamed text
+        console.print(f"Permission needed ({tier.value}): {reason}", style="bold yellow", markup=False)
+        console.print(summary, style="yellow", markup=False, highlight=False)
+        options = "[y] once  [s] this session  [n] deny" if can_remember else "[y] once [n] deny"
+        while True:
+            try:
+                answer = prompt(f"{options} > ").strip().lower()
+            except EOFError:
+                return "deny" # Ctrl+D = no
+            if answer in ("y", "yes"):
+                return "once"
+            if answer in ("s", "session") and can_remember:
+                return "session"
+            if answer in ("n", "no", ""): # Enter alone = deny (safe default)
+                return "deny"
+    return ask
+
+
 def main() -> None:
     # Every run is a new session: sessions/<timestamp>/{workspace/, transcript.jsonl}
     session_dir = APP_DIR / "sessions" / datetime.now().strftime("%Y%m%d-%H%M%S")
     ws = Workspace(session_dir / "workspace")
 
     on_event, finish = make_event_printer()
+    policy = PermissionPolicy(ask=make_ask(finish))
     agent = Agent(
         ws,
         transcript_path=session_dir / "transcript.jsonl",
         on_event=on_event,
+        policy=policy,
     )
 
     # FileHistory gives up-arrow recall across restarts
@@ -75,6 +100,8 @@ def main() -> None:
         level = agent.tracker.level(agent.messages)
         color = {"ok": "ansigreen", "prune": "ansiyellow", "compact": "ansiyellow", "stop": "ansired"}[level]
         mode = "think" if agent.thinking else "fast"
+        if policy.full_access:
+            mode += " | FULL ACCESS" # loud on purpose
         return HTML(f'<style fg="{color}">ctx {agent.tracker.bar(agent.messages)}</style> |{mode}')
 
     console.print("[bold]Danica[/bold] ready. /think toggles thinking, /ws shows the workspace, /context to show usage /exit quits.")
@@ -106,11 +133,22 @@ def main() -> None:
             for role, tokens in sorted(breakdown(agent.messages).items(), key=lambda kv: -kv[1]):
                 console.print(f"  {role:<10} ~{tokens:,} tokens", markup=False)
             continue
+        if text == "/fullaccess":
+            policy.full_access = not policy.full_access
+            if policy.full_access:
+                console.print("FULL ACCESS ON: Danica can run ANY command without asking. /fullaccess again to turn it off.", style="bold red", markup=False)
+            else:
+                console.print("full access off", style="yellow", markup=False)
+            continue
 
         # --- normal request: hand it to the agent ---
         try:
-            agent.run(text)
+            result = agent.run(text)
             finish()
+            # Normal answers were already streamed to the screen; only the
+            # harness's "[stopped: ...]" notices still need printing
+            if result.startswith("[stopped]"):
+                console.print(result, style="yellow", markup=False)
         except KeyboardInterrupt:
             finish()
             console.print("[interrupted]", style="yellow", markup=False)

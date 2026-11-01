@@ -21,6 +21,7 @@ from danica.tools import run_tool, tool_schemas
 from danica.workspace import Workspace
 from danica.config import CONFIG
 from danica.context import ContextTracker
+from danica.permissions import PermissionPolicy
 
 SYSTEM_PROMPT = """You are Danica, a careful coding assistant running locally in a terminal on Windows.
 You work inside a workspace folder. All file paths are relative to it.
@@ -32,7 +33,9 @@ Rules:
 - run_shell uses Windows PowerShell. Use it to run code and tests (python is available).
 - After writing code, run it to check that it works, and fix any errors you see.
 - If a tool returns ERROR, read the message and correct your call.
-- Keep going until the task is done, then reply with a short summary."""
+- Keep going until the task is done, then reply with a short summary.
+- The shell has a deliberately minimal environment: variables like APPDATA or API keys are NOT available. Empty output for an environment variable is expected, so do not try to work around it.
+"""
 
 # Callback signature: on_event(kind, data). Kinds used below:
 #   "thinking" / "content"  -> data is a streamed text fragment
@@ -49,6 +52,8 @@ class Agent:
         thinking: bool = False,
         max_steps: int = 25,
         on_event: EventCallback | None = None,
+        policy: PermissionPolicy | None = None,
+        
     ):
         self.ws = ws
         self.thinking = thinking
@@ -62,6 +67,12 @@ class Agent:
 
         # Tracks how full the context window is (exactly numbers from the server)
         self.tracker = ContextTracker(CONFIG["model"]["context"])
+
+        # Decides whether each tool call may run (asks the user when needed)
+        self.policy = policy or PermissionPolicy()
+        # Consecutive permissions denials. Two "no"s in a row means the user is
+        # telling us to stop, so we hand control back instead of probing more.
+        self.denied_in_row = 0
 
     # ------------------------------------------------------------------ helpers
 
@@ -102,7 +113,7 @@ class Agent:
         return "".join(content_parts), calls
 
     def _execute(self, call: dict) -> str:
-        """Parse the arguments of one tool call and run it. Always returns a string."""
+        """Parse one tool call, check permission, run it. Always returns a string."""
         raw = call["arguments"] or "{}"
         try:
             args = json.loads(raw)
@@ -112,7 +123,16 @@ class Agent:
             self.on_event("tool_call", (call["name"], raw))
             return f"ERROR: could not parse tool arguments as a JSON object ({e}). Try again."
 
+        # Show the call BEFORE asking, so the user sees what is being approved
         self.on_event("tool_call", (call["name"], args))
+
+        allowed, denial = self.policy.check(call["name"], args)
+        if not allowed:
+            self.denied_in_row += 1
+            return denial  # the model reads this and adapts
+
+        self.denied_in_row = 0 # any approved action breaks the streak
+
         return run_tool(call["name"], args, self.ws)
 
     # ---------------------------------------------------------------- main loop
@@ -120,6 +140,8 @@ class Agent:
     def run(self, user_text: str) -> str:
         """Handle one user request. Returns the model's final text answer."""
         self._add({"role": "user", "content": user_text})
+
+        self.denied_in_row = 0
 
         last_signature = None   # what the previous step called
         repeats = 0             # how many steps in a row had the identical calls
@@ -172,5 +194,8 @@ class Agent:
                 self.on_event("tool_result", result)
                 self._add({"role": "tool", "tool_call_id": call["id"], "content": result})
 
+            # Circuit breaker: the user said no twice, so stop and ask them
+            if self.denied_in_row >= 2:
+                return "[stopped: you denied two actions in a row. Tell Danica what to do instead.]"
         return f"[stopped: reached the limit of {self.max_steps} steps]"
     
