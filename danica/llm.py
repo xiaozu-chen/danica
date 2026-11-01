@@ -10,8 +10,10 @@ from typing import Iterator
 
 import httpx
 
-# Where llama-server is listening. Will move to config.toml in a later step.
-BASE_URL = "http://127.0.0.1:8080"
+from danica.config import CONFIG
+
+# Where llama-server is listening (comes from config.toml, or the default)
+BASE_URL = CONFIG["server"]["base_url"]
 
 
 def stream_chat(
@@ -66,3 +68,20 @@ def stream_chat(
                     yield {"type": "thinking", "text": delta["reasoning_content"]}
                 if delta.get("content"):
                     yield {"type": "content", "text": delta["content"]}
+
+def chat(
+        messages: list[dict],
+        thinking: bool = False,
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+) -> dict:
+    """
+    Non-streaming convenience wrapper: runs stream_chat and collects everything.
+    Return {"thinking": "...", "content": "..."}.
+    Temperature default to 0 so eval runs are as repeatable as possible.
+    """
+    thinking_parts, content_parts = [], []
+    for piece in stream_chat(messages, thinking, temperature, max_tokens):
+        (thinking_parts if piece["type"] == "thinking" else content_parts).append(piece["text"])
+
+    return {"thinking": "".join(thinking_parts), "content": "".join(content_parts)}

@@ -1,0 +1,37 @@
+"""
+config.py - Loads settings from %APPDATA%/Danica/config.toml.
+
+Anything the user doesn't set falls back to DEFAULTS, so the file is optional.
+"""
+
+import os
+import tomllib # built into Python 3.11+, read-only TOML parser
+from pathlib import Path
+
+# Danica's home folder (matches the on-disk layout in PROJECT.md)
+APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / "Danica"
+CONFIG_PATH = APP_DIR / "config.toml"
+
+DEFAULTS = {
+    "server": {"base_url": "http://127.0.0.1:8080"},
+    "model": {"context": 65536},
+}
+
+def load_config() -> dict:
+    APP_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Copy defaults so we never mutate the module-level constant
+    cfg = {section: dict(values) for section, values in DEFAULTS.items()}
+
+    if CONFIG_PATH.exists():
+        with open(CONFIG_PATH, "rb") as f: # tomllib needs binary mode
+            user = tomllib.load(f)
+        # Merge section by section so a partial file doesn't wipe defaults
+        for section, values in user.items():
+            cfg.setdefault(section, {}).update(values)
+    return cfg
+
+
+# Loaded once at import; everything else does `from danica.config import CONFIG`
+CONFIG = load_config()
+
