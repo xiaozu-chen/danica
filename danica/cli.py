@@ -13,7 +13,7 @@ from prompt_toolkit.formatted_text import HTML
 from rich.console import Console
 
 from danica.agent import Agent
-from danica.config import APP_DIR
+from danica.config import APP_DIR, CONFIG
 from danica.workspace import Workspace
 from danica.context import breakdown
 from danica.permissions import PermissionPolicy, Tier
@@ -187,6 +187,22 @@ def main() -> None:
                     audit.append("restore", command=parts[0], safety=safety)
             except CheckpointError as e:
                 console.print(f"ERROR: {e}", style="red", markup=False)
+            continue
+        if text == "/sandbox":
+            sb = CONFIG["sandbox"]
+            console.print(
+                "Shell sandbox\n"
+                "  level 1: workspace path jail for file tools, stripped environment variables,\n"
+                "           timeout, output cap, permission prompts\n"
+                f"  level 2: Job Object: {sb['memory_mb']} MB memory cap, {sb['max_processes']} process,\n"
+                "           whole process tree killed on timeout/exit/crash, no clipboard/desktop access\n"
+                "  level 3: Docker/WSL isolation: not built yet\n"
+                "\n"
+                "What this does NOT stop: a command reading or writing files outside the\n "
+                "workspace (only the permission prompts guard that), network access, CPU use.\n"
+                f"Full access: {'ON' if policy.full_access else 'off'}",
+                markup=False
+            )
             continue
 
 

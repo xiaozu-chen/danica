@@ -140,7 +140,8 @@ class Checkpoints:
         lines = [f"Restored the workspace to: {label}"]
         rows = changes.splitlines()
         if not rows:
-            lines.append("No files were different (that request did not change any files).")
+            lines.append("No net file changes: the workspace looked the same before and after "
+                         "that request (anything it created and then deleted cancels out).")
         for row in rows[:12]:
             status, name = row.split("\t", 1)
             lines.append(f"  {ACTION_WORDS.get(status, status):<9} {name}")

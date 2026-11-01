@@ -16,6 +16,8 @@ import subprocess
 
 from danica.tools.registry import tool
 from danica.workspace import Workspace
+from danica.config import CONFIG
+from danica.sandbox import Job, SandboxError
 
 DEFAULT_TIMEOUT = 30
 MAX_TIMEOUT = 120
@@ -60,29 +62,45 @@ def run_shell(ws: Workspace, command: str, timeout: int = DEFAULT_TIMEOUT) -> st
     # Force UTF-8 output from PowerShell itself, then run the model's command
     full_command = "[Console]::OutputEncoding=[Text.Encoding]::UTF8; " + command
 
-    proc = subprocess.Popen(
-        ["powershell", "-NoProfile", "-NonInteractive", "-Command", full_command],
-        cwd=ws.root,
-        env=_clean_env(),
-        stdin=subprocess.DEVNULL,           # nothing can wait for keyboard input
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,           # merge errors into the same stream
-        # Own process group so we can kill the tree cleanly (Windows only flag)
-        creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
-    )
+    limits = CONFIG["sandbox"]
+    try:
+        job = Job(memory_mb=limits["memory_mb"], max_processes=limits["max_processes"])
+    except SandboxError as e:
+        # Fail closed: no sandbox, no command
+        return f"ERROR: the sandbox could not start, so the command was NOT run: {e}"
 
     timed_out = False
-    try:
-        raw, _ = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        # proc.kill() only kills PowerShell, not what it started.
-        # taskkill /T kills the whole tree, /F forces it.
-        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
-        raw, _ = proc.communicate()  # collect whatever was printed before the kill
+    # Leaving this block kills anything the command left running in the background
+    with job:
+        try:
+            proc = job.popen(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", full_command],
+                cwd=ws.root,
+                env=_clean_env(),
+                stdin=subprocess.DEVNULL,           # nothing can wait for keyboard input
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,           # merge errors into the same stream
+                creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+            )
+        except SandboxError as e:
+            return f"ERROR: could not confine the command, so it was NOT run: {e}"
+
+        try:
+            raw, _ = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            job.kill()                   # whole tree, even reparented grandchildren
+            raw, _ = proc.communicate()  # collect whatever was printed before the kill
 
     output = _cap(raw.decode("utf-8", errors="replace").strip())
 
     if timed_out:
         return f"[TIMED OUT after {timeout}s, process killed]\n{output}"
+
+    # Tell the model WHY it ran out of memory, or it will assume its code is buggy
+    low = output.lower()
+    if proc.returncode != 0 and ("memoryerror" in low or "out of memory" in low
+                                 or "insufficient memory" in low):
+        output += (f"\n[NOTE: commands run under a {limits['memory_mb']} MB memory limit. "
+                   f"Use less memory, for example by processing data in chunks.]")
     return f"[exit code {proc.returncode}]\n{output}"

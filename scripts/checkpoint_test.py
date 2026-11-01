@@ -60,7 +60,7 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
     # --- a request that changed nothing ---
     cp.begin_request("just chatting")
     summary, _ = cp.undo()
-    check("no-change requests are reported", "did not change any files" in summary)
+    check("no-change requests are reported", "No net file changes" in summary)
 
     # --- listing ---
     labels = [label for _, _, label in cp.list_checkpoints()]
