@@ -21,6 +21,7 @@ from danica.audit import AuditLog, verify
 from danica.checkpoints import CheckpointError, Checkpoints
 from danica.tools.todo import read_todo
 from danica.compaction import is_summary
+from danica.sessions import SESSIONS_DIR, list_sessions, load_records, resolve_session
 
 console = Console()
 
@@ -84,25 +85,22 @@ def make_ask(finish):
                 return "deny"
     return ask
 
-
-def main() -> None:
-    # Every run is a new session: sessions/<id>/{workspace/, transcript.jsonl}
-    session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+def build_session(session_id: str, finish, on_event):
+    """Create everything one session needs. A new session and a resumed one use
+    the same code: resuming simply points at an existing folder."""
     session_dir = APP_DIR / "sessions" / session_id
     ws = Workspace(session_dir / "workspace", todo_path=session_dir / "TODO.md")
 
     # One audit log for ALL sessions, so the chain spans everything Danica ever did
     audit = AuditLog(APP_DIR / "logs" / "audit.jsonl", session=session_id)
-    audit.append("session_start", workspace=str(ws.root))
 
     # Shadow git repo lives OUTSIDE the workspace, so the model can never touch it
-
     checkpoints = Checkpoints(ws, session_dir / "checkpoints" / "git")
     if not checkpoints.available:
-        console.print("git was not found, so /undo and /    rewind are disabled. "
+        console.print("git was not found, so /undo and /rewind are disabled. "
                       "Install it with: winget install Git.Git", style="yellow", markup=False)
 
-    on_event, finish = make_event_printer()
+    # A fresh policy every time: approvals from another session never carry over
     policy = PermissionPolicy(ask=make_ask(finish))
     agent = Agent(
         ws,
@@ -112,6 +110,35 @@ def main() -> None:
         audit=audit,
         checkpoints=checkpoints,
     )
+    return ws, audit, checkpoints, policy, agent
+
+
+def open_resumed(target: str, finish, on_event):
+    """Build a session around an existing folder and load its history.
+    Returns (the 5 session objects, a text report for the user)."""
+    records, bad = load_records(SESSIONS_DIR / target / "transcript.jsonl")
+    parts = build_session(target, finish, on_event)
+    ws, audit, checkpoints, policy, agent = parts
+    fixed = agent.load_history(records)
+    audit.append("session_resume", workspace=str(ws.root), records=len(records),
+                 unreadable_lines=bad, repaired=fixed)
+
+    lines = [f"Resumed session {target}: {len(agent.messages) - 1} messages in context, "
+             f"{agent.compactions} compaction(s)."]
+    if agent.user_requests:
+        lines.append("Last request: " + agent.user_requests[-1][:120])
+    if bad or fixed:
+        lines.append(f"Repairs: {bad} unreadable transcript line(s) skipped, "
+                     f"{fixed} broken tool-call record(s) fixed.")
+    lines.append("Permission approvals and the /undo stack start fresh "
+                 "(/rewind still lists the old checkpoints). Try /todo and /summary.")
+    return parts, "\n".join(lines)
+
+def main() -> None:
+    on_event, finish = make_event_printer()
+    session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+    ws, audit, checkpoints, policy, agent = build_session(session_id, finish, on_event)
+    audit.append("session_start", workspace=str(ws.root))
 
     # FileHistory gives up-arrow recall across restarts
     session = PromptSession(history=FileHistory(str(APP_DIR / "history.txt")))
@@ -221,9 +248,13 @@ def main() -> None:
                 console.print("nothing to prune", style="yellow", markup=False)
             continue
 
-        if text == "/compact":
-            if not agent.compact():
-                console.print("nothing worth compacting yet", style="yellow", markup=False)
+        if text.split()[0] == "/compact":
+            # "/compact" uses the normal tail; "/compact 500" keeps only ~500 tokens verbatim
+            parts = text.split()
+            tail = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+            if not agent.compact(tail):
+                console.print("nothing worth compacting yet: everything fits in the kept tail. "
+                              "Try /compact 500 to keep less.", style="yellow", markup=False)
             continue
         if text == "/summary":
             # The summary message always sits right after the system prompt
@@ -233,7 +264,32 @@ def main() -> None:
                 console.print("(no compaction has happened yet)", markup=False)
             continue
 
+        if text == "/sessions":
+            infos = list_sessions()
+            if not infos:
+                console.print("(no saved sessions yet)", markup=False)
+            for n, info in enumerate(infos, start=1):
+                tag = "  (current)" if info["id"] == ws.root.parent.name else ""
+                console.print(f"{n:>2}. {info['id']}  {info['modified']:%d %b %H:%M}  "
+                              f"{info['requests']} request(s), {info['compactions']} compaction(s){tag}",
+                              markup=False, highlight=False)
+                console.print(f"      {info['preview']}", style="dim", markup=False, highlight=False)
+            continue
 
+        if text.split()[0] == "/resume":
+            try:
+                arg = text.split()[1] if len(text.split()) > 1 else ""
+                target = resolve_session(SESSIONS_DIR, arg, current=ws.root.parent.name)
+                parts, report = open_resumed(target, finish, on_event)
+            except ValueError as e:
+                console.print(f"ERROR: {e}", style="red", markup=False)
+                continue
+            except Exception as e:      # the old session stays active if loading failed
+                console.print(f"ERROR: could not resume: {type(e).__name__}: {e}", style="red", markup=False)
+                continue
+            ws, audit, checkpoints, policy, agent = parts    # switch over only on success
+            console.print(report, style="green", markup=False)
+            continue
 
         # --- normal request: hand it to the agent ---
         try:

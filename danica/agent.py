@@ -30,6 +30,7 @@ from danica.checkpoints import Checkpoints
 from danica.pruning import prune_messages
 from danica.tools.todo import read_todo
 from danica.tools.todo import counts, open_items, read_todo
+from danica.sessions import rebuild
 
 SYSTEM_PROMPT = """You are Danica, a careful coding assistant running locally in a terminal on Windows.
 You work inside a workspace folder. All file paths are relative to it.
@@ -185,11 +186,36 @@ class Agent:
             self.on_event("notice", f"[context] pruned {changed} old item(s), freed ~{saved:,} tokens")
         return changed
 
-    def compact(self) -> bool:
+    def load_history(self, records: list[dict]) -> int:
+        """Replace this agent's conversation with one rebuilt from a transcript.
+        Returns how many broken records had to be repaired."""
+        messages, narrative, compactions, fixed = rebuild(records, self.messages[0])
+        self.messages = messages               # messages[0] is OUR current system prompt
+        self.summary = narrative
+        self.compactions = compactions
+
+        # Same harness facts compaction collects, but over the FULL transcript
+        requests, changed, read = harvest([r for r in records if "role" in r])
+        self.user_requests = list(dict.fromkeys(requests))
+        self.files_changed = list(dict.fromkeys(changed))
+        self.files_read = list(dict.fromkeys(read))
+
+        # The exact token count is unknown until the server answers, so start
+        # fresh: estimates only. Pruning wasn't saved, so the first request's
+        # pressure check will prune again if the history is big.
+        self.tracker = ContextTracker(CONFIG["model"]["context"])
+        self.denied_in_row = 0
+        return fixed
+
+    def compact(self, tail_tokens: int | None = None) -> bool:
         """Replace the old part of the conversation with a summary.
         Returns False if there was nothing worth summarizing."""
         window = self.tracker.window
-        cut = find_cut(self.messages, int(window * CONFIG["compaction"]["tail_fraction"]))
+        # Normally the tail is a fraction of the window; /compact <tokens> overrides
+        # it so short sessions can be compacted for testing.
+        if tail_tokens is None:
+            tail_tokens = int(window * CONFIG["compaction"]["tail_fraction"])
+        cut = find_cut(self.messages, tail_tokens)
         if cut is None:
             return False
 
@@ -225,7 +251,8 @@ class Agent:
 
         # The transcript keeps the full history; this marker lets /resume rebuild
         # the same state later (replace everything but the last tail_len messages).
-        self._write_transcript({"event": "compaction", "tail_len": len(tail), "summary": msg["content"]})
+        self._write_transcript({"event": "compaction", "tail_len": len(tail),
+                                "summary": msg["content"], "narrative": self.summary})
         if self.transcript_path:
             folder = self.transcript_path.parent / "summaries"
             folder.mkdir(exist_ok=True)
@@ -308,6 +335,10 @@ class Agent:
                     self.prune(keep_recent=2)     # more aggressive second pass
                 if self.tracker.level(self.messages) in ("compact", "stop"):
                     self.compact()
+                    # Last resort: still at 90%+ means the kept tail itself is too big.
+                    # Summarize again, keeping only ~3% of the window verbatim.
+                    if self.tracker.level(self.messages) == "stop":
+                        self.compact(int(self.tracker.window * 0.03))
 
             # Hard stop: a call at 90%+ could overflow the window
             if self.tracker.level(self.messages) == "stop":
