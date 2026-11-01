@@ -59,6 +59,8 @@ OUTSIDE_PATTERNS = [
     (r"(^|\s)~([\\/]|\s|$)", "mentions the home directory"),
     (r"\$env:|%\w+%", "reads environment variables / system paths"),
     (r"(^|\s)\\\\[\w.]", "mentions a network (UNC) path"),
+    (r"""(^|[\s\\/'"])\.env(\.\w+)?\b|\.pem\b|\bid_(rsa|ed25519|dsa|ecdsa)\b|\.ssh\b|\.aws\b|\.npmrc|\.pypirc|\.netrc|\.git-credentials""",
+     "mentions a credential file"),
 ]
 
 # Text that makes a command too tricky to remember (hidden sub-commands)
@@ -111,19 +113,26 @@ class PermissionPolicy:
         self.ask = ask                       # None = nobody to ask = deny
         self.full_access = False             # the /fullaccess toggle
         self.session_allowed: set[str] = set()
+        self.last_how = ""                  # how the latest check was decided (for the audit log)
 
     def check(self, tool: str, args: dict) -> tuple[bool, str]:
-        """Return (allowed, message_for_model_if_denied)."""
+        """Return (allowed, message_for_model_if_denied). Sets self.last_how."""
         tier, reason, keys = classify(tool, args)
 
-        if self.full_access or tier in (Tier.READ, Tier.WRITE):
+        if self.full_access:
+            self.last_how = "full-access"
+            return True, ""
+        if tier in (Tier.READ, Tier.WRITE):
+            self.last_how = "free"
             return True, ""
 
         # Already approved for this session? (every program in the chain must be)
         if keys and keys <= self.session_allowed:
+            self.last_how = "remembered"
             return True, ""
 
         if self.ask is None:
+            self.last_how = "no-asker"
             return False, "ERROR: this action needs the user's permission and none is available."
 
         # Only plain EXECUTE can be remembered; destructive/outside always ask.
@@ -133,7 +142,10 @@ class PermissionPolicy:
 
         if decision == "session" and can_remember:
             self.session_allowed |= keys
+            self.last_how = "asked-session"
             return True, ""
         if decision in ("once", "session"):
+            self.last_how = "asked-once"
             return True, ""
+        self.last_how = "denied-by-user"
         return False, DENIED_MESSAGE

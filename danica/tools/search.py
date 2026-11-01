@@ -14,6 +14,7 @@ from pathlib import Path
 
 from danica.tools.registry import tool
 from danica.workspace import Workspace
+from danica.secret_scan import is_sensitive_path
 
 # Folders never worth searching
 SKIP_DIRS = {".git", ".venv", "node_modules", "__pycache__", ".mypy_cache", ".pytest_cache"}
@@ -106,6 +107,9 @@ def grep(
         # Jail re-check (symlinked files can point outside the workspace)
         real = fp.resolve()
         if not real.is_relative_to(ws.root):
+            continue
+        # Never feed credential files into context
+        if is_sensitive_path(real.relative_to(ws.root)):
             continue
         try:
             if real.stat().st_size > MAX_GREP_FILE_BYTES:

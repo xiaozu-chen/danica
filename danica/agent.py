@@ -21,7 +21,9 @@ from danica.tools import run_tool, tool_schemas
 from danica.workspace import Workspace
 from danica.config import CONFIG
 from danica.context import ContextTracker
-from danica.permissions import PermissionPolicy
+from danica.permissions import PermissionPolicy, classify
+from danica.audit import AuditLog
+from danica.secret_scan import redact
 
 SYSTEM_PROMPT = """You are Danica, a careful coding assistant running locally in a terminal on Windows.
 You work inside a workspace folder. All file paths are relative to it.
@@ -44,6 +46,20 @@ Rules:
 EventCallback = Callable[[str, object], None]
 
 
+def _safe_args(args: dict) -> dict:
+    """Tool arguments made safe for the audit log: secrets redacted, long strings cut.
+    File contents never go into the log, only their length."""
+    out = {}
+    for key, value in args.items():
+        if isinstance(value, str):
+            original_len = len(value)
+            value, _ = redact(value)
+            if len(value) > 200:
+                value = value[:200] + f"...({original_len} chars total)"
+        out[key] = value
+    return out
+
+
 class Agent:
     def __init__(
         self,
@@ -53,6 +69,7 @@ class Agent:
         max_steps: int = 25,
         on_event: EventCallback | None = None,
         policy: PermissionPolicy | None = None,
+        audit: AuditLog | None = None,
         
     ):
         self.ws = ws
@@ -73,6 +90,7 @@ class Agent:
         # Consecutive permissions denials. Two "no"s in a row means the user is
         # telling us to stop, so we hand control back instead of probing more.
         self.denied_in_row = 0
+        self.audit = audit # None = no logging (tests)
 
     # ------------------------------------------------------------------ helpers
 
@@ -112,8 +130,13 @@ class Agent:
 
         return "".join(content_parts), calls
 
+    def _log(self, event: str, **data) -> None:
+        "Write an audit entry if auditing is on."
+        if self.audit:
+            self.audit.append(event, **data)
+
     def _execute(self, call: dict) -> str:
-        """Parse one tool call, check permission, run it. Always returns a string."""
+        """Parse one tool call, check permission, run it, scrub the output. Returns a string."""
         raw = call["arguments"] or "{}"
         try:
             args = json.loads(raw)
@@ -121,19 +144,33 @@ class Agent:
                 raise ValueError("arguments must be a JSON object")
         except (json.JSONDecodeError, ValueError) as e:
             self.on_event("tool_call", (call["name"], raw))
+            self._log("bad_arguments", tool=call["name"])
             return f"ERROR: could not parse tool arguments as a JSON object ({e}). Try again."
 
         # Show the call BEFORE asking, so the user sees what is being approved
         self.on_event("tool_call", (call["name"], args))
 
+        tier = classify(call["name"], args)[0]
         allowed, denial = self.policy.check(call["name"], args)
+        self._log("tool_call", tool=call["name"], args=_safe_args(args),
+                  tier=tier.value, allowed=allowed, how=self.policy.last_how)
+
         if not allowed:
             self.denied_in_row += 1
             return denial  # the model reads this and adapts
 
-        self.denied_in_row = 0 # any approved action breaks the streak
+        self.denied_in_row = 0  # any approved action breaks the streak
+        result = run_tool(call["name"], args, self.ws)
 
-        return run_tool(call["name"], args, self.ws)
+        # Output scan: secrets never reach the model's context
+        cleaned, kinds = redact(result)
+        found = sorted(set(kinds))
+        if found:
+            cleaned += (f"\nNOTE: {len(kinds)} secret-like value(s) ({', '.join(found)}) "
+                        f"were redacted from this output.")
+        self._log("tool_result", tool=call["name"], chars=len(result),
+                  redacted=found, error=result.startswith("ERROR"))
+        return cleaned
 
     # ---------------------------------------------------------------- main loop
 
@@ -142,6 +179,9 @@ class Agent:
         self._add({"role": "user", "content": user_text})
 
         self.denied_in_row = 0
+
+        # Log only the size of the request, not its text (the transcript has the text)
+        self._log("user_request", chars=len(user_text))
 
         last_signature = None   # what the previous step called
         repeats = 0             # how many steps in a row had the identical calls

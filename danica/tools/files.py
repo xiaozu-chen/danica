@@ -10,6 +10,7 @@ Design notes for a small local model:
 
 from danica.tools.registry import tool
 from danica.workspace import Workspace
+from danica.secret_scan import find_secrets, is_sensitive_path
 
 MAX_READ_LINES = 400      # hard cap per read_file call
 MAX_LINE_CHARS = 2000     # truncate absurdly long lines (minified files etc.)
@@ -22,6 +23,27 @@ def _read_text(path) -> str:
     if b"\x00" in raw[:8192]:  # NUL bytes in the first 8KB means binary
         raise ValueError("file looks binary, refusing to read it as text")
     return raw.decode("utf-8", errors="replace")
+
+
+def _protected(ws: Workspace, p) -> str | None:
+    """Error messages if p is a credential file the model must not touch."""
+    reason = is_sensitive_path(p.relative_to(ws.root))
+    if reason:
+        return (f"ERROR: '{ws.display(p)}' is blocked: it looks like a {reason} that may "
+                f"hold secrets. Do not try to read it another way. Tell the user what "
+                f"you need from it instead."
+                )
+    return None
+
+
+def _secret_check(text: str) -> str | None:
+    """Error message if text contains something that looks like a real secret."""
+    kinds = sorted({kind for kind, _, _ in find_secrets(text)})
+    if kinds:
+        return (f"ERROR: refused to write this: it contains what looks like a secret "
+               f"({', '.join(kinds)}). Use a placeholder like YOUR_API_KEY, or read the "
+               f"value from an environment variable at runtime.")
+    return None
 
 
 @tool(
@@ -37,6 +59,10 @@ def read_file(ws: Workspace, path: str, offset: int = 1, limit: int = 200) -> st
     p = ws.resolve(path)
     if not p.is_file():
         return f"ERROR: '{path}' is not a file (or does not exist)"
+
+    blocked = _protected(ws, p)
+    if blocked:
+        return blocked
 
     lines = _read_text(p).splitlines()
     total = len(lines)
@@ -67,6 +93,11 @@ def write_file(ws: Workspace, path: str, content: str) -> str:
     p = ws.resolve(path)
     if p.is_dir():
         return f"ERROR: '{path}' is a directory"
+
+    refused = _secret_check(content)
+    if refused:
+        return refused
+    
     existed = p.exists()
     p.parent.mkdir(parents=True, exist_ok=True)
     # newline="\n" keeps LF endings on Windows (default would write CRLF)
@@ -93,8 +124,14 @@ def edit_file(
     p = ws.resolve(path)
     if not p.is_file():
         return f"ERROR: '{path}' is not a file (or does not exist)"
+    blocked = _protected(ws, p)
+    if blocked:
+        return blocked
     if not old_string:
         return "ERROR: old_string is empty (use write_file to create files)"
+    refused = _secret_check(new_string)
+    if refused:
+        return refused
     if old_string == new_string:
         return "ERROR: old_string and new_string are identical, nothing to change"
 

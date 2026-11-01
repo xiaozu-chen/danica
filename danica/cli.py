@@ -17,6 +17,7 @@ from danica.config import APP_DIR
 from danica.workspace import Workspace
 from danica.context import breakdown
 from danica.permissions import PermissionPolicy, Tier
+from danica.audit import AuditLog, verify
 
 console = Console()
 
@@ -79,9 +80,14 @@ def make_ask(finish):
 
 
 def main() -> None:
-    # Every run is a new session: sessions/<timestamp>/{workspace/, transcript.jsonl}
-    session_dir = APP_DIR / "sessions" / datetime.now().strftime("%Y%m%d-%H%M%S")
+    # Every run is a new session: sessions/<id>/{workspace/, transcript.jsonl}
+    session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+    session_dir = APP_DIR / "sessions" / session_id
     ws = Workspace(session_dir / "workspace")
+
+    # One audit log for ALL sessions, so the chain spans everything Danica ever did
+    audit = AuditLog(APP_DIR / "logs" / "audit.jsonl", session=session_id)
+    audit.append("session_start", workspace=str(ws.root))
 
     on_event, finish = make_event_printer()
     policy = PermissionPolicy(ask=make_ask(finish))
@@ -90,6 +96,7 @@ def main() -> None:
         transcript_path=session_dir / "transcript.jsonl",
         on_event=on_event,
         policy=policy,
+        audit=audit
     )
 
     # FileHistory gives up-arrow recall across restarts
@@ -133,8 +140,16 @@ def main() -> None:
             for role, tokens in sorted(breakdown(agent.messages).items(), key=lambda kv: -kv[1]):
                 console.print(f"  {role:<10} ~{tokens:,} tokens", markup=False)
             continue
+        if text == "/audit":
+            ok, count, problem = verify(audit.path)
+            if ok:
+                console.print(f"audit log OK: {count} entries. chain intact", style="green", markup=False)
+            else:
+                console.print(f"AUDIT LOG PROBLEM: {problem}", style="bold red", markup=False)
+            continue
         if text == "/fullaccess":
             policy.full_access = not policy.full_access
+            audit.append("full_access", enabled=policy.full_access)
             if policy.full_access:
                 console.print("FULL ACCESS ON: Danica can run ANY command without asking. /fullaccess again to turn it off.", style="bold red", markup=False)
             else:

@@ -76,4 +76,7 @@ full = PermissionPolicy(ask=None)
 full.full_access = True
 check("full access allows everything", full.check("run_shell", {"command": "Remove-Item x"})[0])
 
+check("reading .env in the shell is OUTSIDE", tier_of("type .env") == Tier.OUTSIDE)
+check(".venv is not mistaken for .env", tier_of("python -m venv .venv") == Tier.EXECUTE)
+
 print("\nAll good.")
