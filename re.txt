@@ -1,0 +1,10 @@
+FAIL  grep finds match with line number
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\user\dev\danica\scripts\tools_test2.py", line 37, in <module>
+    check("grep finds match with line number", "src/app.py:1:" in out)
+  File "C:\Users\user\dev\danica\scripts\tools_test2.py", line 16, in check
+    assert condition, label
+           ^^^^^^^^^
+AssertionError: grep finds match with line number
