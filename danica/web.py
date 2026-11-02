@@ -16,7 +16,10 @@ HONEST LIMITS:
 import re
 import time
 import unicodedata
-from dataclasses import dataclass, field
+import json
+import os
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from html.parser import HTMLParser
 from urllib.parse import urlsplit
 
@@ -229,7 +232,7 @@ class Source:
 class WebState:
     """Everything the web tools remember during one session."""
 
-    def __init__(self) -> None:
+    def __init__(self, path: Path | None = None) -> None:
         self.by_id: dict[str, Source] = {}
         self.by_url: dict[str, Source] = {}
         self.counter = 0
@@ -240,6 +243,11 @@ class WebState:
         # site NOT in this set asks the user. Filled by: URLs the user typed,
         # search results, and pages already fetched.
         self.known_hosts: set[str] = set()
+        # Where sources are saved (None = memory only). Loading happens here, so a
+        # resumed session gets its old ids back.
+        self.path = path
+        if path is not None:
+            self.load()
 
     @staticmethod
     def key(url: str) -> str:
@@ -263,6 +271,7 @@ class WebState:
         # A stale page refetched later keeps its id, so old citations stay valid
         src.final_url, src.title, src.passages = final_url, title, passages
         src.notes, src.fetched = notes, time.time()
+        self.save()   # keep the file in step, so ids survive /resume
         return src
 
     def mark_tainted(self, url: str) -> None:
@@ -282,6 +291,44 @@ class WebState:
         self.tainted = False
         self.taint_sources = []
 
+    def save(self) -> None:
+        """Write all sources to disk (atomically). Never raises: a failed save
+        only means ids won't survive /resume."""
+        if self.path is None:
+            return
+        try:
+            data = {"counter": self.counter,
+                    "sources": [asdict(s) for s in self.by_id.values()]}
+            tmp = self.path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, self.path)     # a crash can never leave half a file
+        except OSError:
+            pass
+
+    def load(self) -> None:
+        """Read sources saved by save(). A missing or damaged file gives an empty
+        state: citations then simply fail to verify, nothing crashes."""
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            loaded = [Source(**d) for d in data["sources"]]
+            counter = int(data["counter"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return
+        for src in loaded:
+            # Skip entries that don't look like ours (bad id, passages not a list of text)
+            if not re.fullmatch(r"S\d+", str(src.id)):
+                continue
+            if not isinstance(src.passages, list) or not all(isinstance(p, str) for p in src.passages):
+                continue
+            self.by_id[src.id] = src
+            self.by_url[src.url] = src
+            # Pages we fetched are known sites (search-result hosts are not saved)
+            for url in (src.url, src.final_url):
+                host = host_of(url) if isinstance(url, str) else ""
+                if host:
+                    self.known_hosts.add(host)
+        self.counter = max([counter] + [int(s.id[1:]) for s in self.by_id.values()])
+
 
 def render(src: Source, start: int, budget: int = RENDER_BUDGET) -> tuple[str, int]:
     """Passages from number `start` onward, up to `budget` characters.
@@ -297,7 +344,7 @@ def render(src: Source, start: int, budget: int = RENDER_BUDGET) -> tuple[str, i
     return "\n\n".join(out), i - 1
 
 def state_for(ws) -> WebState:
-    """The workspace's WebState, created on first use."""
+    """The workspace's WebState, created (and loaded from disk) on first use."""
     if ws.web is None:
-        ws.web = WebState()
+        ws.web = WebState(ws.sources_path)
     return ws.web

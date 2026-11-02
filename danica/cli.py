@@ -57,7 +57,11 @@ def make_event_printer():
         elif kind == "notice":
             newline_if_needed()
             console.print(data, style="yellow", markup=False)
-
+        elif kind == "citations":
+            newline_if_needed()
+            # Yellow when there is a warning, green when everything checked out
+            console.print(data, style="yellow" if "WARNING" in data else "green",
+                          markup=False, highlight=False)
     def finish() -> None:
         newline_if_needed()
 
@@ -89,7 +93,8 @@ def build_session(session_id: str, finish, on_event):
     """Create everything one session needs. A new session and a resumed one use
     the same code: resuming simply points at an existing folder."""
     session_dir = APP_DIR / "sessions" / session_id
-    ws = Workspace(session_dir / "workspace", todo_path=session_dir / "TODO.md")
+    ws = Workspace(session_dir / "workspace", todo_path=session_dir / "TODO.md",
+                   sources_path=session_dir / "sources.json")
 
     # One audit log for ALL sessions, so the chain spans everything Danica ever did
     audit = AuditLog(APP_DIR / "logs" / "audit.jsonl", session=session_id)
@@ -310,6 +315,15 @@ def main() -> None:
                 console.print("taint cleared. The web content is still in the context.", style="yellow", markup=False)
             else:
                 console.print("not tainted", markup=False)
+            continue
+        if text == "/sources":
+            sources = list(ws.web.by_id.values()) if ws.web else []
+            if not sources:
+                console.print("(no web sources yet)", markup=False)
+            for s in sources:
+                console.print(f"[{s.id}] {len(s.passages)} passages  {s.title[:60] or '(no title)'}",
+                              markup=False, highlight=False)
+                console.print(f"      {s.final_url or s.url}", style="dim", markup=False, highlight=False)
             continue
         # --- normal request: hand it to the agent ---
         try:

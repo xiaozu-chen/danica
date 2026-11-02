@@ -25,7 +25,7 @@ import httpx
 from danica.secret_scan import find_secrets
 from danica.tools.registry import tool
 from danica.web import (MAX_TEXT_CHARS, WebState, clean_text, html_to_text, render,
-                        safe_attr, split_passages, host_of)
+                        safe_attr, split_passages, host_of, state_for)
 from danica.workspace import Workspace
 from danica.config import CONFIG
 
@@ -238,8 +238,7 @@ def _extract(data: bytes, ctype: str, charset: str, truncated: bool) -> tuple[st
     },
 )
 def web_fetch(ws: Workspace, url: str, start: int = 1) -> str:
-    state = ws.web or WebState()
-    ws.web = state
+    state = state_for(ws)   # loads saved sources on first use, so ids stay stable after /resume
     url = str(url).strip()
     try:
         start = max(1, int(start))

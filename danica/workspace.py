@@ -14,16 +14,19 @@ class PathJailError(Exception):
 
 
 class Workspace:
-    def __init__(self, root: Path, todo_path: Path | None = None):
+    def __init__(self, root: Path, todo_path: Path | None = None, sources_path: Path | None = None):
         # resolve() makes the root absolute and follows symlinks, so later
         # comparisons are against the *real* location on disk.
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
-        # Where this is session's TODO.md lives (OUTSIDE the jail, on purpose).
+        # Where this session's TODO.md lives (OUTSIDE the jail, on purpose).
         # None = no scratchpad (tests that don't need one).
         self.todo_path = Path(todo_path) if todo_path else None
+        # Where fetched web sources are saved so [S#] ids survive /resume.
+        # None = kept in memory only (tests).
+        self.sources_path = Path(sources_path) if sources_path else None
         # Per-session web state (sources, cache, taint flag). Created on first
-        # use by the web_fetch tool, so sessions that never browse pay nothing.
+        # use by the web tools, so sessions that never browse pay nothing.
         self.web = None
 
     def resolve(self, user_path: str) -> Path:

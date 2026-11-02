@@ -213,7 +213,8 @@ def fallback_narrative(previous: str, old: list[dict]) -> str:
 
 # ---------------------------------------------------------- the replacement
 
-def build_message(narrative: str, requests: list[str], changed: list[str], read: list[str]) -> dict:
+def build_message(narrative: str, requests: list[str], changed: list[str], read: list[str],
+                  sources: list[str] | None = None) -> dict:
     """The one message that stands in for everything that was removed."""
     # Keep the very first request plus the 7 most recent ones
     shown = requests if len(requests) <= 8 else requests[:1] + requests[-7:]
@@ -230,6 +231,9 @@ def build_message(narrative: str, requests: list[str], changed: list[str], read:
         lines += ["", "FILES WRITTEN OR EDITED: " + ", ".join(changed[-40:])]
     if read:
         lines += ["FILES READ: " + ", ".join(read[-25:])]
+    if sources:
+        lines += ["WEB SOURCES (cite as [S#.N]; fetching the URL again keeps the same id):"]
+        lines += [f"  {s}" for s in sources[-12:]]
     lines += ["", "(Your TODO.md is shown separately every turn. Files changed by shell "
                   "commands are not listed above: check the workspace if unsure.)"]
     return {"role": "user", "content": "\n".join(lines)}
