@@ -25,7 +25,7 @@ import httpx
 from danica.secret_scan import find_secrets
 from danica.tools.registry import tool
 from danica.web import (MAX_TEXT_CHARS, WebState, clean_text, html_to_text, render,
-                        safe_attr, split_passages)
+                        safe_attr, split_passages, host_of)
 from danica.workspace import Workspace
 from danica.config import CONFIG
 
@@ -259,7 +259,10 @@ def web_fetch(ws: Workspace, url: str, start: int = 1) -> str:
         if final != url:
             notes.append(f"redirected to {final}")
         src = state.add(url, final, title, split_passages(text), notes)
-        state.mark_tainted(final)    # untrusted text is now in the conversation
+    # Taint on EVERY read, cached or not: after /untaint, re-reading a cached
+    # page puts its text back in context. Also remember the sites involved.
+    state.mark_tainted(src.final_url)
+    state.known_hosts.update(h for h in (host_of(url), host_of(src.final_url)) if h)
 
     total = len(src.passages)
     if start > total:

@@ -150,6 +150,8 @@ def main() -> None:
         mode = "think" if agent.thinking else "fast"
         if policy.full_access:
             mode += " | FULL ACCESS" # loud on purpose
+        if ws.web and ws.web.tainted:
+            mode += " | TAINTED"   # untrusted web content is in context
         return HTML(f'<style fg="{color}">ctx {agent.tracker.bar(agent.messages)}</style> |{mode}')
 
     console.print("[bold]Danica[/bold] ready. /think toggles thinking, /ws shows the workspace, /context to show usage /exit quits.")
@@ -290,7 +292,25 @@ def main() -> None:
             ws, audit, checkpoints, policy, agent = parts    # switch over only on success
             console.print(report, style="green", markup=False)
             continue
-
+        if text == "/taint":
+            if ws.web and ws.web.tainted:
+                console.print("Untrusted web content is in this conversation. Sources:", style="yellow", markup=False)
+                for source in ws.web.taint_sources:
+                    console.print("  " + source, markup=False, highlight=False)
+                console.print("While tainted, shell commands and fetches from new sites always ask.\n"
+                              "/untaint clears the flag (it does not remove the content from context).",
+                              markup=False)
+            else:
+                console.print("not tainted", markup=False)
+            continue
+        if text == "/untaint":
+            if ws.web and ws.web.tainted:
+                ws.web.clear_taint()
+                audit.append("untaint")
+                console.print("taint cleared. The web content is still in the context.", style="yellow", markup=False)
+            else:
+                console.print("not tainted", markup=False)
+            continue
         # --- normal request: hand it to the agent ---
         try:
             result = agent.run(text)

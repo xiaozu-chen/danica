@@ -18,6 +18,7 @@ import time
 import unicodedata
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
+from urllib.parse import urlsplit
 
 PASSAGE_CHARS = 1000        # target size of one citable passage
 MAX_TEXT_CHARS = 200_000    # cap on the text kept from one page
@@ -45,6 +46,18 @@ HIDDEN_STYLE = re.compile(
 
 # A page must never be able to fake the end of our untrusted-content wrapper
 WRAPPER_RX = re.compile(r"<\s*/?\s*untrusted_web_content", re.IGNORECASE)
+
+# Finds URLs in text the USER typed (those sites count as trusted)
+URL_RX = re.compile(r"https?://[^\s<>\"')\]]+", re.IGNORECASE)
+
+
+def host_of(url: str) -> str:
+    """Normalised host name of a URL ("" if there is none). 'www.' is ignored."""
+    try:
+        host = (urlsplit(url).hostname or "").lower()
+    except ValueError:
+        return ""
+    return host[4:] if host.startswith("www.") else host
 
 
 # ------------------------------------------------------------- HTML to text
@@ -223,6 +236,10 @@ class WebState:
         # Taint tracking (enforced in the next chunk): untrusted text is in context
         self.tainted = False
         self.taint_sources: list[str] = []
+        # Sites the conversation already knows about. While tainted, fetching a
+        # site NOT in this set asks the user. Filled by: URLs the user typed,
+        # search results, and pages already fetched.
+        self.known_hosts: set[str] = set()
 
     @staticmethod
     def key(url: str) -> str:
@@ -253,6 +270,18 @@ class WebState:
         if url not in self.taint_sources:
             self.taint_sources.append(url)
 
+    def trust_hosts_from(self, text: str) -> None:
+        """Remember the hosts of URLs found in text the USER wrote."""
+        for url in URL_RX.findall(text):
+            host = host_of(url)
+            if host:
+                self.known_hosts.add(host)
+
+    def clear_taint(self) -> None:
+        """The user's decision (/untaint). The content is still in the context."""
+        self.tainted = False
+        self.taint_sources = []
+
 
 def render(src: Source, start: int, budget: int = RENDER_BUDGET) -> tuple[str, int]:
     """Passages from number `start` onward, up to `budget` characters.
@@ -266,3 +295,9 @@ def render(src: Source, start: int, budget: int = RENDER_BUDGET) -> tuple[str, i
         used += len(line) + 2
         i += 1
     return "\n\n".join(out), i - 1
+
+def state_for(ws) -> WebState:
+    """The workspace's WebState, created on first use."""
+    if ws.web is None:
+        ws.web = WebState()
+    return ws.web

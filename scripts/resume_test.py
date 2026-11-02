@@ -119,7 +119,8 @@ try:
         fixed = resumed.load_history(records)
 
         check("nothing needed repair", bad == 0 and fixed == 0)
-        check("resumed messages are IDENTICAL to the live ones", resumed.messages == live.messages)
+        # messages[0] is the system prompt, which holds a per-agent random canary
+        check("resumed messages are IDENTICAL to the live ones", resumed.messages[1:] == live.messages[1:])
         check("compaction count restored", resumed.compactions == 1)
         check("narrative restored for roll-forward", resumed.summary == live.summary)
         check("first request remembered", "Build the calc package please" in resumed.user_requests)

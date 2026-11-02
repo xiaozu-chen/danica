@@ -15,6 +15,7 @@ from enum import Enum
 from typing import Callable
 
 from danica.tools.registry import TOOLS
+from danica.web import host_of
 
 
 class Tier(Enum):
@@ -23,6 +24,7 @@ class Tier(Enum):
     EXECUTE = "execute"
     DESTRUCTIVE = "destructive"
     OUTSIDE = "outside-workspace"
+    TAINTED = "untrusted-context"
 
 
 # Tier for each known tool. Anything registered but missing here falls back to EXECUTE.
@@ -36,6 +38,7 @@ TOOL_TIERS = {
     "run_shell": Tier.EXECUTE,
     "todo": Tier.WRITE,
     "web_fetch": Tier.READ,
+    "web_search": Tier.READ,
 }
 
 # (regex, reason) pairs for commands that can destroy things or pull in code.
@@ -70,7 +73,13 @@ OUTSIDE_PATTERNS = [
 
 # Text that makes a command too tricky to remember (hidden sub-commands)
 COMPLEX_MARKERS = ("$(", "`")
+# Shell commands that pull text from the network (used for taint tracking)
+NETWORK_RX = re.compile(r"\b(invoke-webrequest|invoke-restmethod|iwr|irm|curl|wget|start-bitstransfer)\b",
+                        re.IGNORECASE)
 
+
+def is_network_command(command: str) -> bool:
+    return bool(NETWORK_RX.search(command))
 
 def _programs(command: str) -> frozenset[str]:
     """First word of every segment in a chained command: 'a; b | c' -> {a, b, c}."""
@@ -120,14 +129,35 @@ class PermissionPolicy:
         self.session_allowed: set[str] = set()
         self.last_how = ""                  # how the latest check was decided (for the audit log)
 
-    def check(self, tool: str, args: dict) -> tuple[bool, str]:
-        """Return (allowed, message_for_model_if_denied). Sets self.last_how."""
+    @staticmethod
+    def _taint_applies(tool: str, args: dict, known_hosts) -> bool:
+        """While untrusted content is in context: which calls need a fresh yes?"""
+        if tool == "run_shell":
+            return True
+        if tool == "web_fetch":
+            host = host_of(str(args.get("url", "")))
+            return bool(host) and host not in known_hosts   # a new site might be a page's idea
+        return False
+
+    def check(self, tool: str, args: dict, tainted_by=(), known_hosts=frozenset()) -> tuple[bool, str]:
+        """Return (allowed, message_for_model_if_denied). Sets self.last_how.
+        tainted_by: what put untrusted web content in the context (empty = clean)."""
         tier, reason, keys = classify(tool, args)
 
         if self.full_access:
             self.last_how = "full-access"
             return True, ""
-        if tier in (Tier.READ, Tier.WRITE):
+
+        if tainted_by and self._taint_applies(tool, args, known_hosts):
+            note = f"untrusted web content is in this conversation (from: {tainted_by[-1][:80]})"
+            if tier in (Tier.DESTRUCTIVE, Tier.OUTSIDE):
+                reason = f"{reason}; also: {note}"       # already asks every time
+            else:
+                what = ("a page could be steering this command" if tool == "run_shell"
+                        else "this site has not appeared in the conversation yet")
+                tier, reason = Tier.TAINTED, f"{what}; {note}"
+            keys = frozenset()      # earlier "allow for session" approvals do not count now
+        elif tier in (Tier.READ, Tier.WRITE):
             self.last_how = "free"
             return True, ""
 
@@ -140,7 +170,7 @@ class PermissionPolicy:
             self.last_how = "no-asker"
             return False, "ERROR: this action needs the user's permission and none is available."
 
-        # Only plain EXECUTE can be remembered; destructive/outside always ask.
+        # Only plain EXECUTE can be remembered; destructive/outside/tainted always ask.
         can_remember = tier == Tier.EXECUTE and bool(keys)
         summary = str(args.get("command")) if tool == "run_shell" else f"{tool} {args}"
         decision = self.ask(tool, summary[:300], tier, reason, can_remember)
