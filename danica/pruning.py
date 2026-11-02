@@ -58,6 +58,9 @@ def make_stub(name: str, args: dict, result: str) -> str:
             # Failures: keep the end, that's where the error message lives
             tail = " | ".join(ln.strip() for ln in lines[-TAIL_LINES:])
             what += f". Last lines: {tail[:300]}"
+    elif name == "web_fetch":
+        what = (f"web_fetch {str(args.get('url', '?'))[:150]}: {n} lines of page text "
+                f"(cached: fetching it again gives the same [S#.N] ids)")
     else:
         what = f"{name} result ({len(result)} chars)"
 

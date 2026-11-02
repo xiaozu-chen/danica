@@ -22,6 +22,9 @@ class Workspace:
         # Where this is session's TODO.md lives (OUTSIDE the jail, on purpose).
         # None = no scratchpad (tests that don't need one).
         self.todo_path = Path(todo_path) if todo_path else None
+        # Per-session web state (sources, cache, taint flag). Created on first
+        # use by the web_fetch tool, so sessions that never browse pay nothing.
+        self.web = None
 
     def resolve(self, user_path: str) -> Path:
         """

@@ -18,6 +18,7 @@ DEFAULTS = {
     "sandbox": {"memory_mb": 2048, "max_processes": 64},
     "pruning": {"keep_recent": 6, "min_chars": 400},
     "compaction": {"tail_fraction": 0.12},
+    "web": {"user_agent": "Danica/0.1 (local research assistant)"},
 }
 
 def load_config() -> dict:

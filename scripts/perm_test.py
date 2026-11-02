@@ -78,5 +78,7 @@ check("full access allows everything", full.check("run_shell", {"command": "Remo
 
 check("reading .env in the shell is OUTSIDE", tier_of("type .env") == Tier.OUTSIDE)
 check(".venv is not mistaken for .env", tier_of("python -m venv .venv") == Tier.EXECUTE)
+check("shell request to localhost says LOCAL or PRIVATE", "PRIVATE" in classify("run_shell", {"command": "curl http://localhost:8080"})[1])
+check("shell request to a public site keeps the normal reason", "PRIVATE" not in classify("run_shell", {"command": "curl https://example.com"})[1])
 
 print("\nAll good.")

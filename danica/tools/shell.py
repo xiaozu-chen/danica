@@ -50,7 +50,8 @@ def _cap(text: str) -> str:
 @tool(
     "run_shell",
     "Run a Windows PowerShell command in the workspace folder. Use it to run scripts, "
-    "tests and installs. Do not use it for reading or editing files; use the file tools.",
+    "tests and installs. Do not use it for reading or editing files; use the file tools "
+    "and, for web pages, web_fetch.",
     {
         "command": {"type": "string", "description": "PowerShell command to run"},
         "timeout": {"type": "integer", "description": "Seconds before the command is killed (max 120)", "default": 30},

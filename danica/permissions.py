@@ -35,11 +35,15 @@ TOOL_TIERS = {
     "edit_file": Tier.WRITE,
     "run_shell": Tier.EXECUTE,
     "todo": Tier.WRITE,
+    "web_fetch": Tier.READ,
 }
 
 # (regex, reason) pairs for commands that can destroy things or pull in code.
 # False positives are fine: they just cause a prompt. Missed matches are the danger.
 DESTRUCTIVE_PATTERNS = [
+    (r"\b(invoke-webrequest|invoke-restmethod|iwr|irm|curl|wget)\b[^|;&\n]*"
+     r"(localhost|127\.\d|0\.0\.0\.0|\[::1\]|\b10\.\d|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)",
+     "network request to a LOCAL or PRIVATE address (web_fetch blocks these on purpose)"),
     (r"\b(remove-item|rm|rmdir|rd|del|erase|ri)\b", "deletes files"),
     (r"\b(move-item|move|mv)\b", "moves or overwrites files"),
     (r"format-volume|\bformat\s+[a-z]:|clear-disk|\bdiskpart\b", "formats or wipes a disk"),

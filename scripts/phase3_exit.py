@@ -53,7 +53,11 @@ STEPS = [
                 "test_storage.py. Then run all the tests."),
     ("reports", "Add reports.py with total_value(items) and low_stock(items, threshold), plus "
                 "test_reports.py. Then run all the tests."),
-    ("padding (plain text)", "Explain in about 150 words how the modules fit together so far."),
+    ("padding 1 (plain text)", "Explain in about 250 words how the modules fit together so far."),
+    ("padding 2 (plain text)", "Describe in about 250 words how you would add logging to this "
+                               "project without breaking any of my three rules."),
+    ("padding 3 (plain text)", "Describe in about 250 words the edge cases each module still "
+                               "needs tests for."),
     ("pricing", "Add pricing.py with apply_discount(item, percent) that returns a NEW Item and raises "
                 "ValueError for a percent outside 0-100, plus test_pricing.py. Then run all the tests."),
     ("search", "Add search.py with find_by_name(items, text), case-insensitive, plus test_search.py. "
