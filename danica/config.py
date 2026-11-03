@@ -20,6 +20,9 @@ DEFAULTS = {
     "compaction": {"tail_fraction": 0.12},
     "web": {"user_agent": "Danica/0.1 (local research assistant)",
             "search_provider": "searxng", "search_url": "http://localhost:8888"},
+    "memory": {"embedding_url": "http://127.0.0.1:8081",
+               "embedding_model": "nomic-embed-text-v1.5",
+               "embedding_dimensions": 768, "recall_limit": 5},
 }
 
 def load_config() -> dict:
@@ -39,4 +42,3 @@ def load_config() -> dict:
 
 # Loaded once at import; everything else does `from danica.config import CONFIG`
 CONFIG = load_config()
-

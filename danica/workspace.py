@@ -6,7 +6,13 @@ This class turns a model-supplied path into a real path, and refuses
 anything that lands outside the workspace folder.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from danica.memory import MemoryStore
 
 
 class PathJailError(Exception):
@@ -28,6 +34,8 @@ class Workspace:
         # Per-session web state (sources, cache, taint flag). Created on first
         # use by the web tools, so sessions that never browse pay nothing.
         self.web = None
+        # Bound by the CLI for sessions that have persistent memory enabled.
+        self.memory: MemoryStore | None = None
 
     def resolve(self, user_path: str) -> Path:
         """

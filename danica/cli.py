@@ -5,6 +5,7 @@ Commands: /think (toggle thinking), /ws (show workspace path), /exit
 Ctrl+C stops the current task. Ctrl+D or /exit quits.
 """
 
+import sqlite3
 from pathlib import Path
 from datetime import datetime
 
@@ -26,6 +27,7 @@ from danica.sessions import SESSIONS_DIR, list_sessions, load_records, resolve_s
 from danica.projects import (ProjectError, check_allowed, load_session_meta, lookup,
                              register, save_session_meta, scan, approve_instructions, read_instructions)
 from danica.export import export_session
+from danica.memory import MemoryError, MemoryStore
 
 console = Console()
 
@@ -36,6 +38,7 @@ HELP = """Commands
   Sessions  /sessions  /resume [number|id]  /export
   Safety    /fullaccess  /sandbox  /audit  /undo  /rewind [id]  /taint  /untaint
   Web       /sources
+  Memory    /memory [review|merge <source-id> <target-id>]  /forget <id>
   Other     /ws  /config  /help
 Ctrl+C stops the current task. Ctrl+D quits."""
 
@@ -87,6 +90,14 @@ def make_ask(finish):
 
     def ask(tool: str, summary: str, tier: Tier, reason: str, can_remember: bool) -> str:
         finish() # make sure we're on a fresh line after streamed text
+        if tier == Tier.MEMORY:
+            console.print("Memory proposal (nothing is saved unless you accept):",
+                          style="bold yellow", markup=False)
+            console.print(summary, style="yellow", markup=False, highlight=False)
+            try:
+                return "once" if prompt("[y] save  [n] reject > ").strip().lower() in ("y", "yes") else "deny"
+            except (EOFError, KeyboardInterrupt):
+                return "deny"
         console.print(f"Permission needed ({tier.value}): {reason}", style="bold yellow", markup=False)
         console.print(summary, style="yellow", markup=False, highlight=False)
         options = "[y] once  [s] this session  [n] deny" if can_remember else "[y] once [n] deny"
@@ -102,6 +113,14 @@ def make_ask(finish):
             if answer in ("n", "no", ""): # Enter alone = deny (safe default)
                 return "deny"
     return ask
+
+
+def confirm_memory(prompt_text: str) -> bool:
+    """Memory deletion and merge prompts fail closed on Ctrl+C or Ctrl+D."""
+    try:
+        return prompt(prompt_text).strip().lower() in ("y", "yes")
+    except (EOFError, KeyboardInterrupt):
+        return False
 
 def apply_instructions(project: dict, agent, audit) -> None:
     """Load the project's DANICA.md. New or changed text must be approved first."""
@@ -144,6 +163,13 @@ def build_session(session_id: str, finish, on_event, project: dict | None = None
     # so nothing of Danica's ever lands inside your project.
     ws = Workspace(root, todo_path=session_dir / "TODO.md",
                    sources_path=session_dir / "sources.json")
+    ws.memory = MemoryStore(
+        global_dir=APP_DIR / "memory" / "global",
+        project_dir=Path(project["dir"]) / "memory" if project else None,
+        project_id=project["id"] if project else None,
+        chat_dir=session_dir / "memory",
+        chat_id=session_id,
+    )
     save_session_meta(session_dir, project["path"] if project else None)
 
     # One audit log for ALL sessions, so the chain spans everything Danica ever did
@@ -281,6 +307,91 @@ def main() -> None:
             continue
         if text == "/ws":
             console.print(str(ws.root), markup=False)
+            continue
+        if text == "/memory" or text.startswith("/memory "):
+            parts = text.split()
+            store = ws.memory
+            try:
+                if len(parts) == 1:
+                    facts = store.list_facts()
+                    if not facts:
+                        console.print("(no saved memories)", markup=False)
+                    for fact in facts:
+                        console.print(
+                            f"{fact['id'][:8]}  [{fact['scope']}] {fact['title']} "
+                            f"({fact['updated'][:10]})",
+                            markup=False, highlight=False,
+                        )
+                        console.print(f"      {fact['summary']}", style="dim",
+                                      markup=False, highlight=False)
+                elif parts[1] == "review" and len(parts) == 2:
+                    pairs = store.duplicate_pairs()
+                    if not pairs:
+                        console.print("No likely duplicate memories found.", markup=False)
+                    for left, right, similarity in pairs:
+                        console.print(
+                            f"{similarity:.0%} similar: {left['id'][:8]} {left['title']} "
+                            f"<-> {right['id'][:8]} {right['title']}",
+                            markup=False, highlight=False,
+                        )
+                        console.print(
+                            f"  merge {left['id'][:8]} into {right['id'][:8]} with "
+                            f"/memory merge {left['id'][:8]} {right['id'][:8]}",
+                            style="dim", markup=False, highlight=False,
+                        )
+                elif parts[1] == "merge" and len(parts) == 4:
+                    facts = store.list_facts()
+                    sources = [fact for fact in facts if fact["id"].startswith(parts[2])]
+                    targets = [fact for fact in facts if fact["id"].startswith(parts[3])]
+                    if len(sources) != 1 or len(targets) != 1:
+                        raise MemoryError("source and target must be known, unique memory ids")
+                    source, target = sources[0], targets[0]
+                    console.print(
+                        f"Merge '{source['title']}' into '{target['title']}'? "
+                        "The source record will be deleted.",
+                        style="yellow", markup=False,
+                    )
+                    if not confirm_memory("[y] merge  [n] cancel > "):
+                        console.print("Merge cancelled.", markup=False)
+                        continue
+                    merged = store.merge(source["id"], target["id"])
+                    console.print(
+                        f"Merged into {merged['id'][:8]}: {merged['title']}",
+                        style="green", markup=False,
+                    )
+                    if merged["warning"]:
+                        console.print(merged["warning"], style="yellow", markup=False)
+                else:
+                    console.print("Usage: /memory | /memory review | "
+                                  "/memory merge <source-id> <target-id>", markup=False)
+            except (MemoryError, OSError, ValueError, sqlite3.Error) as e:
+                console.print(f"ERROR: {e}", style="red", markup=False)
+            continue
+        if text == "/forget" or text.startswith("/forget "):
+            parts = text.split(maxsplit=1)
+            if len(parts) != 2 or not parts[1].strip():
+                console.print("Usage: /forget <memory-id>", markup=False)
+                continue
+            memory_id = parts[1].strip()
+            try:
+                matches = [fact for fact in ws.memory.list_facts()
+                           if fact["id"].startswith(memory_id)]
+                if len(matches) != 1:
+                    raise MemoryError(
+                        "no memory matches that id" if not matches
+                        else "that id is ambiguous; use more characters"
+                    )
+                fact = matches[0]
+                console.print(f"Delete '{fact['title']}' from Markdown and all indexes?",
+                              style="yellow", markup=False)
+                if not confirm_memory("[y] forget  [n] cancel > "):
+                    console.print("Nothing deleted.", markup=False)
+                    continue
+                removed = ws.memory.forget(fact["id"])
+                console.print(f"Forgot '{removed['title']}' and verified its removal.",
+                              style="green", markup=False)
+            except (MemoryError, OSError, ValueError, sqlite3.Error) as e:
+                console.print(f"ERROR: {e}", style="red", markup=False)
             continue
         if text == "/context":
             console.print(agent.tracker.bar(agent.messages), markup=False)
