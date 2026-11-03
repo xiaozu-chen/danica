@@ -43,7 +43,7 @@ TEXT_TYPES = {"text/plain", "text/markdown", "text/csv", "application/json",
 # MUST stay empty in real use.
 TEST_ALLOW: set[tuple[str, int]] = set()
 
-USER_AGENT = "Mozilla/5.0 (compatible; Danica/0.1; local research assistant)"
+USER_AGENT = "Mozilla/5.0 (compatible; Danica/1.0.0; local research assistant)"
 
 
 class FetchError(Exception):

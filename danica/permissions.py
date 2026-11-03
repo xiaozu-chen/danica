@@ -39,10 +39,20 @@ TOOL_TIERS = {
     "run_shell": Tier.EXECUTE,
     "todo": Tier.WRITE,
     "recall": Tier.READ,
+    "load_skill": Tier.READ,
     "remember": Tier.MEMORY,
     "forget_memory": Tier.DESTRUCTIVE,
+    # Renderers write only validated workspace paths from bundled templates.
+    "create_chart": Tier.WRITE,
+    "create_dashboard": Tier.WRITE,
+    "create_document": Tier.WRITE,
+    "create_diagram": Tier.WRITE,
+    "create_slides": Tier.WRITE,
     "web_fetch": Tier.READ,
     "web_search": Tier.READ,
+}
+ARTIFACT_TOOLS = {
+    "create_chart", "create_dashboard", "create_document", "create_diagram", "create_slides",
 }
 
 # (regex, reason) pairs for commands that can destroy things or pull in code.
@@ -201,7 +211,7 @@ class PermissionPolicy:
         """While untrusted content is in context: which calls need a fresh yes?"""
         if tool == "run_shell":
             return True
-        if tool in ("write_file", "edit_file"):
+        if tool in ("write_file", "edit_file") or tool in ARTIFACT_TOOLS:
             return self.project_mode      # a page must not choose what lands in a REAL folder
         if tool == "web_fetch":
             host = host_of(str(args.get("url", "")))
@@ -224,7 +234,7 @@ class PermissionPolicy:
             else:
                 if tool == "run_shell":
                     what = "a page could be steering this command"
-                elif tool in ("write_file", "edit_file"):
+                elif tool in ("write_file", "edit_file") or tool in ARTIFACT_TOOLS:
                     what = "a page could be choosing what gets written into your project"
                 else:
                     what = "this site has not appeared in the conversation yet"
