@@ -40,4 +40,6 @@ t = ContextTracker(window=1000)
 t.record(500, 0)
 check("bar is half full at 50%", "[##########----------]" in t.bar([]) and "50%" in t.bar([]))
 
+
+
 print("\nAll good.")

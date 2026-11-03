@@ -120,7 +120,13 @@ def _render_one(m: dict, sizes: tuple[int, int, int, int]) -> str:
             return ""   # harness noise, not part of the story
         return "USER: " + text[:user_chars]
     if role == "tool":
-        return "RESULT: " + (m.get("content") or "")[:result_chars]
+        content = m.get("content") or ""
+        # Web pages and search results are untrusted. The summary becomes a message that
+        # looks like it came from the harness, so page text must never be fed into it.
+        # The facts live in her own answers, and the WEB SOURCES list lets her re-fetch.
+        if "<untrusted_web_content" in content:
+            return "RESULT: [web content omitted here; see WEB SOURCES, re-fetch if needed]"
+        return "RESULT: " + content[:result_chars]
     parts = []
     text = (m.get("content") or "").strip()
     if text:

@@ -1,9 +1,0 @@
-Traceback (most recent call last):
-  File "<frozen runpy>", line 198, in _run_module_as_main
-  File "<frozen runpy>", line 88, in _run_code
-  File "C:\Users\user\dev\danica\scripts\web_test.py", line 154, in <module>
-    check("the next part has later passages", "Paragraph 39" in out2 and "Paragraph 0 " not in out2)
-  File "C:\Users\user\dev\danica\scripts\web_test.py", line 24, in check
-    assert condition, label
-           ^^^^^^^^^
-AssertionError: the next part has later passages

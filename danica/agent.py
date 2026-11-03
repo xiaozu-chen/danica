@@ -244,6 +244,9 @@ class Agent:
 
         self.on_event("notice", "[context] compacting: summarizing earlier messages (takes a moment)...")
         before = self.tracker.used(self.messages)
+        # Our character-based estimate of the whole history BEFORE it shrinks. Used below
+        # to scale "after" by how far that estimate is from the server's exact count.
+        est_before = estimate_tokens(self.messages)
         old = self.messages[1:cut]                        # index 0 is the system prompt
         tail = self.messages[cut:]
         body = [m for m in old if not is_summary(m)]      # the old summary is rolled in via self.summary
@@ -267,13 +270,12 @@ class Agent:
         state = self.ws.web
         sources = [f"{s.id}: {(s.final_url or s.url)[:150]}" for s in state.by_id.values()] if state else []
         msg = build_message(self.summary, self.user_requests, self.files_changed, self.files_read, sources)
-        removed = estimate_tokens(old)
         self.messages = [self.messages[0], msg] + tail
         self.compactions += 1
 
-        # The exact size is unknown until the server answers again, so estimate it
-        # from the old exact number. The next model call replaces this guess.
-        after = max(before - removed + estimate_tokens([msg]), 0)
+        # The exact size is unknown until the server answers again, so scale our
+        # estimate by the same ratio the old history had. The next call replaces it.
+        after = int(before * estimate_tokens(self.messages) / max(est_before, 1))
         self.tracker.record(after, len(self.messages))
 
         # The transcript keeps the full history; this marker lets /resume rebuild
