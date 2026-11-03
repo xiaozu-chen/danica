@@ -5,6 +5,7 @@ Commands: /think (toggle thinking), /ws (show workspace path), /exit
 Ctrl+C stops the current task. Ctrl+D or /exit quits.
 """
 
+from pathlib import Path
 from datetime import datetime
 
 from prompt_toolkit import PromptSession, prompt
@@ -22,8 +23,21 @@ from danica.checkpoints import CheckpointError, Checkpoints
 from danica.tools.todo import read_todo
 from danica.compaction import is_summary
 from danica.sessions import SESSIONS_DIR, list_sessions, load_records, resolve_session
+from danica.projects import (ProjectError, check_allowed, load_session_meta, lookup,
+                             register, save_session_meta, scan, approve_instructions, read_instructions)
+from danica.export import export_session
 
 console = Console()
+
+HELP = """Commands
+  Chat      /think  toggle thinking      /new  fresh session, same mode      /exit
+  Project   /mode  /project [path]  /chat  /instructions
+  Context   /context  /prune  /compact [tokens]  /summary  /todo [clear]
+  Sessions  /sessions  /resume [number|id]  /export
+  Safety    /fullaccess  /sandbox  /audit  /undo  /rewind [id]  /taint  /untaint
+  Web       /sources
+  Other     /ws  /config  /help
+Ctrl+C stops the current task. Ctrl+D quits."""
 
 
 def make_event_printer():
@@ -89,24 +103,63 @@ def make_ask(finish):
                 return "deny"
     return ask
 
-def build_session(session_id: str, finish, on_event):
-    """Create everything one session needs. A new session and a resumed one use
-    the same code: resuming simply points at an existing folder."""
+def apply_instructions(project: dict, agent, audit) -> None:
+    """Load the project's DANICA.md. New or changed text must be approved first."""
+    found = read_instructions(project["path"])
+    if found is None:
+        return
+    text, sha, cut = found
+    approved_now = False
+    if project.get("instructions_sha") != sha:
+        label = "changed" if project.get("instructions_sha") else "new"
+        console.print(f"\nThis project has a {label} DANICA.md. Danica would follow it as "
+                      f"instructions (it cannot override safety rules or permission prompts):",
+                      style="bold yellow", markup=False)
+        console.print(text, style="dim", markup=False, highlight=False)
+        if cut:
+            console.print("(longer than the limit: only the text above would be loaded)",
+                          style="yellow", markup=False)
+        try:
+            ok = prompt("[y] load it  [n] skip > ").strip().lower() in ("y", "yes")
+        except (EOFError, KeyboardInterrupt):
+            ok = False
+        if not ok:
+            console.print("DANICA.md not loaded.", style="yellow", markup=False)
+            return
+        approve_instructions(project, sha)
+        approved_now = True
+    agent.set_project_instructions(text)
+    audit.append("instructions", sha=sha[:12], approved_now=approved_now)
+    console.print(f"Loaded DANICA.md ({len(text)} characters).", style="green", markup=False)
+
+def build_session(session_id: str, finish, on_event, project: dict | None = None):
+    """Create everything one session needs.
+    project=None  -> normal chat: a throwaway workspace inside the session folder
+    project=info  -> project mode: the workspace IS the user's trusted folder"""
     session_dir = APP_DIR / "sessions" / session_id
-    ws = Workspace(session_dir / "workspace", todo_path=session_dir / "TODO.md",
+    session_dir.mkdir(parents=True, exist_ok=True)
+
+    root = Path(project["path"]) if project else session_dir / "workspace"
+    # TODO.md, transcript and sources stay in the session folder either way,
+    # so nothing of Danica's ever lands inside your project.
+    ws = Workspace(root, todo_path=session_dir / "TODO.md",
                    sources_path=session_dir / "sources.json")
+    save_session_meta(session_dir, project["path"] if project else None)
 
     # One audit log for ALL sessions, so the chain spans everything Danica ever did
     audit = AuditLog(APP_DIR / "logs" / "audit.jsonl", session=session_id)
 
-    # Shadow git repo lives OUTSIDE the workspace, so the model can never touch it
-    checkpoints = Checkpoints(ws, session_dir / "checkpoints" / "git")
+    # Shadow git repo lives OUTSIDE the workspace, so the model can never touch it.
+    # A project keeps ONE repo shared by all its sessions (so /rewind spans sessions).
+    git_dir = Path(project["dir"]) / "git" if project else session_dir / "checkpoints" / "git"
+    checkpoints = Checkpoints(ws, git_dir)
     if not checkpoints.available:
         console.print("git was not found, so /undo and /rewind are disabled. "
                       "Install it with: winget install Git.Git", style="yellow", markup=False)
 
     # A fresh policy every time: approvals from another session never carry over
     policy = PermissionPolicy(ask=make_ask(finish))
+    policy.project_mode = project is not None    # relaxes everyday dev commands (see permissions.py)
     agent = Agent(
         ws,
         transcript_path=session_dir / "transcript.jsonl",
@@ -115,6 +168,8 @@ def build_session(session_id: str, finish, on_event):
         audit=audit,
         checkpoints=checkpoints,
     )
+    if project:
+        apply_instructions(project, agent, audit)
     return ws, audit, checkpoints, policy, agent
 
 
@@ -122,13 +177,22 @@ def open_resumed(target: str, finish, on_event):
     """Build a session around an existing folder and load its history.
     Returns (the 5 session objects, a text report for the user)."""
     records, bad = load_records(SESSIONS_DIR / target / "transcript.jsonl")
-    parts = build_session(target, finish, on_event)
+    # A project session must reopen in ITS folder, and only if that folder is still trusted
+    project = None
+    meta = load_session_meta(SESSIONS_DIR / target)
+    if meta.get("project"):
+        project = lookup(Path(meta["project"]))
+        if project is None or not Path(project["path"]).is_dir():
+            raise ValueError(f"that session worked in {meta['project']}, which is no longer "
+                             f"trusted or no longer exists. Use /project <path> to trust it again.")
+    parts = build_session(target, finish, on_event, project)
     ws, audit, checkpoints, policy, agent = parts
     fixed = agent.load_history(records)
     audit.append("session_resume", workspace=str(ws.root), records=len(records),
                  unreadable_lines=bad, repaired=fixed)
 
-    lines = [f"Resumed session {target}: {len(agent.messages) - 1} messages in context, "
+    where = f"project {project['name']}" if project else "chat"
+    lines = [f"Resumed session {target} ({where}): {len(agent.messages) - 1} messages in context, "
              f"{agent.compactions} compaction(s)."]
     if agent.user_requests:
         lines.append("Last request: " + agent.user_requests[-1][:120])
@@ -139,11 +203,44 @@ def open_resumed(target: str, finish, on_event):
                  "(/rewind still lists the old checkpoints). Try /todo and /summary.")
     return parts, "\n".join(lines)
 
+def ask_trust(path: Path) -> bool:
+    """The trust dialog. Returns True only on an explicit yes."""
+    files, size, capped, has_git = scan(path)
+    count = f"{files:,}+" if capped else f"{files:,}"
+    console.print(f"\nTrust this folder as a Danica project?\n  {path}", style="bold yellow", markup=False)
+    console.print(f"  {count} files, {size / 1_000_000:,.0f} MB (ignoring .git, .venv, node_modules)"
+                  + ("; it is a git repository" if has_git else ""), markup=False)
+    console.print("Trusting means Danica can read and change files here. Commands still ask for\n"
+                  "permission, and every request is snapshotted so /undo can roll it back.\n"
+                  "Snapshots live outside your folder and never touch your own .git.",
+                  style="dim", markup=False)
+    if capped or size > 500_000_000:
+        console.print("This folder is big: the first snapshot may take a while.", style="yellow", markup=False)
+    try:
+        return prompt("[y] trust  [n] cancel > ").strip().lower() in ("y", "yes")
+    except (EOFError, KeyboardInterrupt):
+        return False     # Ctrl+C / Ctrl+D = no
+
+
+def show_config() -> None:
+    """Print the effective settings. Names that look like secrets are masked."""
+    from danica.config import CONFIG_PATH          # local import: only this command needs it
+    state = "found" if CONFIG_PATH.exists() else "not created (all defaults)"
+    console.print(f"config file: {CONFIG_PATH} ({state})", markup=False, highlight=False)
+    for section, values in CONFIG.items():
+        console.print(f"[{section}]", style="bold", markup=False)
+        for key, value in values.items():
+            hidden = any(w in key.lower() for w in ("key", "token", "secret", "password"))
+            console.print(f"  {key} = {'***' if hidden else value}", markup=False, highlight=False)
+            
+
 def main() -> None:
+    launch_dir = Path.cwd()          # /project with no argument means THIS folder
     on_event, finish = make_event_printer()
     session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+    project = None                   # None = normal chat mode
     ws, audit, checkpoints, policy, agent = build_session(session_id, finish, on_event)
-    audit.append("session_start", workspace=str(ws.root))
+    audit.append("session_start", workspace=str(ws.root), mode="chat")
 
     # FileHistory gives up-arrow recall across restarts
     session = PromptSession(history=FileHistory(str(APP_DIR / "history.txt")))
@@ -155,11 +252,13 @@ def main() -> None:
         mode = "think" if agent.thinking else "fast"
         if policy.full_access:
             mode += " | FULL ACCESS" # loud on purpose
+        if project:
+            mode += f" | project: {project['name']}"
         if ws.web and ws.web.tainted:
             mode += " | TAINTED"   # untrusted web content is in context
         return HTML(f'<style fg="{color}">ctx {agent.tracker.bar(agent.messages)}</style> |{mode}')
 
-    console.print("[bold]Danica[/bold] ready. /think toggles thinking, /ws shows the workspace, /context to show usage /exit quits.")
+    console.print("[bold]Danica[/bold] ready. /help lists the commands, /project opens a real folder.")
     console.print(f"Workspace: {ws.root}", style="dim", markup=False)
 
     while True:
@@ -276,7 +375,7 @@ def main() -> None:
             if not infos:
                 console.print("(no saved sessions yet)", markup=False)
             for n, info in enumerate(infos, start=1):
-                tag = "  (current)" if info["id"] == ws.root.parent.name else ""
+                tag = "  (current)" if info["id"] == session_id else ""
                 console.print(f"{n:>2}. {info['id']}  {info['modified']:%d %b %H:%M}  "
                               f"{info['requests']} request(s), {info['compactions']} compaction(s){tag}",
                               markup=False, highlight=False)
@@ -286,7 +385,7 @@ def main() -> None:
         if text.split()[0] == "/resume":
             try:
                 arg = text.split()[1] if len(text.split()) > 1 else ""
-                target = resolve_session(SESSIONS_DIR, arg, current=ws.root.parent.name)
+                target = resolve_session(SESSIONS_DIR, arg, current=session_id)
                 parts, report = open_resumed(target, finish, on_event)
             except ValueError as e:
                 console.print(f"ERROR: {e}", style="red", markup=False)
@@ -295,6 +394,9 @@ def main() -> None:
                 console.print(f"ERROR: could not resume: {type(e).__name__}: {e}", style="red", markup=False)
                 continue
             ws, audit, checkpoints, policy, agent = parts    # switch over only on success
+            session_id = target
+            meta = load_session_meta(SESSIONS_DIR / target)
+            project = lookup(Path(meta["project"])) if meta.get("project") else None
             console.print(report, style="green", markup=False)
             continue
         if text == "/taint":
@@ -324,6 +426,77 @@ def main() -> None:
                 console.print(f"[{s.id}] {len(s.passages)} passages  {s.title[:60] or '(no title)'}",
                               markup=False, highlight=False)
                 console.print(f"      {s.final_url or s.url}", style="dim", markup=False, highlight=False)
+            continue
+        if text == "/mode":
+            if project:
+                console.print(f"project mode: {project['name']}\n  folder: {ws.root}", markup=False)
+            else:
+                console.print(f"normal chat (throwaway workspace)\n  folder: {ws.root}\n"
+                              f"  /project trusts and opens a real folder", markup=False)
+            continue
+
+        if text.split()[0] == "/project":
+            parts_ = text.split(maxsplit=1)           # the rest of the line, so paths with spaces work
+            raw = parts_[1].strip().strip('"') if len(parts_) > 1 else str(launch_dir)
+            try:
+                path = check_allowed(Path(raw))
+                info = lookup(path)
+                if info is None:                      # never trusted: ask first
+                    if not ask_trust(path):
+                        console.print("not trusted, nothing changed", style="yellow", markup=False)
+                        continue
+                    info = register(path)
+                    audit.append("project_trust", path=str(path), id=info["id"])
+                new_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+                new_parts = build_session(new_id, finish, on_event, info)
+            except ProjectError as e:
+                console.print(f"ERROR: {e}", style="red", markup=False)
+                continue
+            ws, audit, checkpoints, policy, agent = new_parts
+            session_id, project = new_id, info
+            audit.append("session_start", workspace=str(ws.root), mode="project", project=info["id"])
+            console.print(f"Project mode: {info['name']}\n  folder: {ws.root}\n"
+                          f"New session {new_id}. The previous session stays available via /sessions and /resume.",
+                          style="green", markup=False)
+            continue
+
+        if text == "/chat":
+            session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+            project = None
+            ws, audit, checkpoints, policy, agent = build_session(session_id, finish, on_event)
+            audit.append("session_start", workspace=str(ws.root), mode="chat")
+            console.print(f"Normal chat. New session {session_id}.", style="green", markup=False)
+            continue
+        if text == "/instructions":
+            console.print(agent.project_instructions or "(no project instructions loaded)", markup=False)
+            continue
+        if text == "/help":
+            console.print(HELP, markup=False)
+            continue
+
+        if text == "/config":
+            show_config()
+            continue
+
+        if text == "/new":
+            session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+            # Same mode as now: a project session reopens the same folder (and asks about
+            # DANICA.md only if it changed); a chat session gets a new throwaway workspace
+            ws, audit, checkpoints, policy, agent = build_session(session_id, finish, on_event, project)
+            audit.append("session_start", workspace=str(ws.root),
+                         mode="project" if project else "chat")
+            console.print(f"New session {session_id}.", style="green", markup=False)
+            continue
+
+        if text == "/export":
+            try:
+                out = export_session(APP_DIR / "sessions" / session_id, ws, project)
+            except (ValueError, OSError) as e:
+                console.print(f"ERROR: {e}", style="red", markup=False)
+                continue
+            audit.append("export", folder=str(out))
+            console.print(f"Exported to {out}\nRead conversation.md before sharing it: redaction "
+                          f"only catches well-known secret formats.", style="green", markup=False)
             continue
         # --- normal request: hand it to the agent ---
         try:

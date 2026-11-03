@@ -114,7 +114,7 @@ class Checkpoints:
         rows = []
         for line in out.splitlines():
             ident, stamp, label = line.split("\t", 2)
-            when = datetime.fromtimestamp(int(stamp)).strftime("%H:%M:%S")
+            when = datetime.fromtimestamp(int(stamp)).strftime("%d %b %H:%M")
             rows.append((ident, when, label))
         return rows
 

@@ -81,6 +81,65 @@ NETWORK_RX = re.compile(r"\b(invoke-webrequest|invoke-restmethod|iwr|irm|curl|wg
 def is_network_command(command: str) -> bool:
     return bool(NETWORK_RX.search(command))
 
+# ---------------------------------------------------------------------------
+# Project mode: commands that run WITHOUT asking inside a trusted project.
+# Everything else still goes through the normal tiers. Matching is by program
+# name and first arguments, so it catches honest use, not obfuscation (see the
+# HONEST LIMIT at the top of this file).
+# ---------------------------------------------------------------------------
+READ_ONLY_COMMANDS = {
+    "get-content", "gc", "cat", "type", "get-childitem", "gci", "ls", "dir",
+    "select-string", "sls", "get-location", "pwd", "echo", "write-output",
+    "write-host", "test-path", "get-item", "measure-object", "cd", "set-location", "sl",
+}
+DEV_TOOLS = {"pytest", "ruff", "mypy", "flake8", "black", "tsc", "eslint", "prettier"}
+PYTHON_MODULES = {"pytest", "unittest", "doctest", "ruff", "mypy", "flake8", "black", "compileall"}
+GIT_READ_ONLY = {"status", "diff", "log", "show", "ls-files", "rev-parse"}
+# Redirects, script blocks and sub-commands can hide what really runs
+PROJECT_UNSAFE = ("{", "}", ">", "<", "$(", "`")
+
+
+def _program(word: str) -> str:
+    name = word.strip("'\"").lower()
+    return name[:-4] if name.endswith(".exe") else name
+
+
+def _segment_ok(words: list[str]) -> bool:
+    """Is ONE command (a program and its arguments) free inside a project?"""
+    prog = _program(words[0])
+    if "/" in prog or "\\" in prog:
+        return False                      # only bare names: a model-written file can't pose as one
+    rest = [w.strip("'\"") for w in words[1:]]
+
+    if prog in READ_ONLY_COMMANDS or prog in DEV_TOOLS:
+        return True
+    if prog in ("python", "python3", "py"):
+        if not rest:
+            return False                  # a bare interpreter is a REPL
+        if rest[0] in ("--version", "-V"):
+            return True
+        if rest[0] == "-m":
+            return len(rest) > 1 and rest[1].lower() in PYTHON_MODULES
+        return rest[0].lower().endswith(".py")        # NOT -c: inline code asks
+    if prog == "node":
+        return bool(rest) and rest[0].lower().endswith((".js", ".mjs", ".cjs"))   # NOT -e
+    if prog in ("npm", "pnpm", "yarn"):
+        return bool(rest) and rest[0].lower() in ("test", "t", "run", "run-script")   # NOT install
+    if prog == "git":
+        return bool(rest) and rest[0].lower() in GIT_READ_ONLY
+    return False
+
+
+def is_project_safe(command: str) -> bool:
+    """True if EVERY part of the command is on the free list."""
+    if not command.strip() or any(m in command for m in PROJECT_UNSAFE):
+        return False
+    for segment in re.split(r"[;|&\n]+", command):     # a; b | c && d
+        words = segment.strip().split()
+        if words and not _segment_ok(words):
+            return False
+    return True
+
 def _programs(command: str) -> frozenset[str]:
     """First word of every segment in a chained command: 'a; b | c' -> {a, b, c}."""
     if any(m in command for m in COMPLEX_MARKERS):
@@ -128,12 +187,14 @@ class PermissionPolicy:
         self.full_access = False             # the /fullaccess toggle
         self.session_allowed: set[str] = set()
         self.last_how = ""                  # how the latest check was decided (for the audit log)
+        self.project_mode = False            # True inside a trusted project folder (set by the CLI)
 
-    @staticmethod
-    def _taint_applies(tool: str, args: dict, known_hosts) -> bool:
+    def _taint_applies(self, tool: str, args: dict, known_hosts) -> bool:
         """While untrusted content is in context: which calls need a fresh yes?"""
         if tool == "run_shell":
             return True
+        if tool in ("write_file", "edit_file"):
+            return self.project_mode      # a page must not choose what lands in a REAL folder
         if tool == "web_fetch":
             host = host_of(str(args.get("url", "")))
             return bool(host) and host not in known_hosts   # a new site might be a page's idea
@@ -153,12 +214,23 @@ class PermissionPolicy:
             if tier in (Tier.DESTRUCTIVE, Tier.OUTSIDE):
                 reason = f"{reason}; also: {note}"       # already asks every time
             else:
-                what = ("a page could be steering this command" if tool == "run_shell"
-                        else "this site has not appeared in the conversation yet")
+                if tool == "run_shell":
+                    what = "a page could be steering this command"
+                elif tool in ("write_file", "edit_file"):
+                    what = "a page could be choosing what gets written into your project"
+                else:
+                    what = "this site has not appeared in the conversation yet"
                 tier, reason = Tier.TAINTED, f"{what}; {note}"
             keys = frozenset()      # earlier "allow for session" approvals do not count now
         elif tier in (Tier.READ, Tier.WRITE):
             self.last_how = "free"
+            return True, ""
+
+        # Project mode: everyday dev commands are free. Never reached while tainted
+        # (the tier above is TAINTED then) and never for destructive/outside commands.
+        if (self.project_mode and tool == "run_shell" and tier == Tier.EXECUTE
+                and is_project_safe(str(args.get("command", "")))):
+            self.last_how = "project-free"
             return True, ""
 
         # Already approved for this session? (every program in the chain must be)

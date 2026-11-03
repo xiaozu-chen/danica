@@ -15,6 +15,9 @@ from danica.secret_scan import find_secrets, is_sensitive_path
 MAX_READ_LINES = 400      # hard cap per read_file call
 MAX_LINE_CHARS = 2000     # truncate absurdly long lines (minified files etc.)
 MAX_LIST_ENTRIES = 200    # cap directory listings
+# Folders whose files run automatically on the USER's next git commit. The model
+# must never write there, even in a trusted project (a planted hook = code execution).
+GUARDED_DIRS = {".git", ".husky", ".githooks"}
 
 
 def _read_text(path) -> str:
@@ -50,6 +53,12 @@ def _secret_check(text: str) -> str | None:
                f"value from an environment variable at runtime.")
     return None
 
+def _write_guard(ws: Workspace, p) -> str | None:
+    """Error message if p is inside a folder whose files run on their own."""
+    if any(part.lower() in GUARDED_DIRS for part in p.relative_to(ws.root).parts):
+        return (f"ERROR: '{ws.display(p)}' is blocked: files there run automatically "
+                f"(git hooks). Tell the user what change you wanted instead.")
+    return None
 
 @tool(
     "read_file",
@@ -99,6 +108,10 @@ def write_file(ws: Workspace, path: str, content: str) -> str:
     if p.is_dir():
         return f"ERROR: '{path}' is a directory"
 
+    guarded = _write_guard(ws, p)
+    if guarded:
+        return guarded
+
     refused = _secret_check(content)
     if refused:
         return refused
@@ -130,6 +143,9 @@ def edit_file(
     if not p.is_file():
         return f"ERROR: '{path}' is not a file (or does not exist)"
     blocked = _protected(ws, p)
+    guarded = _write_guard(ws, p)
+    if guarded:
+        return guarded
     if blocked:
         return blocked
     if not old_string:
