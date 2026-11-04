@@ -21,7 +21,6 @@ from danica.web import host_of
 class Tier(Enum):
     READ = "read"
     WRITE = "write"
-    MEMORY = "memory"
     EXECUTE = "execute"
     DESTRUCTIVE = "destructive"
     OUTSIDE = "outside-workspace"
@@ -38,9 +37,6 @@ TOOL_TIERS = {
     "edit_file": Tier.WRITE,
     "run_shell": Tier.EXECUTE,
     "todo": Tier.WRITE,
-    "recall": Tier.READ,
-    "remember": Tier.MEMORY,
-    "forget_memory": Tier.DESTRUCTIVE,
     "web_fetch": Tier.READ,
     "web_search": Tier.READ,
 }
@@ -166,10 +162,6 @@ def classify(tool: str, args: dict) -> tuple[Tier, str, frozenset[str]]:
 
     tier = TOOL_TIERS.get(tool, Tier.EXECUTE)  # unclassified tools fail safe
     if tool != "run_shell":
-        if tool == "remember":
-            return tier, "save this user-approved memory proposal", frozenset()
-        if tool == "forget_memory":
-            return tier, "permanently deletes a memory", frozenset()
         return tier, "", frozenset() if tier != Tier.EXECUTE else frozenset({f"tool:{tool}"})
 
     command = str(args.get("command", ""))
@@ -213,7 +205,7 @@ class PermissionPolicy:
         tainted_by: what put untrusted web content in the context (empty = clean)."""
         tier, reason, keys = classify(tool, args)
 
-        if self.full_access and tool != "remember":
+        if self.full_access:
             self.last_how = "full-access"
             return True, ""
 
