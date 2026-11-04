@@ -21,11 +21,16 @@ from danica.permissions import PermissionPolicy, Tier
 from danica.audit import AuditLog, verify
 from danica.checkpoints import CheckpointError, Checkpoints
 from danica.tools.todo import read_todo
-from danica.compaction import is_summary
+from danica.compaction import harvest, is_summary
 from danica.sessions import SESSIONS_DIR, list_sessions, load_records, resolve_session
 from danica.projects import (ProjectError, check_allowed, load_session_meta, lookup,
                              register, save_session_meta, scan, approve_instructions, read_instructions)
 from danica.export import export_session
+from danica.memory import SCOPES, MemoryStore, MemoryStoreError
+from danica.memory_index import FACTS_DB, MemoryIndex
+from danica.embeddings import get_embedder
+from danica.capture import ProposalQueue, extract
+from danica.forget import forget
 
 console = Console()
 
@@ -34,6 +39,7 @@ HELP = """Commands
   Project   /mode  /project [path]  /chat  /instructions
   Context   /context  /prune  /compact [tokens]  /summary  /todo [clear]
   Sessions  /sessions  /resume [number|id]  /export
+  Memory    /memory [list | add [scope] <text> | review | capture | search <words> | merge | forget <id> | show <id> | status | reindex | path]
   Safety    /fullaccess  /sandbox  /audit  /undo  /rewind [id]  /taint  /untaint
   Web       /sources
   Other     /ws  /config  /help
@@ -168,6 +174,16 @@ def build_session(session_id: str, finish, on_event, project: dict | None = None
         audit=audit,
         checkpoints=checkpoints,
     )
+    # Memory: global notes, this project's notes (if any), and this session's notes.
+    store = MemoryStore(APP_DIR / "memory",
+                        Path(project["dir"]) / "memory" if project else None,
+                        session_dir / "memory")
+    # Keyword + meaning search (meaning needs the embedding server; without it search falls back to keywords)
+    store.index = MemoryIndex(FACTS_DB, embedder=get_embedder(),
+                              min_similarity=CONFIG["embeddings"]["min_similarity"])
+    ws.memory = store                      # the recall tool reaches memory through the workspace
+    agent.memory = store                   # the digest and auto-recall read it from the agent
+    agent.proposals = ProposalQueue(session_dir / "proposals.json")   # notes waiting for /memory review
     if project:
         apply_instructions(project, agent, audit)
     return ws, audit, checkpoints, policy, agent
@@ -234,6 +250,219 @@ def show_config() -> None:
             console.print(f"  {key} = {'***' if hidden else value}", markup=False, highlight=False)
             
 
+def forget_note(store: MemoryStore, page) -> bool:
+    """Forget one note for real and print every verification check. True if all passed."""
+    report = forget(store, page)
+    for name, ok, detail in report.checks:
+        console.print(f"  {'ok  ' if ok else 'FAIL'} {name}" + (f": {detail}" if detail else ""),
+                      style="green" if ok else "red", markup=False, highlight=False)
+    if report.mentions:
+        console.print(f"Its text still appears in {len(report.mentions)} file(s) that forget does not "
+                      f"edit (transcripts, summaries, exports):", style="yellow", markup=False)
+        for m in report.mentions[:5]:
+            console.print("  " + m, markup=False, highlight=False)
+        if len(report.mentions) > 5:
+            console.print(f"  ... and {len(report.mentions) - 5} more", markup=False)
+    console.print("The audit log and any backups of your AppData folder are never edited.",
+                  style="dim", markup=False)
+    return report.ok
+
+
+def review_proposals(store: MemoryStore, queue: ProposalQueue, audit) -> None:
+    """/memory review: go through proposed notes one at a time."""
+    items = queue.items()
+    if not items:
+        console.print("(no proposed notes)", markup=False)
+        return
+    for item in items:
+        scope, text = item["scope"], item["text"]
+        if scope not in store.dirs:
+            console.print(f"[{scope}] {text}\n  (left for later: {scope} memory is not open here)",
+                          style="dim", markup=False)
+            continue
+        console.print(f"\nProposed [{scope}]: {text}", style="bold", markup=False)
+        try:
+            answer = prompt("[y] save  [e] edit  [n] drop  [s] skip  [q] stop > ").strip().lower()
+            edited = False
+            if answer == "e":
+                text = prompt("note> ", default=text).strip()
+                answer, edited = "y", True
+        except (EOFError, KeyboardInterrupt):
+            return
+        if answer == "q":
+            return
+        if answer == "n":
+            queue.remove(item["id"])
+        elif answer == "y":
+            try:
+                # A note you edited is your own wording: full confidence, source "user"
+                page = store.add(scope, text, source="user" if edited else "captured",
+                                 confidence="1.0" if edited else "0.8")
+            except MemoryStoreError as e:
+                console.print(f"ERROR: {e}", style="red", markup=False)
+                queue.remove(item["id"])
+                continue
+            queue.remove(item["id"])
+            audit.append("memory_add", scope=scope, id=page.id, source=page.source)
+            console.print(f"saved to {scope} memory (id {page.id})", style="green", markup=False)
+        # anything else (s, Enter) leaves it in the queue
+
+
+def merge_notes(store: MemoryStore, audit) -> None:
+    """/memory merge: pairs of near-duplicate notes (same scope, almost the same meaning)."""
+    if store.index is None:
+        console.print("search is not available in this session", markup=False)
+        return
+    pairs = store.index.near_duplicates(store, CONFIG["embeddings"]["merge_similarity"], 10)
+    if not pairs:
+        console.print("no near-duplicate notes found", markup=False)
+        return
+    for sim, ua, ub in pairs:
+        a, b = store.get(ua), store.get(ub)
+        if a is None or b is None:
+            continue                       # one of them was already dealt with in this loop
+        console.print(f"\nThese two {a.scope} notes look alike (similarity {sim:.2f}):",
+                      style="bold", markup=False)
+        console.print(f"  1. {a.body}\n  2. {b.body}", markup=False, highlight=False)
+        try:
+            answer = prompt("[1] keep first  [2] keep second  [m] write one merged note  "
+                            "[s] skip  [q] stop > ").strip().lower()
+            if answer == "m":
+                merged = prompt("merged note> ", default=a.body).strip()
+        except (EOFError, KeyboardInterrupt):
+            return
+        if answer == "q":
+            return
+        if answer == "1":
+            drop = [b]
+        elif answer == "2":
+            drop = [a]
+        elif answer == "m":
+            try:
+                page = store.add(a.scope, merged)       # saved FIRST: a refusal loses nothing
+            except MemoryStoreError as e:
+                console.print(f"ERROR: {e}", style="red", markup=False)
+                continue
+            audit.append("memory_add", scope=a.scope, id=page.id, source="merge")
+            drop = [a, b]
+        else:
+            continue
+        for old in drop:
+            ok = forget_note(store, old)
+            audit.append("memory_forget", scope=old.scope, id=old.id, ok=ok, reason="merge")
+
+
+def handle_memory(text: str, store: MemoryStore, audit, in_project: bool, agent) -> None:
+    """The /memory command. Sub-commands: list, add, review, capture, show, forget (delete),
+    merge, search, status, reindex, path."""
+    parts = text.split(maxsplit=2)               # "/memory", the sub-command, then the rest
+    sub = parts[1].lower() if len(parts) > 1 else "list"
+    rest = parts[2] if len(parts) > 2 else ""
+    try:
+        if sub == "list":
+            pages = store.list_pages()
+            if not pages:
+                console.print("(no saved memory yet. Try: /memory add I prefer 4-space indentation)", markup=False)
+            for p in pages:
+                console.print(f"{p.id}  {p.scope:<7} {p.source:<8} {p.updated[:10]}  {p.summary}",
+                              markup=False, highlight=False)
+            if store.skipped:
+                console.print(f"({store.skipped} file(s) in the memory folders were skipped: not valid "
+                              f"notes, or too big)", style="dim", markup=False)
+            if agent.proposals and agent.proposals.count():
+                console.print(f"({agent.proposals.count()} proposed note(s) waiting: /memory review)",
+                              style="yellow", markup=False)
+
+        elif sub == "add":
+            words = rest.split(maxsplit=1)
+            if words and words[0].lower() in SCOPES:          # /memory add global <text>
+                scope, body = words[0].lower(), (words[1] if len(words) > 1 else "")
+            else:                                             # default: project if open, else global
+                scope, body = ("project" if in_project else "global"), rest
+            page = store.add(scope, body)
+            audit.append("memory_add", scope=scope, id=page.id)   # the text itself is never logged
+            console.print(f"saved to {scope} memory (id {page.id})", style="green", markup=False)
+
+        elif sub == "review":
+            review_proposals(store, agent.proposals, audit)
+
+        elif sub == "capture":
+            recent = harvest(agent.messages)[0][-5:]          # your last requests, verbatim
+            if not recent:
+                console.print("nothing to look at yet: send a request first", markup=False)
+            else:
+                added = 0
+                try:
+                    for request in recent:
+                        for scope, note in extract(request, store):
+                            added += agent.proposals.add(scope, note)
+                except Exception as e:                        # most likely: llama-server is down
+                    console.print(f"could not ask the model ({type(e).__name__})", style="red", markup=False)
+                console.print(f"{added} note(s) proposed. /memory review shows them.", markup=False)
+
+        elif sub == "show":
+            page = store.find(rest)
+            console.print(f"[{page.scope}] {page.title}\nid {page.id}   source {page.source}   "
+                          f"confidence {page.confidence}\ncreated {page.created}   updated {page.updated}"
+                          f"\n\n{page.body}", markup=False, highlight=False)
+
+        elif sub in ("forget", "delete"):
+            page = store.find(rest)
+            console.print(f"Forget [{page.scope}] {page.summary}", style="yellow", markup=False)
+            try:
+                sure = prompt("[y] forget it for good  [n] keep > ").strip().lower() in ("y", "yes")
+            except (EOFError, KeyboardInterrupt):
+                sure = False
+            if sure:
+                ok = forget_note(store, page)
+                audit.append("memory_forget", scope=page.scope, id=page.id, ok=ok)
+            else:
+                console.print("kept", markup=False)
+
+        elif sub == "merge":
+            merge_notes(store, audit)
+
+        elif sub == "search":
+            if store.index is None:
+                console.print("search is not available in this session", markup=False)
+            else:
+                hits = store.index.recall(store, rest, 5)
+                for h in hits:
+                    sim = f"{h.sim:.2f}" if h.sim is not None else " - "
+                    console.print(f"{h.id}  {h.scope:<7} {h.via:<8} sim {sim}  {h.summary}",
+                                  markup=False, highlight=False)
+                if not hits:
+                    console.print("no matching notes", markup=False)
+                    if store.index.nearest is not None:
+                        console.print(f"(closest by meaning: {store.index.nearest:.2f}, below the "
+                                      f"{store.index.min_similarity:.2f} threshold)", style="dim", markup=False)
+                if store.index.note:
+                    console.print(f"keyword search only: {store.index.note}", style="yellow", markup=False)
+
+        elif sub == "status":
+            if store.index is None:
+                console.print("search is not available in this session", markup=False)
+            else:
+                for line in store.index.status_lines(store):
+                    console.print(line, markup=False, highlight=False)
+
+        elif sub == "reindex":
+            if store.index is None:
+                console.print("search is not available in this session", markup=False)
+            else:
+                n = store.index.reindex()
+                console.print(f"cleared {n} vector(s); they are rebuilt on the next search", markup=False)
+
+        elif sub == "path":
+            for scope, folder in store.dirs.items():
+                console.print(f"{scope:<8} {folder}", markup=False, highlight=False)
+
+        else:
+            console.print("usage: /memory [list | add [scope] <text> | review | capture | search <words> | "
+                          "merge | forget <id> | show <id> | status | reindex | path]", markup=False)
+    except MemoryStoreError as e:
+        console.print(f"ERROR: {e}", style="red", markup=False)
+
 def main() -> None:
     launch_dir = Path.cwd()          # /project with no argument means THIS folder
     on_event, finish = make_event_printer()
@@ -254,6 +483,8 @@ def main() -> None:
             mode += " | FULL ACCESS" # loud on purpose
         if project:
             mode += f" | project: {project['name']}"
+        if agent.proposals and agent.proposals.count():
+            mode += f" | {agent.proposals.count()} proposed note(s)"
         if ws.web and ws.web.tainted:
             mode += " | TAINTED"   # untrusted web content is in context
         return HTML(f'<style fg="{color}">ctx {agent.tracker.bar(agent.messages)}</style> |{mode}')
@@ -497,6 +728,10 @@ def main() -> None:
             audit.append("export", folder=str(out))
             console.print(f"Exported to {out}\nRead conversation.md before sharing it: redaction "
                           f"only catches well-known secret formats.", style="green", markup=False)
+            continue
+
+        if text.split()[0] == "/memory":
+            handle_memory(text, agent.memory, audit, project is not None, agent)
             continue
         # --- normal request: hand it to the agent ---
         try:

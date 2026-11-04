@@ -39,6 +39,7 @@ TOOL_TIERS = {
     "todo": Tier.WRITE,
     "web_fetch": Tier.READ,
     "web_search": Tier.READ,
+    "recall": Tier.READ,
 }
 
 # (regex, reason) pairs for commands that can destroy things or pull in code.

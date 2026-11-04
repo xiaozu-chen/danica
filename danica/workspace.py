@@ -28,6 +28,8 @@ class Workspace:
         # Per-session web state (sources, cache, taint flag). Created on first
         # use by the web tools, so sessions that never browse pay nothing.
         self.web = None
+        # The session's MemoryStore (set by the CLI) so the recall tool can reach it. None = no memory.
+        self.memory = None
 
     def resolve(self, user_path: str) -> Path:
         """

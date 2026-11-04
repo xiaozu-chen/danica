@@ -20,6 +20,9 @@ DEFAULTS = {
     "compaction": {"tail_fraction": 0.12},
     "web": {"user_agent": "Danica/0.1 (local research assistant)",
             "search_provider": "searxng", "search_url": "http://localhost:8888"},
+    "embeddings": {"enabled": True, "url": "http://localhost:8081",
+                   "model_name": "nomic-embed-text-v1.5", "min_similarity": 0.50,
+                   "merge_similarity": 0.88},
 }
 
 def load_config() -> dict:
