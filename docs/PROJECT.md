@@ -140,7 +140,6 @@ Each phase has a goal, the work, and an exit test. Phases are ordered by depende
 - `/memory` list and review, scopes with precedence, `forget` that deletes across Markdown, SQLite rows and vectors and verifies the result, dedup and merge pass.
 - **Exit:** a preference stated in one session is correctly used in a later one, and `forget` leaves no trace.
 - **Implementation:** [Phase 6 details](PHASE6.md), including configuration and the offline exit test.
-- **Live testing:** the deferred guide begins at Phase 6 in [LIVE_TEST.md](../LIVE_TEST.md).
 
 ### Phase 7: Output systems
 - **Present tag** handling and the chart and table template library, plus the dashboard builder.
@@ -149,14 +148,12 @@ Each phase has a goal, the work, and an exit test. Phases are ordered by depende
 - **Diagrams:** Mermaid and Graphviz rendered to PNG or SVG.
 - **Slide decks:** pptx theme library and an HTML slideshow.
 - **Exit:** from one prompt, Danica produces a cited report as docx plus a chart you can open from the CLI.
-- **Implementation:** [Phase 7 details](PHASE7.md) and deferred end-to-end checks in [LIVE_TEST.md](../LIVE_TEST.md).
 
 ### Phase 8: Planning, skills, verification
 - **Plan mode:** plan file written and shown before large tasks, approve or edit, then execute against the plan.
 - **Skills:** `SKILL.md` folders; only name and description are loaded into context, the body loads when the model requests it.
 - **Self-reflection:** a cheap final pass that checks the result against the original request and the plan, with at most one automatic fix attempt.
 - **Exit:** a multi-step project completes with a plan, and the verification pass catches a seeded mistake.
-- **Implementation:** [Phase 8 details](PHASE8.md) and offline acceptance test `scripts.phase8_exit`.
 
 ### Phase 9: Subagents
 - Process spawn into new terminal windows, local IPC, brief-in and summary-out protocol.
@@ -189,7 +186,7 @@ Each phase has a goal, the work, and an exit test. Phases are ordered by depende
 
 ## 5. Suggested v1 cut line
 
-Ship after **Phase 8**, plus the web-research defenses from Phase 4. That gives you an agent that codes, researches, presents and remembers, with safe permissions and context handling. Subagents, the notes knowledge base, extensibility and the trained classifier are strong v1.5 and v2 features, and each builds cleanly on the earlier phases. Release notes are in [CHANGELOG.md](../CHANGELOG.md).
+Ship after **Phase 8**, plus the web-research defenses from Phase 4. That gives you an agent that codes, researches, presents and remembers, with safe permissions and context handling. Subagents, the notes knowledge base, extensibility and the trained classifier are strong v1.5 and v2 features, and each builds cleanly on the earlier phases.
 
 ## 6. Main risks and mitigations
 

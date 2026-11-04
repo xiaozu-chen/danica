@@ -20,15 +20,7 @@ class PathJailError(Exception):
 
 
 class Workspace:
-    def __init__(
-        self,
-        root: Path,
-        todo_path: Path | None = None,
-        sources_path: Path | None = None,
-        plan_path: Path | None = None,
-        plan_approval_path: Path | None = None,
-        skill_dir: Path | None = None,
-    ):
+    def __init__(self, root: Path, todo_path: Path | None = None, sources_path: Path | None = None):
         # resolve() makes the root absolute and follows symlinks, so later
         # comparisons are against the *real* location on disk.
         self.root = Path(root).resolve()
@@ -36,10 +28,6 @@ class Workspace:
         # Where this session's TODO.md lives (OUTSIDE the jail, on purpose).
         # None = no scratchpad (tests that don't need one).
         self.todo_path = Path(todo_path) if todo_path else None
-        # Approved plans stay beside session state, outside the project workspace.
-        self.plan_path = Path(plan_path) if plan_path else None
-        self.plan_approval_path = Path(plan_approval_path) if plan_approval_path else None
-        self.skill_dir = Path(skill_dir) if skill_dir else None
         # Where fetched web sources are saved so [S#] ids survive /resume.
         # None = kept in memory only (tests).
         self.sources_path = Path(sources_path) if sources_path else None
@@ -48,9 +36,6 @@ class Workspace:
         self.web = None
         # Bound by the CLI for sessions that have persistent memory enabled.
         self.memory: MemoryStore | None = None
-        # Relative paths written in the active request and trusted template outputs.
-        self.artifacts: set[str] = set()
-        self.presentables: set[str] = set()
 
     def resolve(self, user_path: str) -> Path:
         """

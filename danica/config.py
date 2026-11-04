@@ -18,7 +18,7 @@ DEFAULTS = {
     "sandbox": {"memory_mb": 2048, "max_processes": 64},
     "pruning": {"keep_recent": 6, "min_chars": 400},
     "compaction": {"tail_fraction": 0.12},
-    "web": {"user_agent": "Danica/1.0.0 (local research assistant)",
+    "web": {"user_agent": "Danica/0.1 (local research assistant)",
             "search_provider": "searxng", "search_url": "http://localhost:8888"},
     "memory": {"embedding_url": "http://127.0.0.1:8081",
                "embedding_model": "nomic-embed-text-v1.5",

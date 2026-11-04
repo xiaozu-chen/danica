@@ -13,7 +13,6 @@ from prompt_toolkit import PromptSession, prompt
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.formatted_text import HTML
 from rich.console import Console
-from rich.text import Text
 
 from danica.agent import Agent
 from danica.config import APP_DIR, CONFIG
@@ -29,8 +28,6 @@ from danica.projects import (ProjectError, check_allowed, load_session_meta, loo
                              register, save_session_meta, scan, approve_instructions, read_instructions)
 from danica.export import export_session
 from danica.memory import MemoryError, MemoryStore
-from danica.planning import PlanError, needs_plan, normalize_plan
-from danica.skills import discover_skills
 
 console = Console()
 
@@ -42,8 +39,6 @@ HELP = """Commands
   Safety    /fullaccess  /sandbox  /audit  /undo  /rewind [id]  /taint  /untaint
   Web       /sources
   Memory    /memory [review|merge <source-id> <target-id>]  /forget <id>
-  Skills    /skills  (list local skills; bodies load only on request)
-  Output    /artifacts  (click a generated artifact link or copy its path)
   Other     /ws  /config  /help
 Ctrl+C stops the current task. Ctrl+D quits."""
 
@@ -84,18 +79,6 @@ def make_event_printer():
             # Yellow when there is a warning, green when everything checked out
             console.print(data, style="yellow" if "WARNING" in data else "green",
                           markup=False, highlight=False)
-        elif kind == "present":
-            newline_if_needed()
-            path = Path(data)
-            link = Text(f"Open presentation: {path}", style=f"link {path.as_uri()}")
-            console.print(link, markup=False, highlight=False)
-        elif kind == "artifacts":
-            newline_if_needed()
-            console.print("Artifacts from this task (click to open, or copy the path):",
-                          style="bold green", markup=False)
-            for path in data:
-                console.print(Text(f"  {path}", style=f"link {Path(path).as_uri()}"),
-                              markup=False, highlight=False)
     def finish() -> None:
         newline_if_needed()
 
@@ -139,35 +122,6 @@ def confirm_memory(prompt_text: str) -> bool:
     except (EOFError, KeyboardInterrupt):
         return False
 
-
-def review_plan(plan: str) -> str | None:
-    """Let the user approve, edit, or cancel a large-task plan."""
-    while True:
-        console.print("\nProposed plan (saved in this session's PLAN.md):",
-                      style="bold yellow", markup=False)
-        console.print(plan, markup=False, highlight=False)
-        try:
-            answer = prompt("[a] approve  [e] edit  [c] cancel > ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            return None
-        if answer in ("a", "approve", "y", "yes"):
-            return plan
-        if answer in ("c", "cancel", "n", "no", ""):
-            return None
-        if answer not in ("e", "edit"):
-            console.print("Choose approve, edit, or cancel.", style="yellow", markup=False)
-            continue
-        try:
-            edited = prompt(
-                "Edit the Markdown plan (Esc then Enter to submit; Ctrl+C cancels):\n",
-                multiline=True,
-            )
-            plan = normalize_plan(edited)
-        except (EOFError, KeyboardInterrupt):
-            return None
-        except PlanError as exc:
-            console.print(f"Invalid plan: {exc}", style="yellow", markup=False)
-
 def apply_instructions(project: dict, agent, audit) -> None:
     """Load the project's DANICA.md. New or changed text must be approved first."""
     found = read_instructions(project["path"])
@@ -208,10 +162,7 @@ def build_session(session_id: str, finish, on_event, project: dict | None = None
     # TODO.md, transcript and sources stay in the session folder either way,
     # so nothing of Danica's ever lands inside your project.
     ws = Workspace(root, todo_path=session_dir / "TODO.md",
-                   sources_path=session_dir / "sources.json",
-                   plan_path=session_dir / "PLAN.md",
-                   plan_approval_path=session_dir / "PLAN.approved",
-                   skill_dir=APP_DIR / "skills")
+                   sources_path=session_dir / "sources.json")
     ws.memory = MemoryStore(
         global_dir=APP_DIR / "memory" / "global",
         project_dir=Path(project["dir"]) / "memory" if project else None,
@@ -263,11 +214,6 @@ def open_resumed(target: str, finish, on_event):
     parts = build_session(target, finish, on_event, project)
     ws, audit, checkpoints, policy, agent = parts
     fixed = agent.load_history(records)
-    try:
-        agent.restore_plan()
-    except (PlanError, OSError, UnicodeError) as exc:
-        console.print(f"WARNING: saved plan could not be restored: {exc}",
-                      style="yellow", markup=False)
     audit.append("session_resume", workspace=str(ws.root), records=len(records),
                  unreadable_lines=bad, repaired=fixed)
 
@@ -276,8 +222,6 @@ def open_resumed(target: str, finish, on_event):
              f"{agent.compactions} compaction(s)."]
     if agent.user_requests:
         lines.append("Last request: " + agent.user_requests[-1][:120])
-    if agent.current_plan:
-        lines.append("An interrupted approved plan was restored from PLAN.md.")
     if bad or fixed:
         lines.append(f"Repairs: {bad} unreadable transcript line(s) skipped, "
                      f"{fixed} broken tool-call record(s) fixed.")
@@ -363,31 +307,6 @@ def main() -> None:
             continue
         if text == "/ws":
             console.print(str(ws.root), markup=False)
-            continue
-        if text == "/artifacts":
-            artifacts = [
-                ws.resolve(path) for path in sorted(ws.artifacts)
-                if Path(path).suffix.casefold() != ".html"
-            ]
-            if not artifacts:
-                console.print("(no non-HTML artifacts from the current task)", markup=False)
-            else:
-                console.print("Artifacts from this task (click to open, or copy the path):",
-                              style="bold green", markup=False)
-                for path in artifacts:
-                    console.print(Text(f"  {path}", style=f"link {path.as_uri()}"),
-                                  markup=False, highlight=False)
-            continue
-        if text == "/skills":
-            skills, warnings = discover_skills(APP_DIR / "skills")
-            if not skills:
-                console.print("(no valid skills; add <name>\\SKILL.md under "
-                              f"{APP_DIR / 'skills'})", markup=False)
-            for skill in skills:
-                console.print(f"{skill.name}: {skill.description}", markup=False,
-                              highlight=False)
-            for warning in warnings:
-                console.print(f"WARNING: {warning}", style="yellow", markup=False)
             continue
         if text == "/memory" or text.startswith("/memory "):
             parts = text.split()
@@ -692,25 +611,7 @@ def main() -> None:
             continue
         # --- normal request: hand it to the agent ---
         try:
-            approved_plan = None
-            continuing = bool(agent.current_plan) and text.strip().casefold() in {
-                "continue", "continue the task", "keep going", "resume the task",
-            }
-            if needs_plan(text):
-                proposed = agent.create_plan(text)
-                proposed = agent.save_plan_draft(proposed)
-                approved_plan = review_plan(proposed)
-                if approved_plan is None:
-                    agent.cancel_plan()
-                    audit.append("plan_cancelled")
-                    console.print("Plan cancelled; no task actions were run.",
-                                  style="yellow", markup=False)
-                    continue
-                approved_plan = agent.approve_plan_draft(approved_plan)
-                audit.append("plan_approved", chars=len(approved_plan), edited=approved_plan != proposed)
-            elif continuing:
-                approved_plan = agent.current_plan
-            result = agent.run(text, approved_plan=approved_plan)
+            result = agent.run(text)
             finish()
             # Normal answers were already streamed to the screen; only the
             # harness's "[stopped: ...]" notices still need printing
