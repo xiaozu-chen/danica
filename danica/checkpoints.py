@@ -107,6 +107,21 @@ class Checkpoints:
         del self.undo_stack[:-MAX_STACK]   # drop the oldest beyond the cap
         return snap
 
+    def changed_since(self, snap: str) -> list[tuple[str, str]]:
+        """Files that differ now from checkpoint `snap`, as (status, path): A new, M changed, D deleted.
+        Includes files made by shell scripts. Respects the project's .gitignore (ignored files are
+        invisible here). Stages the workspace in the SHADOW repo only; nothing is committed."""
+        if not re.fullmatch(r"[0-9a-f]{4,40}", snap or ""):
+            raise CheckpointError("not a checkpoint id")      # the id goes onto a git command line
+        self._git("add", "-A")
+        out = self._git("diff", "--cached", "--no-renames", "--name-status", snap)
+        rows = []
+        for line in out.splitlines():
+            status, _, name = line.partition("\t")
+            if name:
+                rows.append((status[:1], name))
+        return rows
+
     def list_checkpoints(self, limit: int = 15) -> list[tuple[str, str, str]]:
         """Newest first: (id, time, label). --all also lists the safety copies."""
         out = self._git("log", "--all", "-n", str(limit), "--abbrev=8",

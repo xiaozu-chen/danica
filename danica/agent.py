@@ -14,6 +14,7 @@ Guards that keep a small local model from going off the rails:
 
 import json
 import secrets
+import re
 from pathlib import Path
 from typing import Callable
 
@@ -55,6 +56,10 @@ Rules:
 - To find web pages, use web_search, then web_fetch the best results and cite the fetched passages. Search snippets are not citable.
 - While untrusted web content is in the conversation, the harness asks the user before shell commands and before fetching new sites. If the user denies, do not look for another way around it.
 - The user keeps saved memory notes. The newest are listed in a [Saved memory] block each turn; for anything else, use the recall tool with a few keywords BEFORE saying you don't know something about the user or their projects. You cannot save or change notes.
+- To show data as a chart or table: write a JSON data file with write_file (for example charts/sales.json), call the chart tool on it, then write <present file="charts/sales.png"/> on its own line in your answer and the user sees the image. Never write plotting code or HTML for charts.
+- To make a Word or PDF document: write the content as Markdown with write_file (for example reports/summary.md; use # headings, lists, | tables |, and ![caption](charts/sales.png) for a chart you already made), then call the document tool with format docx or pdf. Cite web sources as [S1.2]; the tool adds a verified Sources section itself, so never write one. Never write docx or PDF code yourself. The <present> tag is only for your chat answer: never put it inside a Markdown file.
+- To draw a flowchart or boxes-and-arrows diagram: write a JSON file with write_file (for example diagrams/flow.json: nodes with an id and a label, edges with from and to), call the diagram tool on it, then show it with <present file="diagrams/flow.png"/> in chat, or put ![caption](diagrams/flow.png) inside a Markdown document or deck. Never write Mermaid, Graphviz or plotting code.
+- To make a PowerPoint deck: write a Markdown outline with write_file (a # title, then one ## heading per slide with at most 6 short bullets and at most one picture or table; a line starting Notes: becomes speaker notes), then call the deck tool. Cite web sources as [S1.2]; the tool adds a verified Sources slide itself. Never write pptx code yourself.
 """
 
 # Callback signature: on_event(kind, data). Kinds used below:
@@ -130,6 +135,9 @@ class Agent:
         self.memory = None   # the MemoryStore (attached by the CLI; None = no memory)
         self.recalled: list[tuple[str, str]] = []   # (note id, line) found for the CURRENT request
         self.proposals = None   # the ProposalQueue (attached by the CLI); None = no auto-capture
+        self.charts_made: list[str] = []   # pictures the chart tool made during the CURRENT request
+        self.request_snap: str | None = None   # the checkpoint taken before the current request (for the artifact list)
+        self.touched: list[str] = []           # files the file tools and document tools wrote during it
 
     # ------------------------------------------------------------------ helpers
 
@@ -405,6 +413,23 @@ class Agent:
         state = self.ws.web
         known_sources = len(state.taint_sources) if state else 0
         result = run_tool(call["name"], args, self.ws)
+        if call["name"] in ("chart", "diagram"):
+            # The CLI shows any chart the answer forgot to present (see EventPrinter)
+            m = re.match(r"OK: saved (.+?) \(", result)
+            if m and m.group(1) not in self.charts_made:
+                self.charts_made.append(m.group(1))
+        # Remember which files this request wrote (for the artifact list)
+        if call["name"] in ("write_file", "edit_file") and result.startswith("OK"):
+            try:
+                rel = self.ws.display(self.ws.resolve(str(args.get("path", ""))))
+            except Exception:
+                rel = ""
+            if rel and rel not in self.touched:
+                self.touched.append(rel)
+        elif call["name"] in ("chart", "diagram", "document", "deck"):
+            m = re.match(r"OK: saved (.+?) \(", result)
+            if m and m.group(1) not in self.touched:
+                self.touched.append(m.group(1))
         if call["name"] in ("web_fetch", "web_search") and not result.startswith("ERROR"):
             self.web_used = True    # this request read the web, so its answer should cite
 
@@ -436,9 +461,11 @@ class Agent:
     def run(self, user_text: str) -> str:
         """Handle one user request. Returns the model's final text answer."""
         # Snapshot the workspace BEFORE anything changes, so /undo can return here
+        self.request_snap, self.touched = None, []
         if self.checkpoints and self.checkpoints.available:
             try:
                 snap = self.checkpoints.begin_request(user_text)
+                self.request_snap = snap
                 self._log("checkpoint", id=snap)
             except Exception as e: # a failed snapshot must never block the user's work
                 self.on_event("notice", f"WARNING: checkpoint failed ({e}). /undo will not cover this")
@@ -453,6 +480,7 @@ class Agent:
         state_for(self.ws).trust_hosts_from(user_text)
         # Search saved memory for notes relevant to THIS request (shown on every model call)
         self.recalled = self._auto_recall(user_text)
+        self.charts_made = []
         self.web_used = False
 
         self.denied_in_row = 0

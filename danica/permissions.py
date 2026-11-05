@@ -40,6 +40,10 @@ TOOL_TIERS = {
     "web_fetch": Tier.READ,
     "web_search": Tier.READ,
     "recall": Tier.READ,
+    "chart": Tier.WRITE,
+    "document": Tier.WRITE,
+    "diagram": Tier.WRITE,
+    "deck": Tier.WRITE,
 }
 
 # (regex, reason) pairs for commands that can destroy things or pull in code.

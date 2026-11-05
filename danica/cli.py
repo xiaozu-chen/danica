@@ -12,6 +12,8 @@ from prompt_toolkit import PromptSession, prompt
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.formatted_text import HTML
 from rich.console import Console
+from rich.style import Style
+from rich.text import Text
 
 from danica.agent import Agent
 from danica.config import APP_DIR, CONFIG
@@ -31,6 +33,10 @@ from danica.memory_index import FACTS_DB, MemoryIndex
 from danica.embeddings import get_embedder
 from danica.capture import ProposalQueue, extract
 from danica.forget import forget
+from danica.imageview import ImageError, check_image, display, show_image, test_image
+from danica.present import PresentFilter
+from danica.artifacts import (ArtifactError, ArtifactList, collect, is_openable, open_artifact,
+                              pick, save_copy)
 
 console = Console()
 
@@ -39,34 +45,84 @@ HELP = """Commands
   Project   /mode  /project [path]  /chat  /instructions
   Context   /context  /prune  /compact [tokens]  /summary  /todo [clear]
   Sessions  /sessions  /resume [number|id]  /export
+  Files     /artifacts  /open <n>  /save <n> [folder]
   Memory    /memory [list | add [scope] <text> | review | capture | search <words> | merge | forget <id> | show <id> | status | reindex | path]
   Safety    /fullaccess  /sandbox  /audit  /undo  /rewind [id]  /taint  /untaint
   Web       /sources
-  Other     /ws  /config  /help
+  Other     /ws  /config  /help  /imagetest
 Ctrl+C stops the current task. Ctrl+D quits."""
 
 
-def make_event_printer():
-    """Build the on_event callback. Tracks whether we're mid-line so tool
-    lines always start on a fresh line."""
-    state = {"mid_line": False}
+class EventPrinter:
+    """Prints the agent's events. Streamed answer text goes through a PresentFilter, so
+    <present file="..."/> tags are removed from the text and the picture is shown instead."""
 
-    def newline_if_needed() -> None:
-        if state["mid_line"]:
+    def __init__(self, get_ws):
+        self.get_ws = get_ws               # returns the CURRENT workspace (it changes on /project, /resume)
+        self.mid_line = False              # is the cursor in the middle of a line of text?
+        self.filter = PresentFilter()
+        self.presented: set[str] = set()   # pictures already shown during this request
+
+    def _newline_if_needed(self) -> None:
+        if self.mid_line:
             console.print()
-            state["mid_line"] = False
+            self.mid_line = False
 
-    def on_event(kind: str, data) -> None:
-        # markup=False: model text can contain [brackets] that rich would
-        # otherwise try to interpret as styling tags.
+    def _text(self, text: str, style: str | None = None) -> None:
+        # markup=False: model text can contain [brackets] that rich would treat as styling tags
+        if text:
+            console.print(text, style=style, end="", markup=False, highlight=False)
+            self.mid_line = not text.endswith("\n")
+
+    def _handle(self, kind: str, value: str) -> None:
+        if kind == "text":
+            self._text(value)
+        else:
+            self.show(value)
+
+    def _flush_filter(self) -> None:
+        for kind, value in self.filter.flush():
+            self._handle(kind, value)
+
+    def show(self, rel: str) -> None:
+        """Show one picture the answer asked for. A problem is a one-line notice, never a crash."""
+        self._newline_if_needed()
+        ws = self.get_ws()
+        try:
+            path = check_image(ws, rel)
+            self.presented.add(ws.display(path))
+            show_image(path, ws.display(path), console)
+        except ImageError as e:
+            console.print(f"(could not show {rel[:80]}: {e})", style="yellow", markup=False, highlight=False)
+
+    def begin_request(self) -> None:
+        self.presented.clear()
+        self.filter = PresentFilter()
+
+    def present_pending(self, paths: list[str]) -> None:
+        """Charts made during the request that the answer did not present."""
+        todo = [p for p in paths if p not in self.presented]
+        if todo:
+            self._newline_if_needed()
+            console.print("Charts made in this request:", style="dim", markup=False)
+            for p in todo:
+                self.show(p)
+
+    def finish(self) -> None:
+        self._flush_filter()
+        self._newline_if_needed()
+
+    def __call__(self, kind: str, data) -> None:
+        if kind == "content":
+            for k, v in self.filter.feed(data):
+                self._handle(k, v)
+            return
+        self._flush_filter()               # anything else ends the text run: nothing may stay held back
+
         if kind == "thinking":
-            console.print(data, style="dim", end="", markup=False, highlight=False)
-            state["mid_line"] = True
-        elif kind == "content":
-            console.print(data, end="", markup=False, highlight=False)
-            state["mid_line"] = True
+            self._text(data, style="dim")
         elif kind == "tool_call":
-            newline_if_needed()
+            self._newline_if_needed()
             name, args = data
             console.print(f"> {name} {args}"[:300], style="cyan", markup=False, highlight=False)
         elif kind == "tool_result":
@@ -75,17 +131,13 @@ def make_event_printer():
                 preview = preview[:400] + f"... ({len(str(data)) - 400} more chars)"
             console.print(preview, style="dim", markup=False, highlight=False)
         elif kind == "notice":
-            newline_if_needed()
+            self._newline_if_needed()
             console.print(data, style="yellow", markup=False)
         elif kind == "citations":
-            newline_if_needed()
+            self._newline_if_needed()
             # Yellow when there is a warning, green when everything checked out
             console.print(data, style="yellow" if "WARNING" in data else "green",
                           markup=False, highlight=False)
-    def finish() -> None:
-        newline_if_needed()
-
-    return on_event, finish
 
 
 def make_ask(finish):
@@ -463,11 +515,53 @@ def handle_memory(text: str, store: MemoryStore, audit, in_project: bool, agent)
     except MemoryStoreError as e:
         console.print(f"ERROR: {e}", style="red", markup=False)
 
+def show_artifacts(found: ArtifactList) -> None:
+    """Print the files a request made. Openable ones are ctrl+click links."""
+    if not found.items and not found.deleted:
+        return
+    console.print("Files from this request:", style="dim", markup=False)
+    for n, a in enumerate(found.items, start=1):
+        size = f"{a.size / 1_000_000:.1f} MB" if a.size >= 1_000_000 else f"{max(1, a.size // 1024)} KB"
+        line = f"  {n}. {a.status:<7} {a.rel}  {size}"
+        if is_openable(a.path):
+            console.print(Text(line, style=Style(link=a.path.as_uri())))
+        else:
+            console.print(line, markup=False, highlight=False)
+    if found.more:
+        console.print(f"  ... and {found.more} more", style="dim", markup=False)
+    if found.deleted:
+        console.print(f"  ({found.deleted} file(s) deleted)", style="dim", markup=False)
+    if found.items:
+        console.print("  /open <n> opens a file, /save <n> [folder] copies it out (default: Downloads)",
+                      style="dim", markup=False)
+
+
+def handle_artifact_command(text: str, artifacts: list, audit) -> None:
+    """/open <n> and /save <n> [folder]."""
+    parts = text.split(maxsplit=2)               # the command, the number, then the rest (a folder path)
+    cmd, arg = parts[0], (parts[1] if len(parts) > 1 else "")
+    rest = parts[2] if len(parts) > 2 else ""
+    try:
+        item = pick(arg, artifacts)
+        if cmd == "/open":
+            console.print(open_artifact(item), style="green", markup=False, highlight=False)
+            audit.append("artifact_open", path=item.rel)
+        else:
+            dest = Path(rest.strip().strip('"')) if rest.strip() else Path.home() / "Downloads"
+            saved = save_copy(item.path, dest)
+            audit.append("artifact_save", path=item.rel, to=str(saved.parent))
+            console.print(f"saved a copy to {saved}", style="green", markup=False, highlight=False)
+    except ArtifactError as e:
+        console.print(f"ERROR: {e}", style="red", markup=False)
+
 def main() -> None:
     launch_dir = Path.cwd()          # /project with no argument means THIS folder
-    on_event, finish = make_event_printer()
+    # The lambda reads main's CURRENT ws, so it follows /project, /chat and /resume
+    printer = EventPrinter(lambda: ws)
+    on_event, finish = printer, printer.finish
     session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
     project = None                   # None = normal chat mode
+    artifacts: list = []             # files the LAST request made (for /open and /save)
     ws, audit, checkpoints, policy, agent = build_session(session_id, finish, on_event)
     audit.append("session_start", workspace=str(ws.root), mode="chat")
 
@@ -733,14 +827,32 @@ def main() -> None:
         if text.split()[0] == "/memory":
             handle_memory(text, agent.memory, audit, project is not None, agent)
             continue
+        if text == "/imagetest":
+            display(test_image(), "test image", console)
+            console.print("You should see a framed picture with six coloured bars and a grey gradient.\n"
+                          "Garbage text, or nothing at all, means this terminal can't show Sixel images: set\n"
+                          '[display] images = "link" in config.toml (inline images need Windows Terminal 1.22+).',
+                          markup=False)
+            continue
+        if text.split()[0] in ("/open", "/save"):
+            handle_artifact_command(text, artifacts, audit)
+            continue
+        if text == "/artifacts":
+            show_artifacts(ArtifactList(items=artifacts))
+            continue
         # --- normal request: hand it to the agent ---
         try:
+            printer.begin_request()
             result = agent.run(text)
             finish()
             # Normal answers were already streamed to the screen; only the
             # harness's "[stopped: ...]" notices still need printing
             if result.startswith("[stopped]"):
                 console.print(result, style="yellow", markup=False)
+            printer.present_pending(agent.charts_made)    # charts the answer forgot to show
+            found = collect(ws, agent.checkpoints, agent.request_snap, agent.touched, printer.presented)
+            artifacts = found.items
+            show_artifacts(found)
         except KeyboardInterrupt:
             finish()
             console.print("[interrupted]", style="yellow", markup=False)

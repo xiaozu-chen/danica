@@ -23,6 +23,9 @@ DEFAULTS = {
     "embeddings": {"enabled": True, "url": "http://localhost:8081",
                    "model_name": "nomic-embed-text-v1.5", "min_similarity": 0.50,
                    "merge_similarity": 0.88},
+    # "sixel" draws images inside Windows Terminal (1.22+); "link" prints a clickable path; "off" prints the path only
+    "display": {"images": "sixel" if os.environ.get("WT_SESSION") else "link"},
+    "documents": {"page": "A4"},      # A4 or LETTER
 }
 
 def load_config() -> dict:
