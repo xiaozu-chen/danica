@@ -44,6 +44,7 @@ TOOL_TIERS = {
     "document": Tier.WRITE,
     "diagram": Tier.WRITE,
     "deck": Tier.WRITE,
+    "mermaid": Tier.WRITE,
 }
 
 # (regex, reason) pairs for commands that can destroy things or pull in code.

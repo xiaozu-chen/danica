@@ -18,6 +18,7 @@ from danica.permissions import Tier, classify
 from danica.tools import run_tool
 from danica.web import state_for
 from danica.workspace import Workspace
+from danica.deckgen import plain
 
 
 def check(label: str, condition: bool) -> None:
@@ -54,6 +55,10 @@ check("a # heading is a title slide, ## headings are slides",
       [s["kind"] for s in slides] == ["title", "content", "content", "content", "content"])
 check("Notes: lines become notes, not slide text", slides[1]["notes"] == ["speak slowly"]
       and all("Notes" not in str(b) for b in slides[1]["body"]))
+tricky = split_slides(parse("# T\nsub line\nNotes: n1\n\n## A\n\nSee the release notes: v2 is out\n\nNotes: real note\n"))
+check("Notes: right under a line of text still works", tricky[0]["notes"] == ["n1"] and plain(tricky[0]["body"][0]["runs"]) == "sub line")
+check("'notes:' in the middle of a sentence is not speaker notes",
+      tricky[1]["notes"] == ["real note"] and "release notes: v2" in plain(tricky[1]["body"][0]["runs"]))
 try:
     split_slides(parse("just some text\n\n## A"))
     early = False

@@ -190,6 +190,9 @@ def parse(md: str) -> list[dict]:
                     raise DocError(f"a list has too many items (limit {MAX_LIST_ITEMS})")
             blocks.append({"t": "ol" if ordered else "ul", "items": items})
             continue
+        # A "Notes:" line always starts its own paragraph (speaker notes in decks)
+        if s.lower().startswith("notes:"):
+            flush()
         para.append(line)
         i += 1
     flush()

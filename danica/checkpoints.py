@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 
 from danica.workspace import Workspace
+from danica.pathsearch import find_program
 
 # Never snapshotted, never touched by a restore (keeps snapshots fast and
 # stops an undo from wiping your virtualenv). ".git/" also means a real
@@ -43,7 +44,8 @@ class Checkpoints:
         # One entry per request: the snapshot id from BEFORE it ran,
         # or None if taking that snapshot failed.
         self.undo_stack: list[str | None] = []
-        self.available = shutil.which("git") is not None
+        self.git = find_program("git")           # never searches the current directory (see pathsearch.py)
+        self.available = self.git is not None
         if self.available:
             self._init_repo()
 
@@ -60,7 +62,7 @@ class Checkpoints:
             "GIT_TERMINAL_PROMPT": "0",     # never wait for a password prompt
         }
         cmd = [
-            "git",
+            self.git,
             "-c", "core.autocrlf=false",    # store bytes exactly as they are
             "-c", "core.safecrlf=false",    # no line-ending warnings
             "-c", "core.quotepath=false",   # readable non-ASCII file names

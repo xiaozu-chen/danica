@@ -37,6 +37,7 @@ from danica.imageview import ImageError, check_image, display, show_image, test_
 from danica.present import PresentFilter
 from danica.artifacts import (ArtifactError, ArtifactList, collect, is_openable, open_artifact,
                               pick, save_copy)
+from danica.diagram_engines import status_lines as diagram_status
 
 console = Console()
 
@@ -49,7 +50,7 @@ HELP = """Commands
   Memory    /memory [list | add [scope] <text> | review | capture | search <words> | merge | forget <id> | show <id> | status | reindex | path]
   Safety    /fullaccess  /sandbox  /audit  /undo  /rewind [id]  /taint  /untaint
   Web       /sources
-  Other     /ws  /config  /help  /imagetest
+  Other     /ws  /config  /help  /imagetest  /diagrams
 Ctrl+C stops the current task. Ctrl+D quits."""
 
 
@@ -839,6 +840,10 @@ def main() -> None:
             continue
         if text == "/artifacts":
             show_artifacts(ArtifactList(items=artifacts))
+            continue
+        if text == "/diagrams":
+            for line in diagram_status():
+                console.print(line, markup=False, highlight=False)
             continue
         # --- normal request: hand it to the agent ---
         try:

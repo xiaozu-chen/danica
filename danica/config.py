@@ -26,6 +26,8 @@ DEFAULTS = {
     # "sixel" draws images inside Windows Terminal (1.22+); "link" prints a clickable path; "off" prints the path only
     "display": {"images": "sixel" if os.environ.get("WT_SESSION") else "link"},
     "documents": {"page": "A4"},      # A4 or LETTER
+    # engine: auto (Graphviz if found, else built-in), builtin, or graphviz. confine = run engines in a Job Object.
+    "diagrams": {"engine": "auto", "confine": True, "dot_path": "", "mmdc_path": ""},
 }
 
 def load_config() -> dict:
