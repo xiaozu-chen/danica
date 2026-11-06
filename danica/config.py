@@ -11,6 +11,7 @@ from pathlib import Path
 # Danica's home folder (matches the on-disk layout in PROJECT.md)
 APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / "Danica"
 CONFIG_PATH = APP_DIR / "config.toml"
+SKILLS_DIR = APP_DIR / "skills"
 
 DEFAULTS = {
     "server": {"base_url": "http://127.0.0.1:8080"},
@@ -49,4 +50,3 @@ def load_config() -> dict:
 
 # Loaded once at import; everything else does `from danica.config import CONFIG`
 CONFIG = load_config()
-

@@ -39,7 +39,7 @@ Your feature list is large, so these principles decide what gets built first and
   facts.db           SQLite: facts, FTS5, vectors, note index
   sessions/<id>/     transcript.jsonl, workspace/, TODO.md, checkpoints/
   projects/<hash>/   registered project: memory/, index, shadow git
-  skills/            global SKILL.md folders
+  skills/            user-managed global SKILL.md folders (project skills are never loaded)
   plugins/  hooks/  logs/audit.jsonl
 ```
 
@@ -150,8 +150,8 @@ Each phase has a goal, the work, and an exit test. Phases are ordered by depende
 
 ### Phase 8: Planning, skills, verification
 - **Plan mode:** plan file written and shown before large tasks, approve or edit, then execute against the plan.
-- **Skills:** `SKILL.md` folders; only name and description are loaded into context, the body loads when the model requests it.
-- **Self-reflection:** a cheap final pass that checks the result against the original request and the plan, with at most one automatic fix attempt.
+- **Skills:** user-managed `SKILL.md` folders only under `%APPDATA%\Danica\skills`; each folder has a `SKILL.md` with `name` and `description` frontmatter. Only that metadata is loaded into context; the body loads when the model requests it. Never load skills from a cloned project.
+- **Self-reflection:** a cheap final pass that checks tool-based results against the original request and approved plan, with at most one automatic repair attempt.
 - **Exit:** a multi-step project completes with a plan, and the verification pass catches a seeded mistake.
 
 ### Phase 9: Subagents

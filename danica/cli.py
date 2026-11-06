@@ -18,7 +18,7 @@ from rich.style import Style
 from rich.text import Text
 
 from danica.agent import Agent
-from danica.config import APP_DIR, CONFIG
+from danica.config import APP_DIR, CONFIG, SKILLS_DIR
 from danica.workspace import Workspace
 from danica.context import breakdown
 from danica.permissions import PermissionPolicy, Tier
@@ -41,6 +41,7 @@ from danica.artifacts import (ArtifactError, ArtifactList, collect, is_openable,
                               pick, save_copy)
 from danica.diagram_engines import status_lines as diagram_status
 from danica.planner import PlanError, PlanFormatError, looks_big, reload_plan
+from danica.tools.skills import skill_catalog
 
 
 console = Console()
@@ -55,7 +56,7 @@ HELP = """Commands
   Memory    /memory [list | add [scope] <text> | review | capture | search <words> | merge | forget <id> | show <id> | status | reindex | path]
   Safety    /fullaccess  /sandbox  /audit  /undo  /rewind [id]  /taint  /untaint
   Web       /sources
-  Other     /ws  /config  /help  /imagetest  /diagrams
+  Other     /ws  /skills  /config  /help  /imagetest  /diagrams
 Ctrl+C stops the current task. Ctrl+D quits."""
 
 
@@ -941,6 +942,17 @@ def main() -> None:
 
         if text == "/config":
             show_config()
+            continue
+        if text == "/skills":
+            skills, errors = skill_catalog()
+            console.print(f"Global skills: {SKILLS_DIR}", markup=False, highlight=False)
+            if skills:
+                for skill in skills:
+                    console.print(f"  {skill.name}: {skill.description}", markup=False, highlight=False)
+            else:
+                console.print("(no global skills found; add a folder with a SKILL.md)", markup=False)
+            for error in errors:
+                console.print(f"WARNING: {error}", style="yellow", markup=False, highlight=False)
             continue
 
         if text == "/new":
