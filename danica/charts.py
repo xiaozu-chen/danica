@@ -140,8 +140,8 @@ def _plt():
     return plt
 
 
-def _plot(plt, spec: dict):
-    fig, ax = plt.subplots(figsize=(8, 5), dpi=100)          # 800 x 500 pixels
+def _draw(ax, spec: dict, fs: float = 1.0) -> None:
+    """Draw one chart onto an existing axes. fs scales the fonts (dashboard panels use less than 1)."""
     kind, series = spec["type"], spec["series"]
     n = len(series)
 
@@ -151,12 +151,12 @@ def _plot(plt, spec: dict):
     if kind == "pie":
         values = series[0]["values"]
         ax.pie(values, labels=spec["labels"], autopct="%1.1f%%", startangle=90,
-               colors=[colour(i) for i in range(len(values))], textprops={"fontsize": 10})
+               colors=[colour(i) for i in range(len(values))], textprops={"fontsize": 10 * fs})
         ax.axis("equal")
     elif kind == "scatter":
         for i, s in enumerate(series):
             ax.scatter([p[0] for p in s["points"]], [p[1] for p in s["points"]],
-                       label=s["name"], color=colour(i), s=28, alpha=0.85)
+                       label=s["name"], color=colour(i), s=28 * fs, alpha=0.85)
     else:
         labels = spec["labels"]
         x = list(range(len(labels)))
@@ -177,29 +177,35 @@ def _plot(plt, spec: dict):
         rotate = len(labels) > 8 or max(len(l) for l in labels) > 8
         ax.set_xticks(ticks)
         ax.set_xticklabels([labels[i] for i in ticks], rotation=30 if rotate else 0,
-                           ha="right" if rotate else "center")
+                           ha="right" if rotate else "center", fontsize=10 * fs)
 
     if kind != "pie":
-        ax.set_xlabel(spec["x_label"])
-        ax.set_ylabel(spec["y_label"])
+        ax.set_xlabel(spec["x_label"], fontsize=10 * fs)
+        ax.set_ylabel(spec["y_label"], fontsize=10 * fs)
+        ax.tick_params(labelsize=10 * fs)
         ax.grid(axis="y", alpha=0.3)
         for side in ("top", "right"):
             ax.spines[side].set_visible(False)
         if n > 1:
-            ax.legend(frameon=False)
+            ax.legend(frameon=False, fontsize=9 * fs)
     if spec["title"]:
-        ax.set_title(spec["title"], fontsize=13)
+        ax.set_title(spec["title"], fontsize=13 * fs)
+
+
+def _plot(plt, spec: dict):
+    fig, ax = plt.subplots(figsize=(8, 5), dpi=100)          # 800 x 500 pixels
+    _draw(ax, spec)
     fig.tight_layout()
     return fig
 
 
-def _table(plt, spec: dict):
+def _draw_table(ax, spec: dict, fs: float = 1.0, top: bool = False) -> None:
+    """Draw a table onto an existing axes. top=True pins it to the top (dashboard panels)."""
     rows, columns = spec["rows"], spec["columns"]
-    fig, ax = plt.subplots(figsize=(8, min(7.0, 1.0 + 0.38 * (len(rows) + 1))), dpi=100)
     ax.axis("off")
-    table = ax.table(cellText=rows, colLabels=columns, loc="center", cellLoc="left")
+    table = ax.table(cellText=rows, colLabels=columns, loc="upper center" if top else "center", cellLoc="left")
     table.auto_set_font_size(False)
-    table.set_fontsize(10)
+    table.set_fontsize(10 * fs)
     table.scale(1, 1.4)
     table.auto_set_column_width(list(range(len(columns))))
     for (r, _), cell in table.get_celld().items():
@@ -210,7 +216,12 @@ def _table(plt, spec: dict):
         elif r % 2 == 0:
             cell.set_facecolor("#f2f2f2")
     if spec["title"]:
-        ax.set_title(spec["title"], fontsize=13)
+        ax.set_title(spec["title"], fontsize=13 * fs)
+
+
+def _table(plt, spec: dict):
+    fig, ax = plt.subplots(figsize=(8, min(7.0, 1.0 + 0.38 * (len(spec["rows"]) + 1))), dpi=100)
+    _draw_table(ax, spec)
     fig.tight_layout()
     return fig
 

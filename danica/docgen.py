@@ -35,6 +35,9 @@ def is_danica_file(path: Path) -> bool:
         if path.suffix.lower() == ".pptx":
             from pptx import Presentation
             return MARKER in (Presentation(str(path)).core_properties.comments or "")
+        if path.suffix.lower() == ".html":
+            from danica.seal import is_sealed_html          # html runs scripts: the marker alone is not enough
+            return is_sealed_html(path)
         if path.suffix.lower() == ".pdf" and path.stat().st_size <= MAX_MARKER_SCAN:
             return MARKER.encode("ascii") in path.read_bytes()
     except Exception:

@@ -61,6 +61,7 @@ Rules:
 - To draw a flowchart or boxes-and-arrows diagram: write a JSON file with write_file (for example diagrams/flow.json: nodes with an id and a label, edges with from and to), call the diagram tool on it, then show it with <present file="diagrams/flow.png"/> in chat, or put ![caption](diagrams/flow.png) inside a Markdown document or deck. Never write Mermaid, Graphviz or plotting code.
 - To make a PowerPoint deck: write a Markdown outline with write_file (a # title, then one ## heading per slide with at most 6 short bullets and at most one picture or table; a line starting Notes: becomes speaker notes), then call the deck tool. Cite web sources as [S1.2]; the tool adds a verified Sources slide itself. Never write pptx code yourself.
 - For sequence, class, state, ER, gantt, mindmap or timeline diagrams: write Mermaid text (first line = the diagram type) to a .mmd file with write_file and call the mermaid tool; show the picture the same way as other diagrams. Use the diagram tool for ordinary flowcharts.
+- For a one-page overview with several charts, tables and big-number tiles: write a dashboard JSON file with write_file (title, kpis, and up to 6 panels, each written like a chart file) and call the dashboard tool, which makes ONE picture; show it the same way as a chart. For slides the user will open in a browser, call the deck tool with format html.
 """
 
 # Callback signature: on_event(kind, data). Kinds used below:
@@ -414,7 +415,7 @@ class Agent:
         state = self.ws.web
         known_sources = len(state.taint_sources) if state else 0
         result = run_tool(call["name"], args, self.ws)
-        if call["name"] in ("chart", "diagram", "mermaid"):
+        if call["name"] in ("chart", "diagram", "mermaid", "dashboard"):
             # The CLI shows any chart the answer forgot to present (see EventPrinter)
             m = re.match(r"OK: saved (.+?) \(", result)
             if m and m.group(1) not in self.charts_made:
@@ -427,7 +428,7 @@ class Agent:
                 rel = ""
             if rel and rel not in self.touched:
                 self.touched.append(rel)
-        elif call["name"] in ("chart", "diagram", "mermaid", "document", "deck"):
+        elif call["name"] in ("chart", "diagram", "mermaid", "dashboard", "document", "deck"):
             m = re.match(r"OK: saved (.+?) \(", result)
             if m and m.group(1) not in self.touched:
                 self.touched.append(m.group(1))

@@ -19,7 +19,7 @@ from danica.workspace import PathJailError, Workspace
 
 MAX_LISTED = 12
 OPEN_TYPES = {".md", ".txt", ".png", ".jpg", ".jpeg"}
-DOC_TYPES = {".pdf", ".docx", ".pptx"}               # opened only when Danica made them
+DOC_TYPES = {".pdf", ".docx", ".pptx", ".html"}   # opened only when Danica made them (for .html: its signature must verify)
 SKIP_SUFFIXES = {".pyc", ".pyo", ".tmp"}
 
 
