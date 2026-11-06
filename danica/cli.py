@@ -5,6 +5,8 @@ Commands: /think (toggle thinking), /ws (show workspace path), /exit
 Ctrl+C stops the current task. Ctrl+D or /exit quits.
 """
 
+import subprocess
+
 from pathlib import Path
 from datetime import datetime
 
@@ -22,7 +24,7 @@ from danica.context import breakdown
 from danica.permissions import PermissionPolicy, Tier
 from danica.audit import AuditLog, verify
 from danica.checkpoints import CheckpointError, Checkpoints
-from danica.tools.todo import read_todo
+from danica.tools.todo import open_items, read_todo
 from danica.compaction import harvest, is_summary
 from danica.sessions import SESSIONS_DIR, list_sessions, load_records, resolve_session
 from danica.projects import (ProjectError, check_allowed, load_session_meta, lookup,
@@ -38,11 +40,14 @@ from danica.present import PresentFilter
 from danica.artifacts import (ArtifactError, ArtifactList, collect, is_openable, open_artifact,
                               pick, save_copy)
 from danica.diagram_engines import status_lines as diagram_status
+from danica.planner import PlanError, PlanFormatError, looks_big, reload_plan
+
 
 console = Console()
 
 HELP = """Commands
   Chat      /think  toggle thinking      /new  fresh session, same mode      /exit
+  Plans     /plan [<request>]  /plan show  /plan auto ask|off
   Project   /mode  /project [path]  /chat  /instructions
   Context   /context  /prune  /compact [tokens]  /summary  /todo [clear]
   Sessions  /sessions  /resume [number|id]  /export
@@ -237,6 +242,7 @@ def build_session(session_id: str, finish, on_event, project: dict | None = None
     ws.memory = store                      # the recall tool reaches memory through the workspace
     agent.memory = store                   # the digest and auto-recall read it from the agent
     agent.proposals = ProposalQueue(session_dir / "proposals.json")   # notes waiting for /memory review
+    agent.plans_dir = session_dir / "plans"                          # plan files live with the session, not in your project
     if project:
         apply_instructions(project, agent, audit)
     return ws, audit, checkpoints, policy, agent
@@ -555,6 +561,134 @@ def handle_artifact_command(text: str, artifacts: list, audit) -> None:
     except ArtifactError as e:
         console.print(f"ERROR: {e}", style="red", markup=False)
 
+MAX_DRAFTS = 3          # plans drafted for one request (the first, plus replans)
+
+
+def open_editor(path: Path) -> None:
+    """Open a file in Notepad (a fixed, predictable editor). Tests replace this."""
+    subprocess.Popen(["notepad.exe", str(path)])
+
+
+def show_plan(plan) -> None:
+    console.print(f"\nPlan ({len(plan.steps)} steps)", style="bold", markup=False)
+    console.print(f"Goal: {plan.goal}", markup=False, highlight=False)
+    for i, step in enumerate(plan.steps, start=1):
+        console.print(f"  {i}. {step}", markup=False, highlight=False)
+    if plan.notes:
+        console.print("Notes:", markup=False)
+        for note in plan.notes:
+            console.print(f"  - {note}", markup=False, highlight=False)
+    if plan.path:
+        console.print(f"(file: {plan.path})", style="dim", markup=False, highlight=False)
+
+
+def plan_flow(request: str, agent, audit) -> tuple[str, object]:
+    """Draft a plan (read-only), show it, and let the user approve, edit, replan or cancel.
+    Returns ("run", plan) to run the request with the approved plan, ("run", None) to run it without
+    one (drafting failed and the user said go ahead), or ("cancel", None)."""
+    plan, feedback, drafts = None, "", 0
+    while True:
+        drafts += 1
+        console.print("[plan] drafting a plan (read-only: nothing is changed)...", style="yellow", markup=False)
+        try:
+            plan = agent.draft_plan(request, feedback, plan)
+        except KeyboardInterrupt:
+            console.print("(planning stopped)", style="yellow", markup=False)
+            return "cancel", None
+        except Exception as e:                        # PlanError, or llama-server not answering
+            why = str(e) if isinstance(e, PlanError) else type(e).__name__
+            console.print(f"Could not make a plan: {why}", style="red", markup=False)
+            try:
+                go = prompt("[y] run the request without a plan  [n] cancel > ").strip().lower() in ("y", "yes")
+            except (EOFError, KeyboardInterrupt):
+                go = False
+            return ("run", None) if go else ("cancel", None)
+
+        agent.save_plan(plan)
+        audit.append("plan", action="proposed", steps=len(plan.steps), draft=drafts)
+        show = True
+        while True:
+            if show:
+                show_plan(plan)
+                show = False
+            try:
+                answer = prompt("[y] approve  [e] edit  [r] replan with feedback  [n] cancel > ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                answer = "n"
+
+            if answer in ("y", "yes"):                # only an explicit yes approves: Enter just asks again
+                agent.install_plan(plan)
+                audit.append("plan", action="approved", steps=len(plan.steps))
+                console.print(f"Plan approved: {len(plan.steps)} steps. It is now your TODO (see /todo).",
+                              style="green", markup=False)
+                return "run", plan
+            if answer in ("n", "no", "q"):
+                audit.append("plan", action="cancelled")
+                return "cancel", None
+            if answer == "e":
+                if plan.path is None:
+                    console.print("this plan has no file to edit", style="yellow", markup=False)
+                    continue
+                try:
+                    open_editor(plan.path)
+                    prompt("Edit the file, save it, then press Enter to reload > ")
+                    plan = reload_plan(plan)
+                    audit.append("plan", action="edited", steps=len(plan.steps))
+                    show = True
+                except PlanFormatError as e:
+                    console.print(f"Problem with the edited plan: {e}\n(the plan shown above is the last valid "
+                                  f"version; press e to fix the file)", style="red", markup=False)
+                except OSError as e:
+                    console.print(f"could not open the editor ({e}); edit this file yourself: {plan.path}",
+                                  style="red", markup=False, highlight=False)
+                except (EOFError, KeyboardInterrupt):
+                    pass
+                continue
+            if answer == "r":
+                if drafts >= MAX_DRAFTS:
+                    console.print(f"That is {MAX_DRAFTS} drafts: edit this one (e), approve it (y) or cancel (n).",
+                                  style="yellow", markup=False)
+                    continue
+                try:
+                    feedback = prompt("what should change? > ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    feedback = ""
+                if feedback:
+                    audit.append("plan", action="replan")
+                    break                              # leave the review loop: draft again with the feedback
+
+
+def ask_plan_first(why: str) -> str:
+    """The offer for a big-looking request: "yes", "no" or "never" (for this session)."""
+    console.print(f"\nThis looks like a multi-step task ({why}).", style="yellow", markup=False)
+    try:
+        answer = prompt("Draft a plan first? [y] yes (Enter)  [n] just do it  [x] don't ask again this session > "
+                        ).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return "no"
+    if answer in ("", "y", "yes"):
+        return "yes"
+    return "never" if answer in ("x", "never") else "no"
+
+
+def run_plan_mode(text: str, forced: bool, plan_auto: str, agent, audit) -> tuple[str, object, str]:
+    """Decide whether this request gets a plan, and if so run the dialog.
+    forced = the user asked (/plan). Returns (decision, plan, plan_auto): decision is "run" or
+    "cancel", plan is None when the request runs without one, plan_auto may become "off"."""
+    if not forced and plan_auto == "ask":
+        big, why, score = looks_big(text, CONFIG["planning"]["min_score"])
+        # An unfinished TODO means the user is continuing a plan: don't interrupt with an offer
+        if big and not open_items(read_todo(agent.ws)):
+            answer = ask_plan_first(why)
+            audit.append("plan_offer", score=score, answer=answer)      # the text itself is never logged
+            if answer == "never":
+                plan_auto = "off"
+            forced = answer == "yes"
+    if not forced:
+        return "run", None, plan_auto
+    decision, plan = plan_flow(text, agent, audit)
+    return decision, plan, plan_auto
+
 def main() -> None:
     launch_dir = Path.cwd()          # /project with no argument means THIS folder
     # The lambda reads main's CURRENT ws, so it follows /project, /chat and /resume
@@ -563,6 +697,8 @@ def main() -> None:
     session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
     project = None                   # None = normal chat mode
     artifacts: list = []             # files the LAST request made (for /open and /save)
+    plan_auto = CONFIG["planning"]["auto"]     # "ask": offer a plan for big-looking requests; "off": only /plan
+    plan_next = False                           # set by a bare /plan: the NEXT request gets a plan
     ws, audit, checkpoints, policy, agent = build_session(session_id, finish, on_event)
     audit.append("session_start", workspace=str(ws.root), mode="chat")
 
@@ -578,6 +714,8 @@ def main() -> None:
             mode += " | FULL ACCESS" # loud on purpose
         if project:
             mode += f" | project: {project['name']}"
+        if plan_next:
+            mode += " | plan next"
         if agent.proposals and agent.proposals.count():
             mode += f" | {agent.proposals.count()} proposed note(s)"
         if ws.web and ws.web.tainted:
@@ -597,6 +735,7 @@ def main() -> None:
 
         if not text:
             continue
+        force_plan = False       # set below when the user typed /plan <request>
 
         # --- slash commands (more arrive in later phases) ---
         if text == "/exit":
@@ -845,10 +984,42 @@ def main() -> None:
             for line in diagram_status():
                 console.print(line, markup=False, highlight=False)
             continue
+        if text.split()[0] == "/plan":
+            rest = text[len("/plan"):].strip()
+            if not rest:
+                plan_next = True
+                console.print("Plan mode: your next request gets a plan first (read-only drafting, then you approve).",
+                              style="green", markup=False)
+                continue
+            if rest.lower() == "show":
+                if agent.last_plan:
+                    show_plan(agent.last_plan)
+                else:
+                    console.print("(no plan yet in this session)", markup=False)
+                continue
+            if rest.lower().startswith("auto"):
+                value = rest[4:].strip().lower()
+                if value in ("ask", "off"):
+                    plan_auto = value
+                    console.print(f"automatic plan offers: {value}", markup=False)
+                else:
+                    console.print("usage: /plan auto ask | /plan auto off", markup=False)
+                continue
+            if rest.startswith("/"):
+                console.print("a slash command can't be planned", style="yellow", markup=False)
+                continue
+            text, force_plan = rest, True          # no "continue": it runs as an ordinary request below, with a plan
+        # --- plan mode (hybrid): /plan forces it, and big-looking requests are offered one ---
+        decision, plan, plan_auto = run_plan_mode(text, force_plan or plan_next, plan_auto, agent, audit)
+        plan_next = False
+        if decision == "cancel":
+            console.print("nothing was run", style="yellow", markup=False)
+            console.print()
+            continue
         # --- normal request: hand it to the agent ---
         try:
             printer.begin_request()
-            result = agent.run(text)
+            result = agent.run(text, plan=plan)
             finish()
             # Normal answers were already streamed to the screen; only the
             # harness's "[stopped: ...]" notices still need printing

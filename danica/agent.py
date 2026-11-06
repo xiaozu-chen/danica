@@ -36,6 +36,8 @@ from danica.tools.todo import counts, open_items, read_todo
 from danica.sessions import rebuild
 from danica.citations import build_notice, verify
 from danica.capture import extract, worth_checking
+from danica.planner import (Plan, PlanError, PlanFormatError, parse_plan, plan_note, planning_prompt,
+                            todo_text, write_plan_file)
 
 SYSTEM_PROMPT = """You are Danica, a careful coding assistant running locally in a terminal on Windows.
 You work inside a workspace folder. All file paths are relative to it.
@@ -63,6 +65,10 @@ Rules:
 - For sequence, class, state, ER, gantt, mindmap or timeline diagrams: write Mermaid text (first line = the diagram type) to a .mmd file with write_file and call the mermaid tool; show the picture the same way as other diagrams. Use the diagram tool for ordinary flowcharts.
 - For a one-page overview with several charts, tables and big-number tiles: write a dashboard JSON file with write_file (title, kpis, and up to 6 panels, each written like a chart file) and call the dashboard tool, which makes ONE picture; show it the same way as a chart. For slides the user will open in a browser, call the deck tool with format html.
 """
+
+# While drafting a plan the model may only LOOK: nothing can change and no web content can enter
+PLAN_TOOLS = ("read_file", "list_dir", "glob", "grep", "recall")
+MAX_PLAN_STEPS = 6          # model calls allowed while drafting one plan
 
 # Callback signature: on_event(kind, data). Kinds used below:
 #   "thinking" / "content"  -> data is a streamed text fragment
@@ -137,6 +143,8 @@ class Agent:
         self.memory = None   # the MemoryStore (attached by the CLI; None = no memory)
         self.recalled: list[tuple[str, str]] = []   # (note id, line) found for the CURRENT request
         self.proposals = None   # the ProposalQueue (attached by the CLI); None = no auto-capture
+        self.plans_dir = None     # where plan files go (set by the CLI); None = plans are kept in memory only
+        self.last_plan: Plan | None = None
         self.charts_made: list[str] = []   # pictures the chart tool made during the CURRENT request
         self.request_snap: str | None = None   # the checkpoint taken before the current request (for the artifact list)
         self.touched: list[str] = []           # files the file tools and document tools wrote during it
@@ -192,6 +200,77 @@ class Agent:
             self._log("memory_proposed", count=added)       # a count only, never the text
             self.on_event("notice", f"[memory] {added} note(s) proposed from what you said. "
                                     f"See them with /memory review")
+
+    def _planning_context(self) -> list[dict]:
+        """A little earlier conversation, so a plan fits what was already done: the context summary
+        (if any) and the last few plain-text messages. Tool calls and results are left out."""
+        out = []
+        if len(self.messages) > 1 and is_summary(self.messages[1]):
+            out.append(self.messages[1])
+        tail = [m for m in self.messages[1:]
+                if m.get("role") in ("user", "assistant") and not m.get("tool_calls")
+                and (m.get("content") or "").strip() and not is_summary(m)
+                and not str(m["content"]).startswith("[harness reminder")]
+        return out + tail[-4:]
+
+    def _plan_turn(self, msgs: list[dict], schemas: list[dict]) -> tuple[str, list[dict]]:
+        """One model call while drafting: nothing is streamed to the screen (the plan is shown formatted)."""
+        content, calls = [], []
+        for piece in stream_chat(msgs, thinking=bool(CONFIG["planning"]["thinking"]), temperature=0.3,
+                                 max_tokens=4096, tools=schemas):
+            if piece["type"] == "tool_calls":
+                calls = piece["calls"]
+            elif piece["type"] == "content":
+                content.append(piece["text"])
+        return "".join(content), calls
+
+    def draft_plan(self, request: str, feedback: str = "", previous: Plan | None = None) -> Plan:
+        """Ask the model for a plan. READ-ONLY: only PLAN_TOOLS are offered and anything else it
+        calls is refused. The conversation itself is not changed. Raises PlanError."""
+        msgs = ([self.messages[0]] + self._planning_context()
+                + [{"role": "user", "content": planning_prompt(request, feedback, previous)}])
+        schemas = [s for s in tool_schemas() if s["function"]["name"] in PLAN_TOOLS]
+        retried = False
+        for _ in range(MAX_PLAN_STEPS):
+            content, calls = self._plan_turn(msgs, schemas)
+            if calls:
+                msgs.append({"role": "assistant", "content": content, "tool_calls": [
+                    {"id": c["id"], "type": "function",
+                     "function": {"name": c["name"], "arguments": c["arguments"] or "{}"}} for c in calls]})
+                for c in calls:
+                    if c["name"] in PLAN_TOOLS:
+                        result = self._execute(c)       # same permission, audit and redaction path as normal
+                    else:
+                        result = (f"ERROR: '{c['name']}' is not available while planning. You may only look "
+                                  f"around ({', '.join(PLAN_TOOLS)}), then write the plan.")
+                    msgs.append({"role": "tool", "tool_call_id": c["id"], "content": result})
+                continue
+            try:
+                return parse_plan(content, request)
+            except PlanFormatError as e:
+                if retried:
+                    raise PlanError(f"the model did not follow the plan format ({e})")
+                retried = True
+                msgs += [{"role": "assistant", "content": content or "(empty)"},
+                         {"role": "user", "content": f"[harness reminder, not from the user] Your plan was rejected: "
+                                                     f"{e}. Reply again with exactly the format GOAL: / STEPS: / NOTES: "
+                                                     f"and nothing else."}]
+        raise PlanError("planning took too many steps")
+
+    def save_plan(self, plan: Plan) -> None:
+        """Write the plan file (plans/NNN.md in the session folder, outside the workspace)."""
+        plan.path = write_plan_file(self.plans_dir, plan) if self.plans_dir else None
+        self.last_plan = plan
+
+    def install_plan(self, plan: Plan) -> None:
+        """An approved plan becomes TODO.md, so the existing plan tracking executes it (shown
+        every turn, tick items off, one reminder if items are left at the end)."""
+        self.last_plan = plan
+        if self.ws.todo_path is None:
+            return
+        self.ws.todo_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.ws.todo_path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(todo_text(plan))
 
     def _messages_for_model(self) -> list[dict]:
         """The history PLUS two harness reminders at the end: the saved-memory block
@@ -460,7 +539,7 @@ class Agent:
 
     # ---------------------------------------------------------------- main loop
 
-    def run(self, user_text: str) -> str:
+    def run(self, user_text: str, plan: "Plan | None" = None) -> str:
         """Handle one user request. Returns the model's final text answer."""
         # Snapshot the workspace BEFORE anything changes, so /undo can return here
         self.request_snap, self.touched = None, []
@@ -480,6 +559,11 @@ class Agent:
         self._add({"role": "user", "content": user_text})
         # Sites the USER typed are trusted: fetching them never needs extra approval
         state_for(self.ws).trust_hosts_from(user_text)
+        if plan is not None:
+            # The user approved a plan: tell the model (a "harness reminder", so exports, summaries and
+            # the request list all ignore it). The steps themselves are in TODO.md.
+            self._add({"role": "user", "content": plan_note(plan, include_steps=self.ws.todo_path is None)})
+            self._log("plan_run", steps=len(plan.steps))
         # Search saved memory for notes relevant to THIS request (shown on every model call)
         self.recalled = self._auto_recall(user_text)
         self.charts_made = []

@@ -28,6 +28,8 @@ DEFAULTS = {
     "documents": {"page": "A4"},      # A4 or LETTER
     # engine: auto (Graphviz if found, else built-in), builtin, or graphviz. confine = run engines in a Job Object.
     "diagrams": {"engine": "auto", "confine": True, "dot_path": "", "mmdc_path": ""},
+    # auto: "ask" offers a plan for big-looking requests, "off" = only /plan. min_score: how many of the 5 signals make a request "big"
+    "planning": {"auto": "ask", "thinking": True, "min_score": 3},
 }
 
 def load_config() -> dict:
