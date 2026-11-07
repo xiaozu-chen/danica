@@ -157,7 +157,7 @@ Each phase has a goal, the work, and an exit test. Phases are ordered by depende
 ### Phase 9: Subagents
 - Process spawn into new terminal windows, local IPC, brief-in and summary-out protocol.
 - Limits: 5 total, one at a time, depth 1, budgets, inherited permissions.
-- Subagent dashboard panel with peek and kill; `/agents`.
+- Subagent dashboard with `run`, `peek`, `wait`, and `kill`; model delegation remains summary-only.
 - **Exit:** Danica delegates a research subtask, and the parent context grows by only the summary.
 
 ### Phase 10: Local knowledge base and productivity
@@ -168,8 +168,9 @@ Each phase has a goal, the work, and an exit test. Phases are ordered by depende
 - Deep research reports with structured, cited output.
 - **Exit:** ask for the three main bottlenecks from last month's notes and get a cited answer.
 
-### Phase 11: Routing and performance
-- Replace the rule-based router with the fine-tuned SmolLM2-135M classifier if logged data shows it beats the rules.
+### Phase 11: Thinking mode and performance
+- Use the fine-tuned SmolLM2-135M classifier only to choose the binary thinking mode (`true`/`false`); retain a deterministic thinking fallback.
+- Tool selection stays with the main chat model's function-calling loop. Do not add a separate general-intent classifier or route-label dataset.
 - Prompt caching, KV slot save and restore, parallel tool execution where safe, startup time.
 - **Exit:** measured improvement on the eval harness in latency without a drop in task success.
 

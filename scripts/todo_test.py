@@ -5,6 +5,7 @@ No model needed. Run from the project root:  python -m scripts.todo_test
 
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 from danica.agent import Agent
 from danica.permissions import Tier, classify
@@ -164,25 +165,26 @@ def fake_stream(messages, **kwargs):
 
 agent_mod.stream_chat = fake_stream
 try:
-    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
-        ws = Workspace(Path(tmp) / "ws", todo_path=Path(tmp) / "TODO.md")
+    with patch.object(agent_mod.Agent, "_reflect", return_value=[]):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            ws = Workspace(Path(tmp) / "ws", todo_path=Path(tmp) / "TODO.md")
 
-        run_tool("todo", {"action": "set", "content": "Goal: g\n- [ ] a\n- [ ] b"}, ws)
-        agent_mod.Agent(ws).run("do it")
-        check("an open plan triggers exactly one reminder", model_calls["n"] == 2)
-        check(
-            "an unfinished plan survives into the next request",
-            ws.todo_path.exists(),
-        )
+            run_tool("todo", {"action": "set", "content": "Goal: g\n- [ ] a\n- [ ] b"}, ws)
+            agent_mod.Agent(ws).run("do it")
+            check("an open plan triggers exactly one reminder", model_calls["n"] == 2)
+            check(
+                "an unfinished plan survives into the next request",
+                ws.todo_path.exists(),
+            )
 
-        run_tool("todo", {"action": "set", "content": "- [x] a"}, ws)
-        model_calls["n"] = 0
-        agent_mod.Agent(ws).run("something new")
-        check(
-            "a finished plan is cleared at the start of a new request",
-            not ws.todo_path.exists(),
-        )
-        check("no reminder when nothing is open", model_calls["n"] == 1)
+            run_tool("todo", {"action": "set", "content": "- [x] a"}, ws)
+            model_calls["n"] = 0
+            agent_mod.Agent(ws).run("something new")
+            check(
+                "a finished plan is cleared at the start of a new request",
+                not ws.todo_path.exists(),
+            )
+            check("no reminder when nothing is open", model_calls["n"] == 1)
 finally:
     agent_mod.stream_chat = real_stream
 

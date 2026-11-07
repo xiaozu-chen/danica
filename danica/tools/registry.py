@@ -7,6 +7,8 @@ Errors are returned as strings too (never raised to the loop), so the model
 can read the message and correct itself.
 """
 
+import re
+
 from danica.workspace import PathJailError, Workspace
 
 # name -> {"fn": callable, "schema": OpenAI-style tool definition}
@@ -41,6 +43,29 @@ def tool(name: str, description: str, parameters: dict):
 def tool_schemas() -> list[dict]:
     """All tool definitions, in the format llama-server's API expects."""
     return [t["schema"] for t in TOOLS.values()]
+
+
+def register_external_tool(name: str, description: str, schema: dict, fn) -> None:
+    """Register a namespaced external tool with its already-validated JSON schema."""
+    if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", name) or name in TOOLS:
+        raise ValueError(f"tool name is empty or already registered: {name}")
+    properties = schema.get("properties", {})
+    required = schema.get("required", [])
+    if (len(str(schema)) > 16_000 or schema.get("type") != "object" or not isinstance(properties, dict)
+            or not isinstance(required, list) or not all(isinstance(item, str) for item in required)
+            or len(properties) > 64
+            or not set(required) <= set(properties)
+            or not all(isinstance(key, str) and isinstance(value, dict)
+                       for key, value in properties.items())):
+        raise ValueError(f"tool {name} has an invalid input schema")
+    TOOLS[name] = {
+        "fn": fn,
+        "schema": {
+            "type": "function",
+            "function": {"name": name, "description": description[:1000],
+                         "parameters": schema},
+        },
+    }
 
 
 def run_tool(name: str, args: dict, ws: Workspace) -> str:

@@ -30,6 +30,12 @@ class Workspace:
         self.web = None
         # The session's MemoryStore (set by the CLI) so the recall tool can reach it. None = no memory.
         self.memory = None
+        # Set by the CLI in sessions that may delegate; worker workspaces keep this unset.
+        self.subagent_supervisor = None
+        self.knowledge_index = None
+        self.knowledge_sources = {}
+        self.knowledge_previews = {}
+        self.extension_manager = None
 
     def resolve(self, user_path: str) -> Path:
         """

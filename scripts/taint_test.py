@@ -124,9 +124,11 @@ class Handler(BaseHTTPRequestHandler):
 server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 original_url = CONFIG["web"]["search_url"]
+original_fallback_url = CONFIG["web"].get("search_fallback_url")
 
 try:
     CONFIG["web"]["search_url"] = f"http://127.0.0.1:{server.server_address[1]}"
+    CONFIG["web"]["search_fallback_url"] = ""
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         ws = Workspace(Path(tmp) / "ws")
 
@@ -154,6 +156,10 @@ try:
         check("a dead search server says what to start", "SearxNG" in run_tool("web_search", {"query": "x"}, ws))
 finally:
     CONFIG["web"]["search_url"] = original_url
+    if original_fallback_url is None:
+        CONFIG["web"].pop("search_fallback_url", None)
+    else:
+        CONFIG["web"]["search_fallback_url"] = original_fallback_url
     server.shutdown()
 
 # ----------------------------------------------------- canary and agent taint

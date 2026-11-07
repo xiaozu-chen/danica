@@ -5,12 +5,17 @@ Commands: /think (toggle thinking), /ws (show workspace path), /exit
 Ctrl+C stops the current task. Ctrl+D or /exit quits.
 """
 
+import asyncio
+import json
+import argparse
 import subprocess
+import sys
 
 from pathlib import Path
 from datetime import datetime
 
 from prompt_toolkit import PromptSession, prompt
+from prompt_toolkit.application import run_in_terminal
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.formatted_text import HTML
 from rich.console import Console
@@ -42,12 +47,37 @@ from danica.artifacts import (ArtifactError, ArtifactList, collect, is_openable,
 from danica.diagram_engines import status_lines as diagram_status
 from danica.planner import PlanError, PlanFormatError, looks_big, reload_plan
 from danica.tools.skills import skill_catalog
+from danica.subagents import SubagentError, SubagentSupervisor
+from danica.knowledge import KnowledgeError, KnowledgeIndex, render_hits
+from danica.bundle import BundleError, export_bundle
+from danica.extensions import ExtensionError, ExtensionManager
 
 
 console = Console()
+_KNOWLEDGE_INDEX: KnowledgeIndex | None = None
+_EXTENSION_MANAGER: ExtensionManager | None = None
+
+
+def knowledge_index() -> KnowledgeIndex:
+    global _KNOWLEDGE_INDEX
+    if _KNOWLEDGE_INDEX is None:
+        _KNOWLEDGE_INDEX = KnowledgeIndex(APP_DIR / "knowledge.db", get_embedder())
+    return _KNOWLEDGE_INDEX
+
+
+def extension_manager(audit=None, headless: bool = False) -> ExtensionManager:
+    global _EXTENSION_MANAGER
+    if _EXTENSION_MANAGER is None:
+        _EXTENSION_MANAGER = ExtensionManager(
+            APP_DIR, CONFIG, audit, enable_mcp=not headless, enable_hooks=not headless)
+    else:
+        _EXTENSION_MANAGER.audit = audit
+        if headless:
+            _EXTENSION_MANAGER.enable_hooks = False
+    return _EXTENSION_MANAGER
 
 HELP = """Commands
-  Chat      /think  toggle thinking      /new  fresh session, same mode      /exit
+  Chat      /think  toggle thinking      /think auto  use automatic setting      /new  fresh session, same mode      /exit
   Plans     /plan [<request>]  /plan show  /plan auto ask|off
   Project   /mode  /project [path]  /chat  /instructions
   Context   /context  /prune  /compact [tokens]  /summary  /todo [clear]
@@ -56,7 +86,9 @@ HELP = """Commands
   Memory    /memory [list | add [scope] <text> | review | capture | search <words> | merge | forget <id> | show <id> | status | reindex | path]
   Safety    /fullaccess  /sandbox  /audit  /undo  /rewind [id]  /taint  /untaint
   Web       /sources
-  Other     /ws  /skills  /config  /help  /imagetest  /diagrams
+  Knowledge /knowledge [index|search|watch|stop|status|digest|graph|commit <preview-id>]
+  Reminder  /reminder add <ISO datetime> <text>  | list
+  Other     /ws  /skills  /agents [run <task> | peek|wait|kill <id>]  /config  /help  /imagetest  /diagrams
 Ctrl+C stops the current task. Ctrl+D quits."""
 
 
@@ -197,18 +229,21 @@ def apply_instructions(project: dict, agent, audit) -> None:
     audit.append("instructions", sha=sha[:12], approved_now=approved_now)
     console.print(f"Loaded DANICA.md ({len(text)} characters).", style="green", markup=False)
 
-def build_session(session_id: str, finish, on_event, project: dict | None = None):
+def build_session(session_id: str, finish, on_event, project: dict | None = None,
+                  headless: bool = False, workspace_root: Path | None = None):
     """Create everything one session needs.
     project=None  -> normal chat: a throwaway workspace inside the session folder
     project=info  -> project mode: the workspace IS the user's trusted folder"""
     session_dir = APP_DIR / "sessions" / session_id
     session_dir.mkdir(parents=True, exist_ok=True)
 
-    root = Path(project["path"]) if project else session_dir / "workspace"
+    root = Path(project["path"]) if project else (
+        Path(workspace_root) if headless and workspace_root else session_dir / "workspace")
     # TODO.md, transcript and sources stay in the session folder either way,
     # so nothing of Danica's ever lands inside your project.
     ws = Workspace(root, todo_path=session_dir / "TODO.md",
                    sources_path=session_dir / "sources.json")
+    ws.knowledge_index = knowledge_index()
     save_session_meta(session_dir, project["path"] if project else None)
 
     # One audit log for ALL sessions, so the chain spans everything Danica ever did
@@ -223,8 +258,14 @@ def build_session(session_id: str, finish, on_event, project: dict | None = None
                       "Install it with: winget install Git.Git", style="yellow", markup=False)
 
     # A fresh policy every time: approvals from another session never carry over
-    policy = PermissionPolicy(ask=make_ask(finish))
+    policy = PermissionPolicy(ask=None if headless else make_ask(finish))
     policy.project_mode = project is not None    # relaxes everyday dev commands (see permissions.py)
+    supervisor = SubagentSupervisor(ws, policy, audit, session_id)
+    ws.subagent_supervisor = supervisor
+    extensions = extension_manager(audit, headless)
+    ws.extension_manager = extensions
+    for error in extensions.errors:
+        on_event("notice", f"WARNING: extension disabled: {error}")
     agent = Agent(
         ws,
         transcript_path=session_dir / "transcript.jsonl",
@@ -690,7 +731,48 @@ def run_plan_mode(text: str, forced: bool, plan_auto: str, agent, audit) -> tupl
     decision, plan = plan_flow(text, agent, audit)
     return decision, plan, plan_auto
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(prog="danica")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("-p", "--print", dest="prompt_text",
+                      help="run one request headlessly and print the streamed answer")
+    mode.add_argument("--export-bundle", type=Path,
+                      help="create a secret-scanned ZIP bundle inside the workspace")
+    parser.add_argument("--workspace", type=Path, default=Path.cwd(),
+                        help="workspace used by headless mode and bundle export")
+    args = parser.parse_args(argv)
+    if args.export_bundle:
+        ws = Workspace(args.workspace)
+        try:
+            result = export_bundle(ws, args.export_bundle)
+        except BundleError as exc:
+            console.print(f"ERROR: {exc}", style="red", markup=False)
+            raise SystemExit(1) from exc
+        console.print(f"Exported {result['files']} files ({result['bytes']} bytes) to "
+                      f"{ws.display(result['path'])}; skipped {len(result['skipped'])} sensitive "
+                      "or unsupported file(s).", style="green", markup=False)
+        return
+    if args.prompt_text is not None:
+        session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+        ws = Workspace(args.workspace)
+        printer = EventPrinter(lambda: ws)
+        ws, audit, _, _, agent = build_session(
+            session_id, printer.finish, printer, headless=True, workspace_root=args.workspace)
+        audit.append("session_start", workspace=str(ws.root), mode="headless")
+        printer.begin_request()
+        try:
+            agent.run(args.prompt_text)
+            printer.finish()
+        except Exception as exc:
+            printer.finish()
+            console.print(f"ERROR: {type(exc).__name__}: {exc}", style="red", markup=False)
+            raise SystemExit(1) from exc
+        if _KNOWLEDGE_INDEX is not None:
+            _KNOWLEDGE_INDEX.close()
+        if _EXTENSION_MANAGER is not None:
+            _EXTENSION_MANAGER.close()
+        return
+
     launch_dir = Path.cwd()          # /project with no argument means THIS folder
     # The lambda reads main's CURRENT ws, so it follows /project, /chat and /resume
     printer = EventPrinter(lambda: ws)
@@ -705,6 +787,31 @@ def main() -> None:
 
     # FileHistory gives up-arrow recall across restarts
     session = PromptSession(history=FileHistory(str(APP_DIR / "history.txt")))
+    reminder_task = None
+
+    async def reminder_loop():
+        while True:
+            await asyncio.sleep(1)
+            try:
+                due = knowledge_index().pop_due_reminders()
+            except KnowledgeError as exc:
+                error = str(exc)
+                await run_in_terminal(
+                    lambda: console.print(f"ERROR checking reminders: {error}",
+                                          style="red", markup=False)
+                )
+                return
+            if due:
+                def announce():
+                    for reminder_id, message in due:
+                        console.print(f"REMINDER: {message}", style="bold yellow", markup=False)
+                        audit.append("reminder_due", id=reminder_id)
+                await run_in_terminal(announce)
+
+    def start_reminder_loop():
+        nonlocal reminder_task
+        if reminder_task is None or reminder_task.done():
+            reminder_task = session.app.create_background_task(reminder_loop())
 
     def toolbar():
         """Bottom-of-screen context bar, colored by pressure level."""
@@ -728,7 +835,8 @@ def main() -> None:
 
     while True:
         try:
-            text = session.prompt("you> ", bottom_toolbar=toolbar).strip()
+            text = session.prompt("you> ", bottom_toolbar=toolbar,
+                                  pre_run=start_reminder_loop).strip()
         except KeyboardInterrupt:
             continue          # Ctrl+C at the prompt just clears the line
         except EOFError:
@@ -741,12 +849,169 @@ def main() -> None:
         # --- slash commands (more arrive in later phases) ---
         if text == "/exit":
             break
-        if text == "/think":
+        if text == "/think" or text == "/think auto":
+            if text == "/think auto":
+                agent.thinking_override = None
+                agent.thinking = False
+                console.print("thinking override cleared; automatic setting will apply.",
+                              style="yellow", markup=False)
+                continue
             agent.thinking = not agent.thinking
-            console.print(f"thinking: {'on' if agent.thinking else 'off'}", style="yellow")
+            agent.thinking_override = agent.thinking
+            console.print(f"thinking: {'on' if agent.thinking else 'off'} (manual override)",
+                          style="yellow", markup=False)
             continue
         if text == "/ws":
             console.print(str(ws.root), markup=False)
+            continue
+        if text == "/knowledge" or text.startswith("/knowledge "):
+            parts = text.split(maxsplit=2)
+            index = knowledge_index()
+            action = parts[1].lower() if len(parts) > 1 else "status"
+            argument = parts[2].strip().strip('"') if len(parts) > 2 else ""
+            try:
+                if action == "index" and argument:
+                    result = index.index_folder(Path(argument))
+                    audit.append("knowledge_index", root=result["root"],
+                                 files_changed=result["files_changed"], chunks_added=result["chunks_added"])
+                    console.print(f"Indexed {result['root']}: {result['files_changed']} changed, "
+                                  f"{result['files_unchanged']} unchanged, {result['files_removed']} removed, "
+                                  f"{result['chunks_added']} passages.", style="green", markup=False)
+                    if result["embedding_note"]:
+                        console.print(result["embedding_note"], style="yellow", markup=False)
+                elif action == "search" and argument:
+                    hits = index.search(argument)
+                    audit.append("knowledge_search", hits=len(hits), query_chars=len(argument))
+                    console.print(render_hits(hits), markup=False, highlight=False)
+                    if index.embedding_note:
+                        console.print(f"Semantic search unavailable: {index.embedding_note}",
+                                      style="yellow", markup=False)
+                elif action == "watch" and argument:
+                    root = index.start_watching(Path(argument))
+                    audit.append("knowledge_watch", root=root, action="start")
+                    console.print(f"Watching {root} while Danica is open.", style="green", markup=False)
+                elif action == "stop" and argument:
+                    stopped = index.stop_watching(Path(argument))
+                    audit.append("knowledge_watch", path=argument, action="stop", stopped=stopped)
+                    console.print("Watcher stopped." if stopped else "No watcher for that folder.",
+                                  markup=False)
+                elif action == "digest" and argument in ("daily", "weekly"):
+                    days = 1 if argument == "daily" else 7
+                    changes = index.recent_changes(days)
+                    if not changes:
+                        console.print(f"No indexed notes changed in the last {days} day(s).",
+                                      style="dim", markup=False)
+                    else:
+                        label = "Daily" if days == 1 else "Weekly"
+                        console.print(f"{label} local knowledge digest:", style="bold", markup=False)
+                        for root, path, excerpt in changes:
+                            preview = " ".join((excerpt or "").split())[:240]
+                            console.print(f"- {root}:{path}: {preview}", markup=False, highlight=False)
+                    audit.append("knowledge_digest", period=action, entries=len(changes))
+                elif action == "graph" and argument:
+                    target = ws.resolve(argument)
+                    output = index.write_graph(target)
+                    audit.append("knowledge_graph_export", path=ws.display(output))
+                    console.print(f"Interactive knowledge graph saved: {ws.display(output)}",
+                                  style="green", markup=False)
+                elif action == "commit" and argument:
+                    preview = ws.knowledge_previews.get(argument)
+                    if preview is None:
+                        console.print("No such preview in this session.", style="yellow", markup=False)
+                        continue
+                    target = Path(preview["path"])
+                    console.print(f"Write-back preview for {target}:\n\n{preview['content']}",
+                                  markup=False, highlight=False)
+                    overwrite = target.exists()
+                    question = ("Overwrite the existing note? [y/N] " if overwrite
+                                else "Write this note? [y/N] ")
+                    try:
+                        answer = prompt(question).strip().lower()
+                    except (EOFError, KeyboardInterrupt):
+                        answer = ""
+                    if answer not in ("y", "yes"):
+                        console.print("No file was changed.", style="yellow", markup=False)
+                        continue
+                    written = index.commit_obsidian_preview(ws, argument, overwrite=overwrite)
+                    audit.append("obsidian_write", path=str(written), overwritten=overwrite)
+                    console.print(f"Wrote {written}", style="green", markup=False)
+                elif action == "status":
+                    status = index.status()
+                    console.print(json.dumps(status, ensure_ascii=False, indent=2),
+                                  markup=False, highlight=False)
+                else:
+                    console.print("Usage: /knowledge index <folder> | search <query> | "
+                                  "watch <folder> | stop <folder> | status | digest daily|weekly | "
+                                  "graph <workspace-file.html> | commit <preview-id>",
+                                  markup=False)
+            except (KnowledgeError, OSError) as exc:
+                console.print(f"ERROR: {exc}", style="red", markup=False)
+            continue
+        if text == "/reminder" or text.startswith("/reminder "):
+            parts = text.split(maxsplit=3)
+            index = knowledge_index()
+            try:
+                if len(parts) == 4 and parts[1] == "add":
+                    reminder_id = index.add_reminder(parts[2], parts[3])
+                    audit.append("reminder_add", id=reminder_id)
+                    console.print(f"Reminder {reminder_id} scheduled.", style="green", markup=False)
+                elif len(parts) == 2 and parts[1] == "list":
+                    reminders = index.list_reminders()
+                    if not reminders:
+                        console.print("No pending reminders.", markup=False)
+                    for reminder_id, due, message in reminders:
+                        local_time = datetime.fromtimestamp(due).astimezone().isoformat(timespec="minutes")
+                        console.print(f"{reminder_id}  {local_time}  {message}", markup=False)
+                else:
+                    console.print("Usage: /reminder add <ISO datetime> <text> | /reminder list",
+                                  markup=False)
+            except KnowledgeError as exc:
+                console.print(f"ERROR: {exc}", style="red", markup=False)
+            continue
+        if text == "/agents" or text.startswith("/agents "):
+            parts = text.split(maxsplit=2)
+            supervisor = getattr(ws, "subagent_supervisor", None)
+            if supervisor is None:
+                console.print("subagent supervisor is unavailable", style="yellow", markup=False)
+                continue
+            if len(parts) == 1:
+                children = supervisor.list()
+                if not children:
+                    console.print("No subagents have run in this session.", style="dim", markup=False)
+                for child in children:
+                    console.print(f"{child['id']}  {child['status']}  "
+                                  f"{child['elapsed_seconds']}s  {child['task']}", markup=False)
+                continue
+            if len(parts) == 3 and parts[1] == "run":
+                try:
+                    child_id = supervisor.start(parts[2])
+                    console.print(f"Subagent {child_id} started. Use /agents to monitor or "
+                                  f"/agents kill {child_id} to stop it.", style="green", markup=False)
+                except SubagentError as exc:
+                    console.print(f"ERROR: {exc}", style="red", markup=False)
+                continue
+            if len(parts) == 3 and parts[1] == "peek":
+                child = next((item for item in supervisor.list() if item["id"] == parts[2]), None)
+                console.print(json.dumps(child, ensure_ascii=False, indent=2) if child
+                              else "No such subagent.", markup=False)
+                continue
+            if len(parts) == 3 and parts[1] == "wait":
+                try:
+                    finished = supervisor.wait(parts[2])
+                    child = next((item for item in supervisor.list() if item["id"] == parts[2]), None)
+                    console.print(json.dumps(child, ensure_ascii=False, indent=2) if finished and child
+                                  else "Subagent is still running." if child else "No such subagent.",
+                                  markup=False)
+                except SubagentError as exc:
+                    console.print(f"ERROR: {exc}", style="red", markup=False)
+                continue
+            if len(parts) == 3 and parts[1] == "kill":
+                stopped = supervisor.kill(parts[2])
+                console.print("Subagent stopped." if stopped else "No running subagent with that id.",
+                              style="yellow", markup=False)
+                continue
+            console.print("Usage: /agents [run <task> | peek <id> | wait <id> | kill <id>]",
+                          style="yellow", markup=False)
             continue
         if text == "/context":
             console.print(agent.tracker.bar(agent.messages), markup=False)
@@ -1051,6 +1316,21 @@ def main() -> None:
 
         console.print()  # blank line between turns
 
+    if getattr(ws, "subagent_supervisor", None) is not None:
+        try:
+            ws.subagent_supervisor.close()
+        except SubagentError as exc:
+            console.print(f"ERROR stopping subagents: {exc}", style="red", markup=False)
+    if _KNOWLEDGE_INDEX is not None:
+        try:
+            _KNOWLEDGE_INDEX.close()
+        except KnowledgeError as exc:
+            console.print(f"ERROR stopping knowledge watchers: {exc}", style="red", markup=False)
+    if _EXTENSION_MANAGER is not None:
+        try:
+            _EXTENSION_MANAGER.close()
+        except ExtensionError as exc:
+            console.print(f"ERROR stopping extensions: {exc}", style="red", markup=False)
 
 if __name__ == "__main__":
     main()

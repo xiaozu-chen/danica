@@ -20,7 +20,8 @@ DEFAULTS = {
     "pruning": {"keep_recent": 6, "min_chars": 400},
     "compaction": {"tail_fraction": 0.12},
     "web": {"user_agent": "Danica/0.1 (local research assistant)",
-            "search_provider": "searxng", "search_url": "http://localhost:8888"},
+            "search_provider": "searxng", "search_url": "http://localhost:8888",
+            "search_fallback_url": "https://search.utilibre.org"},
     "embeddings": {"enabled": True, "url": "http://localhost:8081",
                    "model_name": "nomic-embed-text-v1.5", "min_similarity": 0.50,
                    "merge_similarity": 0.88},
@@ -31,6 +32,16 @@ DEFAULTS = {
     "diagrams": {"engine": "auto", "confine": True, "dot_path": "", "mmdc_path": ""},
     # auto: "ask" offers a plan for big-looking requests, "off" = only /plan. min_score: how many of the 5 signals make a request "big"
     "planning": {"auto": "ask", "thinking": True, "min_score": 3},
+    "thinking": {
+        "auto": True,
+        "classifier_enabled": True,
+        "classifier_url": "http://127.0.0.1:8082",
+        "classifier_model": "SmolLM2-135M-thinking",
+        "log_decisions": True,
+        "log_prompts": True,
+    },
+    "mcp": {"servers": {}},
+    "hooks": {"before": [], "after": []},
 }
 
 def load_config() -> dict:
@@ -44,7 +55,24 @@ def load_config() -> dict:
             user = tomllib.load(f)
         # Merge section by section so a partial file doesn't wipe defaults
         for section, values in user.items():
+            if section == "routing":
+                continue
             cfg.setdefault(section, {}).update(values)
+        legacy = user.get("routing", {})
+        current = user.get("thinking", {})
+        if isinstance(legacy, dict):
+            legacy_values = {
+                "auto": legacy.get("auto_thinking"),
+                "classifier_enabled": legacy.get("classifier_enabled"),
+                "classifier_url": legacy.get("classifier_url"),
+                "classifier_model": legacy.get("classifier_model"),
+                "log_decisions": legacy.get("log_decisions"),
+                "log_prompts": legacy.get("log_prompts"),
+            }
+            cfg["thinking"].update({key: value for key, value in legacy_values.items()
+                                    if value is not None})
+        if isinstance(current, dict):
+            cfg["thinking"].update(current)
     return cfg
 
 

@@ -47,6 +47,9 @@ TOOL_TIERS = {
     "deck": Tier.WRITE,
     "mermaid": Tier.WRITE,
     "dashboard": Tier.WRITE,
+    "delegate": Tier.EXECUTE,
+    "knowledge_search": Tier.READ,
+    "knowledge_synthesize": Tier.READ,
 }
 
 # (regex, reason) pairs for commands that can destroy things or pull in code.
@@ -167,6 +170,9 @@ def classify(tool: str, args: dict) -> tuple[Tier, str, frozenset[str]]:
     if tool not in TOOLS:
         # Hallucinated tool name: run_tool will just report "unknown tool", so it's harmless.
         return Tier.READ, "unknown tool", frozenset()
+
+    if tool.startswith(("plugin_", "mcp_")):
+        return Tier.OUTSIDE, "executes a user-managed extension", frozenset()
 
     tier = TOOL_TIERS.get(tool, Tier.EXECUTE)  # unclassified tools fail safe
     if tool != "run_shell":

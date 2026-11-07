@@ -30,9 +30,9 @@ class SearchError(Exception):
     """A search problem whose message is safe to show the model."""
 
 
-def _searxng(query: str) -> list[dict]:
-    """Ask a SearxNG server for JSON results. Returns the raw result dicts."""
-    base = CONFIG["web"]["search_url"].rstrip("/")
+def _searxng_at(query: str, base: str) -> list[dict]:
+    """Ask one SearXNG server for JSON results."""
+    base = base.rstrip("/")
     try:
         resp = httpx.get(
             f"{base}/search", params={"q": query, "format": "json"},
@@ -41,8 +41,7 @@ def _searxng(query: str) -> list[dict]:
             trust_env=False,    # ignore proxy variables
         )
     except httpx.ConnectError:
-        raise SearchError(f"could not reach the search server at {base}. "
-                          f"Tell the user SearxNG may not be running (docker start searxng).")
+        raise
     except httpx.HTTPError as e:
         raise SearchError(f"the search request failed ({type(e).__name__})")
     if resp.status_code == 403:
@@ -58,6 +57,24 @@ def _searxng(query: str) -> list[dict]:
     if not isinstance(results, list):
         raise SearchError("the search server's answer had no results list")
     return [r for r in results if isinstance(r, dict)]
+
+
+def _searxng(query: str) -> list[dict]:
+    """Use the local SearXNG first and the configured hosted instance on connection failure."""
+    primary = str(CONFIG["web"].get("search_url", "")).rstrip("/")
+    fallback = str(CONFIG["web"].get("search_fallback_url", "")).rstrip("/")
+    try:
+        return _searxng_at(query, primary)
+    except httpx.ConnectError as exc:
+        if not fallback or fallback == primary:
+            raise SearchError(f"could not reach the search server at {primary}. "
+                              "SearxNG may not be running; start it or configure a fallback URL.") from exc
+        try:
+            return _searxng_at(query, fallback)
+        except httpx.ConnectError as fallback_exc:
+            raise SearchError(
+                f"could not reach the primary search server at {primary} or its fallback at {fallback}"
+            ) from fallback_exc
 
 
 # Add a keyed provider here later (it must return dicts with title/url/content)
