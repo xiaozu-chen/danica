@@ -19,7 +19,7 @@ from docx import Document
 from rich.console import Console
 
 import danica.agent as agent_mod
-import danica.cli as cli
+import danica._cli as _cli
 import danica.seal as seal
 import danica.tools.fetch as fetch
 from danica.agent import Agent
@@ -85,19 +85,19 @@ threading.Thread(target=server.serve_forever, daemon=True).start()
 fetch.TEST_ALLOW.add(("127.0.0.1", port))
 url = f"http://127.0.0.1:{port}/diet"
 
-real_stream, real_console, real_show = agent_mod.stream_chat, cli.console, cli.show_image
+real_stream, real_console, real_show = agent_mod.stream_chat, _cli.console, _cli.show_image
 agent_mod.stream_chat = fake_stream
 buf = io.StringIO()
-cli.console = Console(file=buf, width=100, force_terminal=False)
+_cli.console = Console(file=buf, width=100, force_terminal=False)
 drawn: list[str] = []
-cli.show_image = lambda path, label, console: drawn.append(label)
+_cli.show_image = lambda path, label, console: drawn.append(label)
 try:
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         tmp = Path(tmp)
         seal.KEY_PATH = tmp / "seal.key"
         ws = Workspace(tmp / "ws")
         asked: list[str] = []
-        printer = cli.EventPrinter(lambda: ws)
+        printer = _cli.EventPrinter(lambda: ws)
         agent = Agent(ws, on_event=printer, policy=PermissionPolicy(ask=lambda *a: asked.append(a[0]) or "deny"),
                       checkpoints=Checkpoints(ws, tmp / "git"), max_steps=20)
 
@@ -169,7 +169,7 @@ try:
         slides.write_text(slides.read_text(encoding="utf-8") + "<!-- edited -->", encoding="utf-8")
         check("an edited slideshow may not", not is_openable(slides))
 finally:
-    agent_mod.stream_chat, cli.console, cli.show_image = real_stream, real_console, real_show
+    agent_mod.stream_chat, _cli.console, _cli.show_image = real_stream, real_console, real_show
     server.shutdown()
     fetch.TEST_ALLOW.clear()
 

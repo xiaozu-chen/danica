@@ -39,6 +39,14 @@ class UI(Protocol):
                    can_remember: bool) -> str:
         """Blocking tool-permission question. Returns "once", "session" or "deny"."""
 
+    def choose(self, title: str, body: str, options: list[tuple[str, str]],
+               detail: str = "") -> str | None:
+        """Blocking multiple choice. options = [(key, label), ...] with single-letter keys.
+        Returns the chosen key, or None if the user dismissed it (Esc, Ctrl+C, EOF)."""
+
+    def ask_text(self, title: str, default: str = "") -> str | None:
+        """Blocking one-line text question. None if dismissed."""
+
 
 class RichUI:
     """The classic terminal frontend (Rich output, prompt_toolkit input)."""
@@ -87,3 +95,28 @@ class RichUI:
                 return "session"
             if answer in ("n", "no", ""):
                 return "deny"
+
+    def choose(self, title: str, body: str, options: list[tuple[str, str]],
+               detail: str = "") -> str | None:
+        from prompt_toolkit import prompt
+        self.log("warning", title)
+        if body:
+            self.say(body)
+        if detail:
+            self.say(detail, style="dim")
+        keys = {k for k, _ in options}
+        line = "  ".join(f"[{k}] {label}" for k, label in options)
+        while True:
+            try:
+                answer = prompt(f"{line} > ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                return None
+            if answer in keys:
+                return answer
+
+    def ask_text(self, title: str, default: str = "") -> str | None:
+        from prompt_toolkit import prompt
+        try:
+            return prompt(f"{title} > ", default=default).strip()
+        except (EOFError, KeyboardInterrupt):
+            return None

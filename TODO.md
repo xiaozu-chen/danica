@@ -1,83 +1,38 @@
-The lightest and easiest way to host **SearXNG** locally for personal use or AI tool integration (like Ollama or Open WebUI) is using **Docker**.
+Create a complete, advanced chess game in Python using Pygame and Python-Chess (`python-chess` library for move validation and game state management). The application should feature a clean graphical user interface and robust functionality.
 
----
+### Core Requirements
 
-### Step 1: Create a Project Directory
-
-Open your terminal and create a dedicated folder for SearXNG:
-
-```bash
-mkdir -p ~/searxng/searxng
-cd ~/searxng
-
-```
-
----
-
-### Step 2: Download Configuration & Compose Files
-
-Pull the standard environment files from the official SearXNG repository:
-
-```bash
-curl -fsSL -O https://raw.githubusercontent.com/searxng/searxng/master/container/docker-compose.yml \
--O https://raw.githubusercontent.com/searxng/searxng/master/container/.env.example
-
-mv .env.example .env
-
-```
-
----
-
-### Step 3: Configure Settings for Local Use
-
-1. **Generate a Secret Key:**
-SearXNG requires a secret key for session encryption. Run this command to generate one:
-```bash
-openssl rand -hex 32
-
-```
+1. **Architecture & Libraries:**
+* Use `pygame` for rendering the graphical user interface, event handling, and user interactions.
+* Use the `python-chess` library (`import chess`) to handle board state, move generation, legality, check/checkmate detection, and stalemate rules.
 
 
-*Copy the output string.*
-2. **Create `searxng/settings.yml`:**
-Create a light configuration file inside the `searxng` directory:
-```bash
-nano searxng/settings.yml
-
-```
-
-
-Paste the following lightweight configuration (replace `YOUR_SECRET_KEY` with the output from step 1):
-```yaml
-use_default_settings: true
-server:
-  secret_key: "YOUR_SECRET_KEY"
-  limiter: false       # Disable rate limiting for purely local/personal use
-  image_proxy: true
-search:
-  safe_search: 0
-search_engines:
-  - name: google
-    engine: google
-    shortcut: g
-
-```
+2. **Graphical User Interface (GUI):**
+* A classic 8x8 chessboard with a clean, modern visual style, wood or minimalist flat textures, and clear coordinate labels (A-H, 1-8).
+* High-contrast highlighting for:
+* The currently selected piece.
+* Legal move destinations for the selected piece.
+* The origin and destination squares of the last played move.
+* Check alerts (highlighting the king's square in red when in check).
 
 
-*Save and close (`Ctrl + O`, `Enter`, `Ctrl + X`).*
+* Smooth drag-and-drop piece movement as well as click-to-select/click-to-move mechanics.
+* Render captured pieces on the side panels along with material advantage tracking (e.g., White +1).
+* A game status bar showing whose turn it is, checkmate/draw states, and a move timer or move history log.
 
----
 
-### Step 4: Start SearXNG
+3. **Advanced Gameplay Features:**
+* **Promotion Dialog:** A popup or overlay menu when a pawn reaches the final rank, allowing the player to choose between Queen, Rook, Bishop, or Knight.
+* **Castling & En Passant:** Fully supported via `python-chess`.
+* **Move History Panel:** A scrollable text box or side panel listing previous moves in standard algebraic notation (SAN).
+* **Undo/Redo Functionality:** Buttons or hotkeys (`Ctrl+Z`) to step backward and forward through move history.
+* **Game Controls:** Buttons for "New Game", "Resign", and "Flip Board" (to view from Black's perspective).
 
-Launch the container stack in detached mode:
 
-```bash
-docker compose up -d
+4. **AI Opponent (Optional Toggle):**
+* Implement a simple AI opponent using Minimax with Alpha-Beta pruning and a basic piece-square evaluation table, or allow an easy integration hook for a UCI-compliant chess engine (like Stockfish).
 
-```
 
-* **Verification:** Open your web browser and go to `http://localhost:8080`. You should see your local SearXNG search interface.
-* **Status Check:** Run `docker compose ps` to verify the containers are healthy.
-
----
+5. **Code Quality:**
+* Well-structured, object-oriented Python code split logically into classes (e.g., `ChessGame`, `BoardRenderer`, `AIPlayer`).
+* Clean comments, docstrings, and instructions on how to install required dependencies (`pip install pygame python-chess`).

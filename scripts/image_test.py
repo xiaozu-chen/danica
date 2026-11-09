@@ -13,7 +13,7 @@ from PIL import Image
 from rich.console import Console
 
 import danica.agent as agent_mod
-import danica.cli as cli
+import danica._cli as _cli
 import danica.imageview as iv
 from danica.agent import Agent
 from danica.config import CONFIG
@@ -197,13 +197,13 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         CONFIG["display"]["images"] = "link"
 
     # -------------------------------------------------------- the CLI printer
-    real_console, real_show = cli.console, cli.show_image
+    real_console, real_show = _cli.console, _cli.show_image
     buf = io.StringIO()
-    cli.console = Console(file=buf, width=100, force_terminal=False)
+    _cli.console = Console(file=buf, width=100, force_terminal=False)
     drawn: list[str] = []
-    cli.show_image = lambda path, label, console: drawn.append(label)
+    _cli.show_image = lambda path, label, console: drawn.append(label)
     try:
-        printer = cli.EventPrinter(lambda: ws)
+        printer = _cli.EventPrinter(lambda: ws)
         printer.begin_request()
         for piece in ["Here it is: <pre", 'sent file="charts/a.png"/> and that is all.']:
             printer("content", piece)
@@ -225,7 +225,7 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         printer("tool_call", ("read_file", {"path": "x"}))
         check("held-back text is flushed before the next event", 'half <present file="c' in buf.getvalue())
     finally:
-        cli.console, cli.show_image = real_console, real_show
+        _cli.console, _cli.show_image = real_console, real_show
 
     # ----------------------------------------------- the agent tracks charts
     real_stream, real_run_tool = agent_mod.stream_chat, agent_mod.run_tool

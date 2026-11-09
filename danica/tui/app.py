@@ -17,26 +17,35 @@ from __future__ import annotations
 import threading
 from collections import deque
 from datetime import datetime
+from pathlib import Path
 
 from rich.text import Text
-from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
-from textual.widgets import Input, Static
+from textual.widgets import Static
+from rich.console import Console
+from rich.markup import escape
 
 from danica.app_core import build_session, shutdown, short_path
 from danica.artifacts import collect
+from danica.config import CONFIG
 from danica.imageview import ImageError, check_image
+from danica.plan_flow import run_plan_mode
 from danica.present import PresentFilter
 from danica.tui.bridge import AgentEvent, EventBridge, RequestDone, TextualUI
-from danica.tui.commands import dispatch
+from danica.tui.commands import command_names, dispatch
+from danica.tui.engine import Engine
 from danica.tui.widgets import (ACCENT, ArtifactsList, AssistantMessage, BusyLine, Citations,
-                                Notice, PromptInput, Say, StatusBar, ThinkingBlock, ToolCall,
+                                CommandPopup, Notice, PromptInput, Say, StatusBar, ThinkingBlock, ToolCall,
                                 UserMessage, image_widget, welcome_panel)
 
-IDLE_PLACEHOLDER = "Ask Danica…  (/help for commands)"
+IDLE_PLACEHOLDER = f"Ask Danica…"
 BUSY_PLACEHOLDER = "Working…  Esc stops the task"
+
+
+class _PlanCancelled(Exception):
+    pass
 
 
 class DanicaApp(App):
@@ -53,8 +62,11 @@ class DanicaApp(App):
 
     def __init__(self) -> None:
         super().__init__()
+        self.theme = "ansi-dark"
         self.ui_thread = 0
         self.ui = TextualUI(self)
+        self.engine = Engine(self._engine_error)
+        self._poll_queued = False
         self.bridge = EventBridge(self)
 
         self.is_ready = False            # a session exists
@@ -65,7 +77,11 @@ class DanicaApp(App):
         self.ws = self.audit = self.checkpoints = self.policy = self.agent = None
         self.session_id = ""
         self.project: dict | None = None
-        self.plan_next = False
+        self.plan_next = False                       # set by a bare /plan: the NEXT request gets a plan
+        self.plan_auto = CONFIG.get("planning", {}).get("auto", "ask")   # "ask" | "off"
+        self.artifacts: list = []                    # files the LAST request made (for /open, /save)
+        self.launch_dir = Path.cwd()                 # /project with no argument means THIS folder
+        self.current_command = ""
 
         # Per-request streaming state (UI thread only)
         self.filter = PresentFilter()
@@ -79,6 +95,7 @@ class DanicaApp(App):
     def compose(self) -> ComposeResult:
         yield VerticalScroll(id="transcript")
         yield BusyLine(id="busy")
+        yield CommandPopup(id="popup")
         with Horizontal(id="prompt-box"):
             yield Static(">", id="caret")
             yield PromptInput(placeholder=IDLE_PLACEHOLDER, id="prompt")
@@ -89,40 +106,80 @@ class DanicaApp(App):
         transcript = self.query_one("#transcript", VerticalScroll)
         if hasattr(transcript, "anchor"):        # stay pinned to the bottom until the user scrolls up
             transcript.anchor()
+        self.query_one(CommandPopup).hide()
         self.query_one(PromptInput).focus()
         self.set_working(True, "starting")
-        self.boot()
+        self.engine.start()
+        self.engine.submit(self.boot)
+        self.set_interval(1.0, self._tick_reminders)
 
     def on_unmount(self) -> None:
-        shutdown(self.ws)
+        # Stop a running request, then close sqlite-backed objects ON the engine thread
+        if self.agent is not None:
+            self.agent.cancel()
+        ws = self.ws
+        self.engine.submit(shutdown, ws)
+        self.engine.stop()
+
+    def _engine_error(self, exc: BaseException) -> None:
+        if isinstance(exc, KeyboardInterrupt):
+            return
+        self._call(self.add_notice, "error", f"internal error: {type(exc).__name__}: {exc}")
+        self._call(self.set_working, False)
 
     # ------------------------------------------------------------------ sessions (worker thread)
 
-    @work(thread=True, group="session")
     def boot(self) -> None:
         try:
-            self._build(None)
+            self.swap_session(None, boot=True)
         except Exception as exc:
             self.ui.log("error", f"could not start a session: {type(exc).__name__}: {exc}")
             self._call(self.set_working, False)
 
-    def swap_session(self, project: dict | None) -> None:
-        """Build a new session (worker thread: it may open dialogs) and show it."""
-        self._build(project)
-
-    def _build(self, project: dict | None) -> None:
+    def swap_session(self, project: dict | None, note: str | None = None, boot: bool = False) -> None:
+        """Build a new session (worker thread: it may open dialogs) and show it.
+        `note` may contain {id}; the default depends on the mode."""
         new_id = datetime.now().strftime("%Y%m%d-%H%M%S")
-        ws, audit, checkpoints, policy, agent = build_session(new_id, self.ui, self.bridge, project)
-        self.ws, self.audit, self.checkpoints, self.policy, self.agent = ws, audit, checkpoints, policy, agent
-        self.session_id, self.project = new_id, project
-        audit.append("session_start", workspace=str(ws.root), mode="project" if project else "chat")
-        self._call(self.after_session, f"New session {new_id}." if self.is_ready else "")
+        parts = build_session(new_id, self.ui, self.bridge, project)
+        default = f"New session {new_id}."
+        if project:
+            default = (f"Project mode: {project['name']}\n  folder: {parts[0].root}\n"
+                       f"{default} The previous session stays available via /sessions and /resume.")
+        text = "" if boot else (note.format(id=new_id) if note else default)
+        self.adopt_session(parts, new_id, project, text, start_mode="project" if project else "chat")
 
-    def after_session(self, note: str) -> None:
+    def adopt_session(self, parts, session_id: str, project: dict | None, note: str,
+                      start_mode: str | None = None) -> None:
+        """Make `parts` (from build_session / open_resumed) the current session. Worker thread."""
+        ws, audit, checkpoints, policy, agent = parts
+        self.ws, self.audit, self.checkpoints, self.policy, self.agent = ws, audit, checkpoints, policy, agent
+        self.session_id, self.project = session_id, project
+        self.artifacts = []
+        if start_mode:
+            extra = {"project": project["id"]} if project else {}
+            audit.append("session_start", workspace=str(ws.root), mode=start_mode, **extra)
+        self._call(self.after_session, note, list(agent.messages[1:]))
+
+    def after_session(self, note: str, history: list | None = None) -> None:
         transcript = self.query_one("#transcript", VerticalScroll)
         transcript.remove_children()
         transcript.mount(Static(welcome_panel(self.project["name"] if self.project else None,
                                               short_path(self.ws.root)), classes="welcome"))
+        if history:                                   # a resumed session: replay the last exchanges
+            from danica.compaction import is_summary
+            entries = []
+            for m in history:
+                content = m.get("content")
+                if not isinstance(content, str) or not content.strip():
+                    continue
+                if m.get("role") == "user" and not content.startswith("[harness reminder") and not is_summary(m):
+                    entries.append(UserMessage(content))
+                elif m.get("role") == "assistant" and not m.get("tool_calls"):
+                    reply = AssistantMessage()
+                    reply.append(content)
+                    entries.append(reply)
+            if entries:
+                transcript.mount(Say("— earlier in this session —", "dim"), *entries[-12:])
         if note:
             transcript.mount(Notice("ok", note))
         self._reset_stream_state()
@@ -138,8 +195,8 @@ class DanicaApp(App):
 
     # ------------------------------------------------------------------ input
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        prompt = event.input
+    def on_prompt_input_submitted(self, event: PromptInput.Submitted) -> None:
+        prompt = event.prompt
         text = event.value.strip()
         prompt.value = ""
         if not text:
@@ -150,30 +207,79 @@ class DanicaApp(App):
         if self.working:
             self.add_notice("warning", "Danica is busy. Esc or Ctrl+C stops the current task.")
             return
-        if isinstance(prompt, PromptInput):
-            prompt.remember(text)
+        prompt.remember(text)
         if text.startswith("/"):
             self.set_working(True, "command", kind="command")
-            self.run_command(text)
+            self.engine.submit(self.run_command, text)
         else:
             self.start_request(text)
 
-    @work(thread=True, group="command")
     def run_command(self, text: str) -> None:
+        follow = None
         try:
-            dispatch(self, text)
+            follow = dispatch(self, text)
         except Exception as exc:
             self.ui.log("error", f"{type(exc).__name__}: {exc}")
-        finally:
-            self._call(self.set_working, False)
+        self._call(self._finish_command, follow)
+
+    def _finish_command(self, follow) -> None:
+        self.set_working(False)
+        if follow and follow[0] == "request":          # e.g. /plan <request>
+            self.start_request(follow[1], force_plan=True)
+
+    # ------------------------------------------------------------------ slash-command popup
+
+    def on_text_area_changed(self, event) -> None:
+        prompt = self.query_one(PromptInput)
+        popup = self.query_one(CommandPopup)
+        text = prompt.text
+        if "\n" not in text and text.startswith("/") and " " not in text:
+            matches = [(n, d) for n, d in command_names() if n.startswith(text)]
+            if matches and not (len(matches) == 1 and matches[0][0] == text):
+                popup.show_matches(matches)
+                prompt.popup_open = True
+                return
+        popup.hide()
+        prompt.popup_open = False
+
+    def on_prompt_input_popup_key(self, event: PromptInput.PopupKey) -> None:
+        prompt = self.query_one(PromptInput)
+        popup = self.query_one(CommandPopup)
+        if event.action == "up":
+            popup.action_cursor_up()
+        elif event.action == "down":
+            popup.action_cursor_down()
+        elif event.action == "close":
+            popup.hide()
+            prompt.popup_open = False
+        elif event.action == "accept":
+            choice = popup.current()
+            if choice is None or choice == prompt.text:
+                popup.hide()                          # already exact: Enter just sends it
+                prompt.popup_open = False
+                prompt.post_message(PromptInput.Submitted(prompt, prompt.text))
+            else:
+                prompt.value = choice + " "
+                popup.hide()
+                prompt.popup_open = False
+
+    def on_option_list_option_selected(self, event) -> None:
+        """A click on a suggestion completes it."""
+        prompt = self.query_one(PromptInput)
+        prompt.value = str(event.option.id) + " "
+        self.query_one(CommandPopup).hide()
+        prompt.popup_open = False
+        prompt.focus()
 
     # ------------------------------------------------------------------ one request
 
-    def start_request(self, text: str) -> None:
+    def start_request(self, text: str, force_plan: bool = False) -> None:
         self.mount_block(UserMessage(text))
         self._reset_stream_state()
+        forced = force_plan or self.plan_next
+        self.plan_next = False
         self.set_working(True, "working", kind="request")
-        self._request_worker(text)
+        self.engine.submit(self._request_worker, text, forced)
 
     def _reset_stream_state(self) -> None:
         self.filter = PresentFilter()
@@ -182,16 +288,21 @@ class DanicaApp(App):
         self._thinking = None
         self._pending.clear()
 
-    @work(thread=True, group="request")
-    def _request_worker(self, text: str) -> None:
-        agent, ws = self.agent, self.ws
+    def _request_worker(self, text: str, forced: bool = False) -> None:
+        agent, ws, audit = self.agent, self.ws, self.audit
         result = error = found = None
         try:
-            result = agent.run(text)
+            # May open dialogs (plan offer, plan review); Esc during drafting cancels it
+            decision, plan, self.plan_auto = run_plan_mode(text, forced, self.plan_auto, agent, audit, self.ui)
+            if decision == "cancel":
+                raise _PlanCancelled()
+            result = agent.run(text, plan=plan)
             try:
                 found = collect(ws, agent.checkpoints, agent.request_snap, agent.touched, set(self.presented))
             except Exception:
                 found = None                      # a failed file listing must not hide the answer
+        except _PlanCancelled:
+            error = "plan-cancelled"
         except KeyboardInterrupt:
             error = "interrupted"
         except Exception as exc:                  # most likely: llama-server is not running
@@ -275,7 +386,9 @@ class DanicaApp(App):
             self._thinking.finish()
             self._thinking = None
 
-        if msg.error == "interrupted":
+        if msg.error == "plan-cancelled":
+            self.add_notice("warning", "nothing was run")
+        elif msg.error == "interrupted":
             self.add_notice("warning", "[interrupted]")
         elif msg.error:
             self.add_notice("error", msg.error)
@@ -288,9 +401,43 @@ class DanicaApp(App):
                 self.mount_block(Say("Charts made in this request:", "dim"))
                 for p in todo:
                     self.show_image(p)
-            if msg.found is not None and (msg.found.items or msg.found.deleted):
-                self.mount_block(ArtifactsList(msg.found))
+            if msg.found is not None:
+                self.artifacts = list(msg.found.items)
+                if msg.found.items or msg.found.deleted:
+                    self.mount_block(ArtifactsList(msg.found))
         self.set_working(False)
+
+    # ------------------------------------------------------------------ reminders
+
+    _reminders_ok = True
+
+    def _tick_reminders(self) -> None:
+        """UI thread, once a second. Queue a poll only when the engine is idle."""
+        if (not self._reminders_ok or not self.is_ready or self.working
+                or self.engine.busy or self._poll_queued):
+            return
+        self._poll_queued = True
+        self.engine.submit(self._poll_reminders)
+
+    def _poll_reminders(self) -> None:
+        """Engine thread."""
+        try:
+            if self.working:
+                return
+            from danica.app_core import knowledge_index
+            due = knowledge_index().pop_due_reminders()
+            for reminder_id, message in due:
+                self._call(self.show_reminder, str(message))
+                self.audit.append("reminder_due", id=reminder_id)
+        except Exception as exc:                  # KnowledgeError or anything else: say so once, stop polling
+            self._reminders_ok = False
+            self.ui.log("error", f"checking reminders: {exc}")
+        finally:
+            self._poll_queued = False
+
+    def show_reminder(self, message: str) -> None:
+        self.mount_block(Say(f"REMINDER: {message}", "bold yellow"))
+        self.notify(message, title="Reminder", severity="warning", timeout=10)
 
     # ------------------------------------------------------------------ output helpers (UI thread)
 
@@ -298,6 +445,10 @@ class DanicaApp(App):
         self.query_one("#transcript", VerticalScroll).mount(widget)
         if not hasattr(VerticalScroll, "anchor"):
             self.call_after_refresh(self.query_one("#transcript", VerticalScroll).scroll_end, animate=False)
+
+    def show_artifacts_list(self, items: list) -> None:
+        from danica.artifacts import ArtifactList
+        self.mount_block(ArtifactsList(ArtifactList(items=items)))
 
     def add_notice(self, level: str, text: str) -> None:
         self.mount_block(Notice(level, text))
@@ -321,6 +472,7 @@ class DanicaApp(App):
             prompt.focus()
         self.refresh_status()
 
+    # the toolbar where context, mode, and workspace is displayed
     def status_text(self) -> Text:
         agent = self.agent
         if agent is None:
@@ -369,7 +521,7 @@ class DanicaApp(App):
         self.exit()
 
     def check_action(self, action: str, parameters: tuple):
-        # Ctrl+D quits only on an empty prompt; otherwise it falls through to Input's delete-right
+        # Ctrl+D quits only on an empty prompt; otherwise it falls through to the prompt
         if action == "eof":
             try:
                 return not self.query_one(PromptInput).value
@@ -388,3 +540,12 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    # try:
+    #     Console.print("[bold #000000 on cyan] STATUS [/] Launching Danica...")
+    #     main()
+    # except KeyboardInterrupt:
+    #     Console.print("[bold #000000 on red] ERROR [/] Aborted")
+    # except EOFError:
+    #     Console.print("[bold red on #555555] CRITICAL [/] Hard Stop")
+    # except Exception as e:
+    #     Console.print(f"[bold #000000 on red] ERROR [/] {escape(str(e))}")

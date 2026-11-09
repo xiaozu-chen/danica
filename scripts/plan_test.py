@@ -11,7 +11,7 @@ from pathlib import Path
 from rich.console import Console
 
 import danica.agent as agent_mod
-import danica.cli as cli
+import danica._cli as _cli
 from danica.agent import PLAN_TOOLS, Agent
 from danica.compaction import harvest
 from danica.config import CONFIG
@@ -205,9 +205,9 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
     def fake_editor(path):
         Path(path).write_text(editor_content.pop(0), encoding="utf-8")
 
-    real_cli = (cli.prompt, cli.console, cli.open_editor)
+    real_cli = (_cli.prompt, _cli.console, _cli.open_editor)
     buf = io.StringIO()
-    cli.prompt, cli.console, cli.open_editor = scripted, Console(file=buf, width=100, force_terminal=False), fake_editor
+    _cli.prompt, _cli.console, _cli.open_editor = scripted, Console(file=buf, width=100, force_terminal=False), fake_editor
     try:
         def make_agent(name: str) -> Agent:
             a = Agent(Workspace(tmp / name, todo_path=tmp / f"{name}.todo.md"))
@@ -221,7 +221,7 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         ag, au = make_agent("w1"), Audit()
         ag.draft_plan = lambda request, feedback="", previous=None: Plan("Goal A", ["Do one", "Do two", "Verify"], [], request)
         answers[:] = ["", "maybe", "y"]
-        decision, got = cli.plan_flow("make calc", ag, au)
+        decision, got = _cli.plan_flow("make calc", ag, au)
         check("only an explicit y approves", decision == "run" and got.goal == "Goal A" and not answers)
         check("approval installs the TODO", counts(read_todo(ag.ws)) == (3, 0))
         check("the audit log records counts only", [e for e, _ in au.events] == ["plan", "plan"]
@@ -233,7 +233,7 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             ag.draft_plan = lambda request, feedback="", previous=None: Plan("Goal A", ["Do one", "Do two"], [], request)
             answers[:] = ans
             check(f"cancel via {type(ans[0]).__name__ if not isinstance(ans[0], str) else 'n'}",
-                  cli.plan_flow("x", ag, au) == ("cancel", None) and read_todo(ag.ws) == "")
+                  _cli.plan_flow("x", ag, au) == ("cancel", None) and read_todo(ag.ws) == "")
 
         # edit: a broken save first, then a good one
         ag, au = make_agent("w3"), Audit()
@@ -241,7 +241,7 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         edited = Plan("Goal A", ["Do one", "Do two", "Update the docs", "Verify"], [], "x")
         editor_content[:] = ["garbage with no goal", render_plan(edited)]
         answers[:] = ["e", "", "e", "", "y"]
-        decision, got = cli.plan_flow("x", ag, au)
+        decision, got = _cli.plan_flow("x", ag, au)
         check("a broken edit is reported and the last valid plan stays", "Problem with the edited plan" in buf.getvalue())
         check("a good edit is used", decision == "run" and got.steps[2] == "Update the docs" and counts(read_todo(ag.ws)) == (4, 0))
 
@@ -255,7 +255,7 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
 
         ag.draft_plan = drafter
         answers[:] = ["r", "use only local files", "y"]
-        decision, got = cli.plan_flow("x", ag, au)
+        decision, got = _cli.plan_flow("x", ag, au)
         check("replanning passes the feedback and the previous plan", calls[1] == ("use only local files", plan_a))
         check("the replanned plan is the one approved", got.goal == "Goal B")
 
@@ -264,7 +264,7 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         calls.clear()
         ag.draft_plan = drafter
         answers[:] = ["r", "a", "r", "b", "r", "n"]
-        result = cli.plan_flow("x", ag, au)
+        result = _cli.plan_flow("x", ag, au)
         check("at most 3 drafts per request", len(calls) == 3 and result == ("cancel", None) and "3 drafts" in buf.getvalue())
 
         # drafting fails
@@ -274,30 +274,30 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         ag, au = make_agent("w6"), Audit()
         ag.draft_plan = broken
         answers[:] = ["y"]
-        check("a failed draft can run without a plan", cli.plan_flow("x", ag, au) == ("run", None))
+        check("a failed draft can run without a plan", _cli.plan_flow("x", ag, au) == ("run", None))
         answers[:] = [""]
-        check("...or be cancelled (Enter cancels)", cli.plan_flow("x", ag, au) == ("cancel", None))
+        check("...or be cancelled (Enter cancels)", _cli.plan_flow("x", ag, au) == ("cancel", None))
 
         def interrupted(request, feedback="", previous=None):
             raise KeyboardInterrupt()
 
         ag.draft_plan = interrupted
-        check("Ctrl+C while drafting cancels", cli.plan_flow("x", ag, au) == ("cancel", None))
+        check("Ctrl+C while drafting cancels", _cli.plan_flow("x", ag, au) == ("cancel", None))
 
         # --- the hybrid decision ---
         flow_calls: list[str] = []
         asked: list[str] = []
         reply = ["yes"]
-        real_flow, real_ask = cli.plan_flow, cli.ask_plan_first
-        cli.plan_flow = lambda text, agent, audit: (flow_calls.append(text), ("run", plan_a))[1]
-        cli.ask_plan_first = lambda why: (asked.append(why), reply[0])[1]
+        real_flow, real_ask = _cli.plan_flow, _cli.ask_plan_first
+        _cli.plan_flow = lambda text, agent, audit: (flow_calls.append(text), ("run", plan_a))[1]
+        _cli.ask_plan_first = lambda why: (asked.append(why), reply[0])[1]
         try:
             ag, au = make_agent("w7"), Audit()
 
             def decide(text, forced=False, auto="ask"):
                 flow_calls.clear()
                 asked.clear()
-                return cli.run_plan_mode(text, forced, auto, ag, au)
+                return _cli.run_plan_mode(text, forced, auto, ag, au)
 
             check("a big request is offered a plan, and yes plans it", decide(BIG1)[:2] == ("run", plan_a)
                   and len(asked) == 1 and flow_calls == [BIG1])
@@ -316,11 +316,11 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             ag.ws.todo_path.write_text("Goal: g\n1. [ ] open item\n", encoding="utf-8")
             check("an unfinished TODO means no interruption", decide(BIG1)[1] is None and asked == [])
             ag.ws.todo_path.unlink()
-            cli.plan_flow = lambda text, agent, audit: ("cancel", None)
+            _cli.plan_flow = lambda text, agent, audit: ("cancel", None)
             check("a cancelled plan cancels the request", decide(BIG1, forced=True)[:2] == ("cancel", None))
         finally:
-            cli.plan_flow, cli.ask_plan_first = real_flow, real_ask
+            _cli.plan_flow, _cli.ask_plan_first = real_flow, real_ask
     finally:
-        cli.prompt, cli.console, cli.open_editor = real_cli
+        _cli.prompt, _cli.console, _cli.open_editor = real_cli
 
 print("\nAll good.")

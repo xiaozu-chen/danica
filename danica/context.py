@@ -9,6 +9,7 @@ the exact number again, so estimation errors never pile up.
 
 import json
 import math
+from rich.text import Text
 
 # Rough rule of thumb for code and English mixed: ~3.5 characters per token.
 CHARS_PER_TOKEN = 3.5
@@ -79,8 +80,8 @@ class ContextTracker:
         return "ok"
 
     def bar(self, messages: list[dict], width: int = 20) -> str:
-        """Text bar like  [#######-------------] 34%  22,300 / 65,536"""
+        """Text bar like  |███████             | 34%  22,300 / 65,536"""
         f = min(self.fraction(messages), 1.0)
         filled = round(f * width)
-        return (f"[{'#' * filled}{'-' * (width - filled)}] {f:.0%}  "
+        return (f"|{'█' * filled}{' ' * (width - filled)}| {f:.0%}  "
                 f"{self.used(messages):,} / {self.window:,}")

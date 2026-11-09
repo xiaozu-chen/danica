@@ -12,7 +12,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static
 
 
 class PermissionScreen(ModalScreen[str]):
@@ -89,3 +89,72 @@ class ConfirmScreen(ModalScreen[bool]):
 
     def action_answer(self, value: bool) -> None:
         self.dismiss(value)
+
+
+class ChoiceScreen(ModalScreen):
+    """Generic multiple choice. Result: the chosen key, or None for Esc."""
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+
+    def __init__(self, title: str, body: str, options: list[tuple[str, str]], detail: str = "") -> None:
+        super().__init__()
+        self.title_text, self.body, self.options, self.detail = title, body, options, detail
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Static(Text(self.title_text, style="bold #ff9e64"), classes="dialog-title")
+            if self.body:
+                with VerticalScroll(classes="dialog-body"):
+                    yield Static(Text(self.body))
+            if self.detail:
+                yield Static(Text(self.detail, style="dim"), classes="dialog-reason")
+            with Horizontal(classes="dialog-buttons"):
+                for i, (key, label) in enumerate(self.options):
+                    yield Button(f"{key}  {label}", id=f"opt{i}",
+                                 variant="success" if i == 0 else "default")
+
+    def on_mount(self) -> None:
+        self.query_one("#opt0", Button).focus()
+
+    def on_key(self, event) -> None:
+        for key, _ in self.options:
+            if event.key == key:
+                event.stop()
+                self.dismiss(key)
+                return
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        index = int((event.button.id or "opt0")[3:])
+        self.dismiss(self.options[index][0])
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class TextScreen(ModalScreen):
+    """One-line text entry. Result: the text, or None for Esc."""
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+
+    def __init__(self, title: str, default: str = "") -> None:
+        super().__init__()
+        self.title_text, self.default = title, default
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Static(Text(self.title_text, style="bold #ff9e64"), classes="dialog-title")
+            yield Input(value=self.default, id="answer")
+            yield Static(Text("Enter to confirm, Esc to cancel", style="dim"), classes="dialog-reason")
+
+    def on_mount(self) -> None:
+        field = self.query_one("#answer", Input)
+        field.focus()
+        field.cursor_position = len(self.default)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self.dismiss(event.value)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)

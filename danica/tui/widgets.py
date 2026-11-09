@@ -4,21 +4,28 @@ widgets.py - The things that appear in the transcript, plus the prompt, busy lin
 
 from __future__ import annotations
 
+import difflib
 import time
 from datetime import datetime
 from pathlib import Path
 
 from rich import box
+from rich.console import Group
 from rich.panel import Panel
+from rich.style import Style
+from rich.syntax import Syntax
+from rich.text import Span
 from rich.table import Table
 from rich.text import Text
 from textual.binding import Binding
-from textual.widgets import Input, Markdown, Static
+from textual.message import Message
+from textual.widgets import Markdown, OptionList, Static, TextArea
+from textual.widgets.option_list import Option
 
 from danica.config import APP_DIR
 from danica.ui import TAG_COLORS, TAG_WIDTH
 
-ACCENT = "#ff9e64"
+ACCENT = "#64acff"
 HISTORY_PATH = APP_DIR / "history.txt"
 
 
@@ -92,55 +99,186 @@ class ThinkingBlock(Static):
         self.update(t)
 
 
-def summarize_args(args) -> str:
+EDIT_PAIRS = (("old_string", "new_string"), ("old_str", "new_str"), ("old_text", "new_text"),
+              ("old", "new"), ("search", "replace"), ("find", "replace"))
+CONTENT_KEYS = ("content", "contents", "text")
+PREVIEW_LINES = 24        # lines of a file / diff shown before the user expands it
+FULL_LINES = 400
+
+
+def highlighted(code: str, lexer: str) -> Text:
+    """Syntax-highlighted code with line numbers. Rich's own Syntax paints a background behind
+    tokens that clashes with the app's colors, so keep only the foreground styling."""
+    try:
+        raw = Syntax(code, lexer, theme="monokai").highlight(code)
+        spans = []
+        for span in raw.spans:
+            style = span.style
+            if isinstance(style, str):
+                style = Style.parse(style)
+            spans.append(Span(span.start, span.end, Style(color=style.color, bold=style.bold,
+                                                          italic=style.italic, underline=style.underline)))
+        plain = Text(raw.plain, spans=spans)
+    except Exception:
+        plain = Text(code)
+    plain.rstrip()
+    out = Text()
+    for number, line in enumerate(plain.split("\n", allow_blank=True), start=1):
+        if number > 1:
+            out.append("\n")
+        out.append(f"{number:>4} ", style="#4a5070")
+        out.append_text(line)
+    return out
+
+
+def edit_pair(args) -> tuple[str, str] | None:
+    """Which two argument names hold the old and new text of an edit (None if not an edit)."""
+    if isinstance(args, dict):
+        for old, new in EDIT_PAIRS:
+            if isinstance(args.get(old), str) and isinstance(args.get(new), str):
+                return old, new
+    return None
+
+
+def content_key(args) -> str | None:
+    """The argument holding a whole file's text (a write), if there is one."""
+    if isinstance(args, dict) and isinstance(args.get("path"), str):
+        for key in CONTENT_KEYS:
+            if isinstance(args.get(key), str):
+                return key
+    return None
+
+
+def summarize_args(args, hide: tuple = ()) -> str:
     if not isinstance(args, dict):
         return str(args)[:120]
     parts = []
     for key, value in args.items():
-        if isinstance(value, str) and key in ("content", "new_string", "old_string", "text") and len(value) > 60:
-            parts.append(f"{key}=<{len(value):,} chars>")
-        else:
-            shown = str(value).replace("\n", "\\n")
-            parts.append(f"{key}={shown[:80] + '…' if len(shown) > 80 else shown}")
+        if key in hide:
+            continue
+        shown = str(value).replace("\n", "\\n")
+        parts.append(f"{key}={shown[:80] + '…' if len(shown) > 80 else shown}")
     return "  ".join(parts)
 
 
 class ToolCall(Static):
-    """● Tool Name  arg=value   (result preview below; click or Ctrl+O for the full output)."""
+    """● Tool Name  path   then, depending on the tool:
+         write      the file's content, syntax highlighted, with line numbers
+         edit       a red/green diff of old -> new
+         run_shell  the command
+         other      arg=value summary
+       and the result below. Click or Ctrl+O expands everything that was cut short."""
 
     PREVIEW = 400
     FULL = 6000
 
     def __init__(self, name: str, args) -> None:
+        self.tool = name
+        self.call_args = args
         self.title_text = name.replace("_", " ").title()
-        self.summary = summarize_args(args)
+        self.edit = edit_pair(args)
+        self.ckey = None if self.edit else content_key(args)
+        self.command = args.get("command") if self.tool == "run_shell" and isinstance(args, dict) \
+            and isinstance(args.get("command"), str) else None
         self.result: str | None = None
         self.expanded = False
-        super().__init__(self._render_text(), classes="toolcall")
+        super().__init__(self._build(), classes="toolcall")
 
-    def _render_text(self) -> Text:
+    # -- pieces -------------------------------------------------------------------------
+
+    def _header(self) -> Text:
         t = Text()
         t.append("● ", style="bold #7aa2f7" if self.result is None else "bold #9ece6a")
         t.append(self.title_text, style="bold")
-        if self.summary:
-            t.append("  " + self.summary, style="#7aa2f7")
-        if self.result is not None:
-            is_error = self.result.lstrip().startswith("ERROR")
+        args = self.call_args
+        if self.edit or self.ckey:
+            t.append("  " + str(args.get("path")), style="#7aa2f7")
+        elif self.command is not None:
+            hidden = summarize_args(args, hide=("command",))
+            if hidden:
+                t.append("  " + hidden, style="#7aa2f7")
+        else:
+            summary = summarize_args(args)
+            if summary:
+                t.append("  " + summary, style="#7aa2f7")
+        return t
+
+    def _more(self, hidden: int) -> Text | None:
+        if hidden <= 0:
+            return None
+        return Text(f"… {hidden:,} more line(s), click or Ctrl+O to expand", style="dim italic")
+
+    def _body(self, header: Text):
+        limit = FULL_LINES if self.expanded else PREVIEW_LINES
+        if self.edit:
+            old, new = self.call_args[self.edit[0]], self.call_args[self.edit[1]]
+            diff = [line for line in difflib.unified_diff(old.splitlines(), new.splitlines(), lineterm="", n=2)
+                    if not line.startswith(("---", "+++"))]
+            added = sum(1 for line in diff if line.startswith("+"))
+            removed = sum(1 for line in diff if line.startswith("-"))
+            header.append(f"  +{added} -{removed}", style="dim")
+            if not diff:
+                return Text("(no change)", style="dim")
+            body = Text(no_wrap=False)
+            for line in diff[:limit]:
+                if line.startswith("+"):
+                    body.append(line + "\n", style="#9ece6a on #1a2b1a")
+                elif line.startswith("-"):
+                    body.append(line + "\n", style="#f7768e on #2e1a1f")
+                elif line.startswith("@@"):
+                    body.append(line + "\n", style="#6b7089")
+                else:
+                    body.append(line + "\n", style="dim")
+            body.rstrip()
+            return Group(body, *filter(None, [self._more(len(diff) - limit)]))
+        if self.ckey:
+            code = self.call_args[self.ckey]
+            lines = code.splitlines()
+            header.append(f"  ({len(lines):,} line{'s' if len(lines) != 1 else ''})", style="dim")
+            shown = "\n".join(lines[:limit])
+            try:
+                lexer = Syntax.guess_lexer(str(self.call_args.get("path")), code)
+            except Exception:
+                lexer = "text"
+            return Group(highlighted(shown, lexer), *filter(None, [self._more(len(lines) - limit)]))
+        if self.command is not None:
+            return Text("$ " + self.command, style="#c0caf5")
+        return None
+
+    def _result(self) -> Text | None:
+        if self.result is None:
+            return None
+        is_error = self.result.lstrip().startswith("ERROR")
+        if (self.edit or self.ckey) and not is_error and not self.expanded:
+            body = self.result.strip().splitlines()[0][:200] if self.result.strip() else ""
+        else:
             limit = self.FULL if self.expanded else self.PREVIEW
             body = self.result[:limit]
             more = len(self.result) - len(body)
             if more > 0:
                 body += f"… ({more:,} more chars, click to expand)"
-            t.append("\n" + body, style="#f7768e" if is_error else "dim")
-        return t
+        return Text(body, style="#f7768e" if is_error else "dim")
+
+    def _build(self):
+        header = self._header()
+        body = self._body(header)          # may append counts to the header
+        parts = [header]
+        if body is not None:
+            parts.append(body)
+        result = self._result()
+        if result is not None:
+            parts.append(result)
+        return Group(*parts) if len(parts) > 1 else header
+
+    # -- behaviour ----------------------------------------------------------------------
 
     def set_result(self, text) -> None:
         self.result = str(text)
-        self.update(self._render_text())
+        self.update(self._build())
 
     def toggle(self) -> None:
         self.expanded = not self.expanded
-        self.update(self._render_text())
+        self.update(self._build())
 
     def on_click(self) -> None:
         self.toggle()
@@ -201,7 +339,7 @@ def image_widget(path: Path, label: str):
                       classes="say")
 
 
-def welcome_panel(project_name: str | None, ws_label: str, version: str = "0.1") -> Panel:
+def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.2.5") -> Panel:
     left = Text(justify="center")
     left.append("Welcome back!\n\n", style="bold")
     left.append("  /\\_/\\ \n ( o.o )\n  > ^ <\n\n", style=ACCENT)
@@ -228,7 +366,8 @@ def welcome_panel(project_name: str | None, ws_label: str, version: str = "0.1")
 # ----------------------------------------------------------------------------- bottom area
 
 def load_history(path: Path = HISTORY_PATH) -> list[str]:
-    """Reads prompt_toolkit's FileHistory format, so up-arrow history carries over."""
+    """Reads prompt_toolkit's FileHistory format, so up-arrow history carries over.
+    A multiline entry is several "+" lines under one "# timestamp" header."""
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
@@ -238,59 +377,149 @@ def load_history(path: Path = HISTORY_PATH) -> list[str]:
     for line in lines:
         if line.startswith("#"):
             if cur:
-                entries.append(" ".join(cur))
+                entries.append("\n".join(cur))
             cur = []
         elif line.startswith("+"):
             if cur is None:
                 cur = []
             cur.append(line[1:])
     if cur:
-        entries.append(" ".join(cur))
+        entries.append("\n".join(cur))
     return [e for e in entries if e.strip()]
 
 
-class PromptInput(Input):
-    BINDINGS = [
-        Binding("up", "history(-1)", show=False),
-        Binding("down", "history(1)", show=False),
-    ]
+class PromptInput(TextArea):
+    """The prompt. Enter sends. A new line: Ctrl+J, Shift+Enter (terminals that report it), or a
+    trailing backslash then Enter. Up/Down walk the history when the cursor is on the first/last
+    line. With the slash-command popup open, Up/Down pick, Tab/Enter complete and Esc closes it."""
+
+    class Submitted(Message):
+        def __init__(self, prompt: "PromptInput", value: str) -> None:
+            super().__init__()
+            self.prompt = prompt
+            self.value = value
+
+    class PopupKey(Message):
+        """Asks the app to act on the popup: action is up, down, accept or close."""
+        def __init__(self, action: str) -> None:
+            super().__init__()
+            self.action = action
 
     def __init__(self, **kwargs) -> None:
-        super().__init__(**kwargs)
-        self.history = load_history()
+        super().__init__("", soft_wrap=True, show_line_numbers=False, highlight_cursor_line=False,
+                         tab_behavior="focus", **kwargs)
+        self.prompt_history = load_history()
         self._pos: int | None = None
         self._draft = ""
+        self.popup_open = False          # set by the app while the command popup is showing
+
+    # `value` mirrors Input's API so the rest of the app reads the same either way
+    @property
+    def value(self) -> str:
+        return self.text
+
+    @value.setter
+    def value(self, text: str) -> None:
+        self.load_text(text)
+        self.move_cursor(self.document.end)
 
     def remember(self, text: str) -> None:
         self._pos = None
-        if not self.history or self.history[-1] != text:
-            self.history.append(text)
+        if not self.prompt_history or self.prompt_history[-1] != text:
+            self.prompt_history.append(text)
             try:
                 HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+                body = "".join(f"+{line}\n" for line in text.split("\n"))
                 with open(HISTORY_PATH, "a", encoding="utf-8") as f:
-                    f.write(f"\n# {datetime.now():%Y-%m-%d %H:%M:%S.%f}\n+{text}\n")
+                    f.write(f"\n# {datetime.now():%Y-%m-%d %H:%M:%S.%f}\n{body}")
             except OSError:
                 pass
 
-    def _set(self, value: str) -> None:
-        self.value = value
-        self.cursor_position = len(value)
-
-    def action_history(self, step: int) -> None:
-        if not self.history:
+    def _recall(self, step: int) -> None:
+        if not self.prompt_history:
             return
         if self._pos is None:
             if step > 0:
                 return
-            self._draft = self.value
-            self._pos = len(self.history)
+            self._draft = self.text
+            self._pos = len(self.prompt_history)
         pos = self._pos + step
-        if pos >= len(self.history):
+        if pos >= len(self.prompt_history):
             self._pos = None
-            self._set(self._draft)
+            self.value = self._draft
             return
         self._pos = max(pos, 0)
-        self._set(self.history[self._pos])
+        self.value = self.prompt_history[self._pos]
+
+    async def _on_key(self, event) -> None:
+        key = event.key
+        if self.popup_open:
+            popup_action = {"up": "up", "down": "down", "tab": "accept", "escape": "close"}.get(key)
+            if key == "enter":
+                popup_action = "accept"       # the app decides: complete, or submit if already exact
+            if popup_action:
+                event.stop()
+                event.prevent_default()
+                self.post_message(self.PopupKey(popup_action))
+                return
+        if key == "enter":
+            event.stop()
+            event.prevent_default()
+            text = self.text
+            if text.endswith("\\") and self.cursor_location == self.document.end:
+                self.load_text(text[:-1] + "\n")           # backslash + Enter = continue on a new line
+                self.move_cursor(self.document.end)
+                return
+            self.post_message(self.Submitted(self, text))
+            return
+        if key in ("ctrl+j", "shift+enter"):
+            event.stop()
+            event.prevent_default()
+            self.insert("\n")
+            return
+        row = self.cursor_location[0]
+        if key == "up" and row == 0 and self.selection.is_empty:
+            event.stop()
+            event.prevent_default()
+            self._recall(-1)
+            self.move_cursor((0, len(self.document.get_line(0))))
+            return
+        if key == "down" and row == self.document.line_count - 1 and self._pos is not None:
+            event.stop()
+            event.prevent_default()
+            self._recall(1)
+            return
+        await super()._on_key(event)
+
+
+class CommandPopup(OptionList):
+    """Slash-command suggestions above the prompt. Never takes focus: the prompt keeps it."""
+
+    can_focus = False
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.matches: list[str] = []
+
+    def show_matches(self, matches: list[tuple[str, str]]) -> None:
+        self.matches = [name for name, _ in matches]
+        self.clear_options()
+        width = max(len(name) for name, _ in matches) + 2
+        for name, desc in matches:
+            label = Text()
+            label.append(f"{name:<{width}}", style=f"bold {ACCENT}")
+            label.append(desc, style="dim")
+            self.add_option(Option(label, id=name))
+        self.highlighted = 0
+        self.display = True
+
+    def hide(self) -> None:
+        self.matches = []
+        self.display = False
+
+    def current(self) -> str | None:
+        index = self.highlighted
+        return self.matches[index] if index is not None and 0 <= index < len(self.matches) else None
 
 
 class BusyLine(Static):

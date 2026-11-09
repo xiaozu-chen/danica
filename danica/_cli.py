@@ -1417,5 +1417,5 @@ def main(argv: list[str] | None = None) -> None:
         except ExtensionError as exc:
             _write_log("error", f"stopping extensions: {exc}")
 
-if __name__ == "__main__":
-    main()
+#if __name__ == "__main__":
+#    main()

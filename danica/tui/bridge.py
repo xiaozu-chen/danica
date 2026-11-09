@@ -93,3 +93,14 @@ class TextualUI:
         from danica.tui.modals import PermissionScreen
         answer = self._ask(PermissionScreen(tool, summary, tier, reason, can_remember))
         return answer if answer in ("once", "session") else "deny"
+
+    def choose(self, title: str, body: str, options: list[tuple[str, str]],
+               detail: str = "") -> str | None:
+        from danica.tui.modals import ChoiceScreen
+        answer = self._ask(ChoiceScreen(title, body, options, detail))
+        return answer if isinstance(answer, str) else None
+
+    def ask_text(self, title: str, default: str = "") -> str | None:
+        from danica.tui.modals import TextScreen
+        answer = self._ask(TextScreen(title, default))
+        return answer if isinstance(answer, str) else None

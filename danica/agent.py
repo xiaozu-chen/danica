@@ -252,6 +252,7 @@ class Agent:
         content, calls = [], []
         for piece in stream_chat(msgs, thinking=bool(CONFIG["planning"]["thinking"]), temperature=0.3,
                                   tools=schemas):
+            self._check_cancel()
             if piece["type"] == "tool_calls":
                 calls = piece["calls"]
             elif piece["type"] == "content":
@@ -265,6 +266,7 @@ class Agent:
                 + [{"role": "user", "content": planning_prompt(request, feedback, previous)}])
         schemas = [s for s in tool_schemas() if s["function"]["name"] in PLAN_TOOLS]
         retried = False
+        self.cancel_event.clear()
         for _ in range(MAX_PLAN_STEPS):
             content, calls = self._plan_turn(msgs, schemas)
             if calls:
