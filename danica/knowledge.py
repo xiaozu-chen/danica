@@ -317,14 +317,14 @@ class KnowledgeIndex:
                     for score, via, row in results[:limit]]
 
     @staticmethod
-    def _model_summary(system: str, user: str, max_tokens: int) -> str:
+    def _model_summary(system: str, user: str) -> str:
         from danica.llm import stream_chat
         parts = []
         try:
             for piece in stream_chat(
                 [{"role": "system", "content": system},
                  {"role": "user", "content": user}],
-                thinking=False, temperature=0.1, max_tokens=max_tokens,
+                thinking=False, temperature=0.1,
             ):
                 if piece["type"] == "content":
                     parts.append(piece["text"])

@@ -10,6 +10,7 @@ import json
 import argparse
 import subprocess
 import sys
+import shutil
 
 from pathlib import Path
 from datetime import datetime
@@ -18,9 +19,16 @@ from prompt_toolkit import PromptSession, prompt
 from prompt_toolkit.application import run_in_terminal
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.styles import Style as PT_Style
 from rich.console import Console
+from rich.markup import escape
 from rich.style import Style
 from rich.text import Text
+from rich import print
+from rich.panel import Panel
+from rich import box
+from rich.table import Table
+from rich.syntax import Syntax
 
 from danica.agent import Agent
 from danica.config import APP_DIR, CONFIG, SKILLS_DIR
@@ -52,11 +60,80 @@ from danica.knowledge import KnowledgeError, KnowledgeIndex, render_hits
 from danica.bundle import BundleError, export_bundle
 from danica.extensions import ExtensionError, ExtensionManager
 
-
 console = Console()
 _KNOWLEDGE_INDEX: KnowledgeIndex | None = None
 _EXTENSION_MANAGER: ExtensionManager | None = None
 
+ACCENT = "#ff9e64"
+EDGE = 1
+
+def _w() -> int:
+    return shutil.get_terminal_size().columns - EDGE
+
+PROMPT_STYLE = PT_Style.from_dict({
+    "edge": ACCENT,
+    "bottom-toolbar": "noreverse",
+    "rule": "#555555",
+    "prompt": f"bold {ACCENT}",
+    "bottom-toolbar.text": "noreverse"
+})
+
+def prompt_message():
+    width = shutil.get_terminal_size().columns
+    return HTML(f'<rule>{"—" * width}</rule>\n<prompt>&gt;</prompt> ')
+
+TAG_COLORS = {
+    "ERROR": "#FF0000",
+    "WARNING": "#FFFF00",
+    "OK": "#00FF00",
+    "FAIL": "#FFA500",
+    "INFO": "white",
+    "THINKING": "#808080"
+}
+TAG_WIDTH = max(map(len, TAG_COLORS))   # 7, updates itself if you add a longer label
+
+
+def _write_log(status, text):
+    key = status.upper()
+    color = TAG_COLORS.get(key, "white")
+    label = f"{key:^{TAG_WIDTH}}"       # centered inside the badge
+    console.print(f"[bold #000000 on {color}] {label} [/]::{escape(str(text))}", highlight=False)
+
+def show_intro(ws, project=None, version="0.1") -> None:
+    # left column: welcome + mascot + where we are
+    left = Text(justify="center")
+    left.append("Welcome back!\n\n", style="bold")
+    left.append(r"  /\_/\ " + "\n" + " ( o.o )" + "\n" + r"  > ^ <" + "\n\n", style=ACCENT)
+    left.append(f"project: {project['name']}\n" if project else "chat mode\n", style="dim")
+
+    relative_ws = Path(ws.root).relative_to(APP_DIR / "sessions")
+
+    left.append(str(relative_ws), style="dim")
+
+    # right column: tips
+    right = Text()
+    right.append("Tips for getting started\n", style=f"bold {ACCENT}")
+    right.append("/help      list every command\n")
+    right.append("/project   open a real folder\n")
+    right.append("/plan      draft a plan first\n")
+    right.append("/memory    notes Danica remembers\n")
+    right.append("\n")
+    right.append("Ctrl+C stops a task · Ctrl+D quits", style="dim")
+
+    body = Table(box=box.SQUARE, show_edge=False, show_header=False,
+                 padding=(0, 2), expand=True)
+    body.add_column(ratio=2, justify="center", vertical="middle")
+    body.add_column(ratio=3, vertical="middle")
+    body.add_row(left, right)
+
+    console.print(Panel(
+        body,
+        title=f" Danica v{version} ",
+        title_align="left",
+        border_style=ACCENT,
+        box=box.ROUNDED,
+        padding=(1, 1),
+    ))
 
 def knowledge_index() -> KnowledgeIndex:
     global _KNOWLEDGE_INDEX
@@ -132,7 +209,7 @@ class EventPrinter:
             self.presented.add(ws.display(path))
             show_image(path, ws.display(path), console)
         except ImageError as e:
-            console.print(f"(could not show {rel[:80]}: {e})", style="yellow", markup=False, highlight=False)
+            _write_log("warning", f"  Could not show {rel:80}: {e}")
 
     def begin_request(self) -> None:
         self.presented.clear()
@@ -163,7 +240,20 @@ class EventPrinter:
         elif kind == "tool_call":
             self._newline_if_needed()
             name, args = data
-            console.print(f"> {name} {args}"[:300], style="cyan", markup=False, highlight=False)
+            title = name.replace("_", " ").title()
+            console.print(f"[bold #000000 on blue] TOOL [/] {escape(str(title))} {escape(str(args))}", style="cyan", highlight=False)
+
+            # [proposed UI feature | status: pending] 
+            # extract and syntax-highlight python content if present in argument
+            # if isinstance(args, dict) and "content" in args:
+            #     other_args = {k: v for k, v in args.items() if k != "content"}
+            #     if other_args:
+            #         console.print(str(other_args), style="cyan", highlight=False)
+            #     syntax = Syntax(str(args["content"]), "python", theme="monokai", line_numbers=True, word_wrap=True)
+            #     console.print(syntax)
+            # else:
+            #     console.print(str(args)[:300], style="cyan", highlight=False)
+            
         elif kind == "tool_result":
             preview = str(data)
             if len(preview) > 400:
@@ -171,7 +261,7 @@ class EventPrinter:
             console.print(preview, style="dim", markup=False, highlight=False)
         elif kind == "notice":
             self._newline_if_needed()
-            console.print(data, style="yellow", markup=False)
+            _write_log("warning", data)
         elif kind == "citations":
             self._newline_if_needed()
             # Yellow when there is a warning, green when everything checked out
@@ -185,7 +275,7 @@ def make_ask(finish):
     def ask(tool: str, summary: str, tier: Tier, reason: str, can_remember: bool) -> str:
         finish() # make sure we're on a fresh line after streamed text
         console.print(f"Permission needed ({tier.value}): {reason}", style="bold yellow", markup=False)
-        console.print(summary, style="yellow", markup=False, highlight=False)
+        _write_log("warning", summary)
         options = "[y] once  [s] this session  [n] deny" if can_remember else "[y] once [n] deny"
         while True:
             try:
@@ -214,20 +304,19 @@ def apply_instructions(project: dict, agent, audit) -> None:
                       style="bold yellow", markup=False)
         console.print(text, style="dim", markup=False, highlight=False)
         if cut:
-            console.print("(longer than the limit: only the text above would be loaded)",
-                          style="yellow", markup=False)
+            _write_log("warning", "  Longer than the limit: only the text above would be loaded")
         try:
             ok = prompt("[y] load it  [n] skip > ").strip().lower() in ("y", "yes")
         except (EOFError, KeyboardInterrupt):
             ok = False
         if not ok:
-            console.print("DANICA.md not loaded.", style="yellow", markup=False)
+            _write_log("warning", "  DANICA.md not loaded.")
             return
         approve_instructions(project, sha)
         approved_now = True
     agent.set_project_instructions(text)
     audit.append("instructions", sha=sha[:12], approved_now=approved_now)
-    console.print(f"Loaded DANICA.md ({len(text)} characters).", style="green", markup=False)
+    _write_log("ok", f"  Loaded DANICA.md ({len(text)} characters.)")
 
 def build_session(session_id: str, finish, on_event, project: dict | None = None,
                   headless: bool = False, workspace_root: Path | None = None):
@@ -254,8 +343,7 @@ def build_session(session_id: str, finish, on_event, project: dict | None = None
     git_dir = Path(project["dir"]) / "git" if project else session_dir / "checkpoints" / "git"
     checkpoints = Checkpoints(ws, git_dir)
     if not checkpoints.available:
-        console.print("git was not found, so /undo and /rewind are disabled. "
-                      "Install it with: winget install Git.Git", style="yellow", markup=False)
+        _write_log("warning", "  `git` was not found, so /undo and /rewind are disabled. (Install it with: winget install Git.Git)")
 
     # A fresh policy every time: approvals from another session never carry over
     policy = PermissionPolicy(ask=None if headless else make_ask(finish))
@@ -324,7 +412,7 @@ def ask_trust(path: Path) -> bool:
     """The trust dialog. Returns True only on an explicit yes."""
     files, size, capped, has_git = scan(path)
     count = f"{files:,}+" if capped else f"{files:,}"
-    console.print(f"\nTrust this folder as a Danica project?\n  {path}", style="bold yellow", markup=False)
+    _write_log("warning", f"  Trust this folder as Danica project?\n{path}")
     console.print(f"  {count} files, {size / 1_000_000:,.0f} MB (ignoring .git, .venv, node_modules)"
                   + ("; it is a git repository" if has_git else ""), markup=False)
     console.print("Trusting means Danica can read and change files here. Commands still ask for\n"
@@ -332,7 +420,7 @@ def ask_trust(path: Path) -> bool:
                   "Snapshots live outside your folder and never touch your own .git.",
                   style="dim", markup=False)
     if capped or size > 500_000_000:
-        console.print("This folder is big: the first snapshot may take a while.", style="yellow", markup=False)
+        _write_log("warning", "  This folder is big: the first snapshot may take a while.")
     try:
         return prompt("[y] trust  [n] cancel > ").strip().lower() in ("y", "yes")
     except (EOFError, KeyboardInterrupt):
@@ -355,11 +443,11 @@ def forget_note(store: MemoryStore, page) -> bool:
     """Forget one note for real and print every verification check. True if all passed."""
     report = forget(store, page)
     for name, ok, detail in report.checks:
-        console.print(f"  {'ok  ' if ok else 'FAIL'} {name}" + (f": {detail}" if detail else ""),
-                      style="green" if ok else "red", markup=False, highlight=False)
+        # console.print(f"  {'ok  ' if ok else 'FAIL'} {name}" + (f": {detail}" if detail else ""),
+        #               style="green" if ok else "red", markup=False, highlight=False)
+        _write_log(f"{'ok' if ok else 'fail'}", f"  {name}" + (f":{detail}" if detail else ""))
     if report.mentions:
-        console.print(f"Its text still appears in {len(report.mentions)} file(s) that forget does not "
-                      f"edit (transcripts, summaries, exports):", style="yellow", markup=False)
+        _write_log("warning", f"  Its text still appears in {len(report.mentions)} file(s) that forget does not edit (transcripts, summaries, exports):")
         for m in report.mentions[:5]:
             console.print("  " + m, markup=False, highlight=False)
         if len(report.mentions) > 5:
@@ -373,7 +461,7 @@ def review_proposals(store: MemoryStore, queue: ProposalQueue, audit) -> None:
     """/memory review: go through proposed notes one at a time."""
     items = queue.items()
     if not items:
-        console.print("(no proposed notes)", markup=False)
+        _write_log("info", "  No proposed notes")
         return
     for item in items:
         scope, text = item["scope"], item["text"]
@@ -381,7 +469,7 @@ def review_proposals(store: MemoryStore, queue: ProposalQueue, audit) -> None:
             console.print(f"[{scope}] {text}\n  (left for later: {scope} memory is not open here)",
                           style="dim", markup=False)
             continue
-        console.print(f"\nProposed [{scope}]: {text}", style="bold", markup=False)
+        _write_log("info", f"  Proposed [{scope}]: {text}")
         try:
             answer = prompt("[y] save  [e] edit  [n] drop  [s] skip  [q] stop > ").strip().lower()
             edited = False
@@ -400,23 +488,23 @@ def review_proposals(store: MemoryStore, queue: ProposalQueue, audit) -> None:
                 page = store.add(scope, text, source="user" if edited else "captured",
                                  confidence="1.0" if edited else "0.8")
             except MemoryStoreError as e:
-                console.print(f"ERROR: {e}", style="red", markup=False)
+                _write_log("error", f"  {e}")
                 queue.remove(item["id"])
                 continue
             queue.remove(item["id"])
             audit.append("memory_add", scope=scope, id=page.id, source=page.source)
-            console.print(f"saved to {scope} memory (id {page.id})", style="green", markup=False)
+            _write_log("ok", f"  Saved to {scope} memory (id {page.id})")
         # anything else (s, Enter) leaves it in the queue
 
 
 def merge_notes(store: MemoryStore, audit) -> None:
     """/memory merge: pairs of near-duplicate notes (same scope, almost the same meaning)."""
     if store.index is None:
-        console.print("search is not available in this session", markup=False)
+        _write_log("info", "  Search is not available in this session")
         return
     pairs = store.index.near_duplicates(store, CONFIG["embeddings"]["merge_similarity"], 10)
     if not pairs:
-        console.print("no near-duplicate notes found", markup=False)
+        _write_log("info", "  No near-duplicate notes found")
         return
     for sim, ua, ub in pairs:
         a, b = store.get(ua), store.get(ub)
@@ -442,7 +530,7 @@ def merge_notes(store: MemoryStore, audit) -> None:
             try:
                 page = store.add(a.scope, merged)       # saved FIRST: a refusal loses nothing
             except MemoryStoreError as e:
-                console.print(f"ERROR: {e}", style="red", markup=False)
+                _write_log("error", f"  {e}")
                 continue
             audit.append("memory_add", scope=a.scope, id=page.id, source="merge")
             drop = [a, b]
@@ -463,7 +551,7 @@ def handle_memory(text: str, store: MemoryStore, audit, in_project: bool, agent)
         if sub == "list":
             pages = store.list_pages()
             if not pages:
-                console.print("(no saved memory yet. Try: /memory add I prefer 4-space indentation)", markup=False)
+                _write_log("info", "  No saved memory yet. Try: /memory")
             for p in pages:
                 console.print(f"{p.id}  {p.scope:<7} {p.source:<8} {p.updated[:10]}  {p.summary}",
                               markup=False, highlight=False)
@@ -471,8 +559,7 @@ def handle_memory(text: str, store: MemoryStore, audit, in_project: bool, agent)
                 console.print(f"({store.skipped} file(s) in the memory folders were skipped: not valid "
                               f"notes, or too big)", style="dim", markup=False)
             if agent.proposals and agent.proposals.count():
-                console.print(f"({agent.proposals.count()} proposed note(s) waiting: /memory review)",
-                              style="yellow", markup=False)
+                _write_log("warning", f"({agent.proposals.count()} proposed note(s) waiting: /memory review)")
 
         elif sub == "add":
             words = rest.split(maxsplit=1)
@@ -482,7 +569,7 @@ def handle_memory(text: str, store: MemoryStore, audit, in_project: bool, agent)
                 scope, body = ("project" if in_project else "global"), rest
             page = store.add(scope, body)
             audit.append("memory_add", scope=scope, id=page.id)   # the text itself is never logged
-            console.print(f"saved to {scope} memory (id {page.id})", style="green", markup=False)
+            _write_log("ok", f"  Saved to {scope} memory (id {page.id})")
 
         elif sub == "review":
             review_proposals(store, agent.proposals, audit)
@@ -490,7 +577,7 @@ def handle_memory(text: str, store: MemoryStore, audit, in_project: bool, agent)
         elif sub == "capture":
             recent = harvest(agent.messages)[0][-5:]          # your last requests, verbatim
             if not recent:
-                console.print("nothing to look at yet: send a request first", markup=False)
+                _write_log("info", "  Nothing to look at yet: send a request first")
             else:
                 added = 0
                 try:
@@ -498,8 +585,8 @@ def handle_memory(text: str, store: MemoryStore, audit, in_project: bool, agent)
                         for scope, note in extract(request, store):
                             added += agent.proposals.add(scope, note)
                 except Exception as e:                        # most likely: llama-server is down
-                    console.print(f"could not ask the model ({type(e).__name__})", style="red", markup=False)
-                console.print(f"{added} note(s) proposed. /memory review shows them.", markup=False)
+                    _write_log("error", f"  Could not ask the model ({type(e).__name__})")
+                _write_log("info", f"  {added} note(s) proposed. /memory review shows them.")
 
         elif sub == "show":
             page = store.find(rest)
@@ -509,7 +596,7 @@ def handle_memory(text: str, store: MemoryStore, audit, in_project: bool, agent)
 
         elif sub in ("forget", "delete"):
             page = store.find(rest)
-            console.print(f"Forget [{page.scope}] {page.summary}", style="yellow", markup=False)
+            _write_log("warning", f"  Forget [{page.scope}] {page.summary}")
             try:
                 sure = prompt("[y] forget it for good  [n] keep > ").strip().lower() in ("y", "yes")
             except (EOFError, KeyboardInterrupt):
@@ -518,14 +605,14 @@ def handle_memory(text: str, store: MemoryStore, audit, in_project: bool, agent)
                 ok = forget_note(store, page)
                 audit.append("memory_forget", scope=page.scope, id=page.id, ok=ok)
             else:
-                console.print("kept", markup=False)
+                _write_log("info", "  Kept")
 
         elif sub == "merge":
             merge_notes(store, audit)
 
         elif sub == "search":
             if store.index is None:
-                console.print("search is not available in this session", markup=False)
+                _write_log("info", "  Search is not available in this session")
             else:
                 hits = store.index.recall(store, rest, 5)
                 for h in hits:
@@ -533,12 +620,12 @@ def handle_memory(text: str, store: MemoryStore, audit, in_project: bool, agent)
                     console.print(f"{h.id}  {h.scope:<7} {h.via:<8} sim {sim}  {h.summary}",
                                   markup=False, highlight=False)
                 if not hits:
-                    console.print("no matching notes", markup=False)
+                    _write_log("info", "  No matching notes")
                     if store.index.nearest is not None:
                         console.print(f"(closest by meaning: {store.index.nearest:.2f}, below the "
                                       f"{store.index.min_similarity:.2f} threshold)", style="dim", markup=False)
                 if store.index.note:
-                    console.print(f"keyword search only: {store.index.note}", style="yellow", markup=False)
+                    _write_log("warning", f"keyword search only: {store.index.note}")
 
         elif sub == "status":
             if store.index is None:
@@ -562,7 +649,7 @@ def handle_memory(text: str, store: MemoryStore, audit, in_project: bool, agent)
             console.print("usage: /memory [list | add [scope] <text> | review | capture | search <words> | "
                           "merge | forget <id> | show <id> | status | reindex | path]", markup=False)
     except MemoryStoreError as e:
-        console.print(f"ERROR: {e}", style="red", markup=False)
+        _write_log("error", f"{e}")
 
 def show_artifacts(found: ArtifactList) -> None:
     """Print the files a request made. Openable ones are ctrl+click links."""
@@ -593,15 +680,15 @@ def handle_artifact_command(text: str, artifacts: list, audit) -> None:
     try:
         item = pick(arg, artifacts)
         if cmd == "/open":
-            console.print(open_artifact(item), style="green", markup=False, highlight=False)
+            _write_log("ok", open_artifact(item))
             audit.append("artifact_open", path=item.rel)
         else:
             dest = Path(rest.strip().strip('"')) if rest.strip() else Path.home() / "Downloads"
             saved = save_copy(item.path, dest)
             audit.append("artifact_save", path=item.rel, to=str(saved.parent))
-            console.print(f"saved a copy to {saved}", style="green", markup=False, highlight=False)
+            _write_log("ok", f"saved a copy to {saved}")
     except ArtifactError as e:
-        console.print(f"ERROR: {e}", style="red", markup=False)
+        _write_log("error", f"{e}")
 
 MAX_DRAFTS = 3          # plans drafted for one request (the first, plus replans)
 
@@ -631,15 +718,15 @@ def plan_flow(request: str, agent, audit) -> tuple[str, object]:
     plan, feedback, drafts = None, "", 0
     while True:
         drafts += 1
-        console.print("[plan] drafting a plan (read-only: nothing is changed)...", style="yellow", markup=False)
+        _write_log("warning", "[plan] drafting a plan (read-only: nothing is changed)...")
         try:
             plan = agent.draft_plan(request, feedback, plan)
         except KeyboardInterrupt:
-            console.print("(planning stopped)", style="yellow", markup=False)
+            _write_log("warning", "(planning stopped)")
             return "cancel", None
         except Exception as e:                        # PlanError, or llama-server not answering
             why = str(e) if isinstance(e, PlanError) else type(e).__name__
-            console.print(f"Could not make a plan: {why}", style="red", markup=False)
+            _write_log("error", f"Could not make a plan: {why}")
             try:
                 go = prompt("[y] run the request without a plan  [n] cancel > ").strip().lower() in ("y", "yes")
             except (EOFError, KeyboardInterrupt):
@@ -661,15 +748,14 @@ def plan_flow(request: str, agent, audit) -> tuple[str, object]:
             if answer in ("y", "yes"):                # only an explicit yes approves: Enter just asks again
                 agent.install_plan(plan)
                 audit.append("plan", action="approved", steps=len(plan.steps))
-                console.print(f"Plan approved: {len(plan.steps)} steps. It is now your TODO (see /todo).",
-                              style="green", markup=False)
+                _write_log("ok", f"Plan approved: {len(plan.steps)} steps. It is now your TODO (see /todo).")
                 return "run", plan
             if answer in ("n", "no", "q"):
                 audit.append("plan", action="cancelled")
                 return "cancel", None
             if answer == "e":
                 if plan.path is None:
-                    console.print("this plan has no file to edit", style="yellow", markup=False)
+                    _write_log("warning", "this plan has no file to edit")
                     continue
                 try:
                     open_editor(plan.path)
@@ -678,18 +764,16 @@ def plan_flow(request: str, agent, audit) -> tuple[str, object]:
                     audit.append("plan", action="edited", steps=len(plan.steps))
                     show = True
                 except PlanFormatError as e:
-                    console.print(f"Problem with the edited plan: {e}\n(the plan shown above is the last valid "
-                                  f"version; press e to fix the file)", style="red", markup=False)
+                    _write_log("error", f"Problem with the edited plan: {e}\n(the plan shown above is the last valid "
+                                  f"version; press e to fix the file)")
                 except OSError as e:
-                    console.print(f"could not open the editor ({e}); edit this file yourself: {plan.path}",
-                                  style="red", markup=False, highlight=False)
+                    _write_log("error", f"could not open the editor ({e}); edit this file yourself: {plan.path}")
                 except (EOFError, KeyboardInterrupt):
                     pass
                 continue
             if answer == "r":
                 if drafts >= MAX_DRAFTS:
-                    console.print(f"That is {MAX_DRAFTS} drafts: edit this one (e), approve it (y) or cancel (n).",
-                                  style="yellow", markup=False)
+                    _write_log("warning", f"That is {MAX_DRAFTS} drafts: edit this one (e), approve it (y) or cancel (n).")
                     continue
                 try:
                     feedback = prompt("what should change? > ").strip()
@@ -702,7 +786,7 @@ def plan_flow(request: str, agent, audit) -> tuple[str, object]:
 
 def ask_plan_first(why: str) -> str:
     """The offer for a big-looking request: "yes", "no" or "never" (for this session)."""
-    console.print(f"\nThis looks like a multi-step task ({why}).", style="yellow", markup=False)
+    _write_log("warning", f"\nThis looks like a multi-step task ({why}).")
     try:
         answer = prompt("Draft a plan first? [y] yes (Enter)  [n] just do it  [x] don't ask again this session > "
                         ).strip().lower()
@@ -731,6 +815,10 @@ def run_plan_mode(text: str, forced: bool, plan_auto: str, agent, audit) -> tupl
     decision, plan = plan_flow(text, agent, audit)
     return decision, plan, plan_auto
 
+# -- c --
+
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="danica")
     mode = parser.add_mutually_exclusive_group()
@@ -746,11 +834,11 @@ def main(argv: list[str] | None = None) -> None:
         try:
             result = export_bundle(ws, args.export_bundle)
         except BundleError as exc:
-            console.print(f"ERROR: {exc}", style="red", markup=False)
+            _write_log("error", f"{exc}")
             raise SystemExit(1) from exc
-        console.print(f"Exported {result['files']} files ({result['bytes']} bytes) to "
+        _write_log("ok", f"Exported {result['files']} files ({result['bytes']} bytes) to "
                       f"{ws.display(result['path'])}; skipped {len(result['skipped'])} sensitive "
-                      "or unsupported file(s).", style="green", markup=False)
+                      "or unsupported file(s).")
         return
     if args.prompt_text is not None:
         session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -765,7 +853,7 @@ def main(argv: list[str] | None = None) -> None:
             printer.finish()
         except Exception as exc:
             printer.finish()
-            console.print(f"ERROR: {type(exc).__name__}: {exc}", style="red", markup=False)
+            _write_log("error", f"{type(exc).__name__}: {exc}")
             raise SystemExit(1) from exc
         if _KNOWLEDGE_INDEX is not None:
             _KNOWLEDGE_INDEX.close()
@@ -786,7 +874,7 @@ def main(argv: list[str] | None = None) -> None:
     audit.append("session_start", workspace=str(ws.root), mode="chat")
 
     # FileHistory gives up-arrow recall across restarts
-    session = PromptSession(history=FileHistory(str(APP_DIR / "history.txt")))
+    session = PromptSession(history=FileHistory(str(APP_DIR / "history.txt")), style=PROMPT_STYLE)
     reminder_task = None
 
     async def reminder_loop():
@@ -797,8 +885,7 @@ def main(argv: list[str] | None = None) -> None:
             except KnowledgeError as exc:
                 error = str(exc)
                 await run_in_terminal(
-                    lambda: console.print(f"ERROR checking reminders: {error}",
-                                          style="red", markup=False)
+                    lambda: _write_log("error", f"checking reminders: {error}")
                 )
                 return
             if due:
@@ -818,6 +905,7 @@ def main(argv: list[str] | None = None) -> None:
         level = agent.tracker.level(agent.messages)
         color = {"ok": "ansigreen", "prune": "ansiyellow", "compact": "ansiyellow", "stop": "ansired"}[level]
         mode = "think" if agent.thinking else "fast"
+        relative_ws = Path(ws.root).relative_to(APP_DIR / "sessions")
         if policy.full_access:
             mode += " | FULL ACCESS" # loud on purpose
         if project:
@@ -828,14 +916,15 @@ def main(argv: list[str] | None = None) -> None:
             mode += f" | {agent.proposals.count()} proposed note(s)"
         if ws.web and ws.web.tainted:
             mode += " | TAINTED"   # untrusted web content is in context
-        return HTML(f'<style fg="{color}">ctx {agent.tracker.bar(agent.messages)}</style> |{mode}')
+        return HTML(f'<style fg="{color}">ctx {agent.tracker.bar(agent.messages)}</style> | {mode} | <style fg="#C6C0BE">Workspace: {relative_ws}</style>')
 
-    console.print("[bold]Danica[/bold] ready. /help lists the commands, /project opens a real folder.")
-    console.print(f"Workspace: {ws.root}", style="dim", markup=False)
+    relative_ws = Path(ws.root).relative_to(APP_DIR / "sessions")
+    
+    show_intro(ws, project)
 
     while True:
         try:
-            text = session.prompt("you> ", bottom_toolbar=toolbar,
+            text = session.prompt(prompt_message, bottom_toolbar=toolbar,
                                   pre_run=start_reminder_loop).strip()
         except KeyboardInterrupt:
             continue          # Ctrl+C at the prompt just clears the line
@@ -853,13 +942,11 @@ def main(argv: list[str] | None = None) -> None:
             if text == "/think auto":
                 agent.thinking_override = None
                 agent.thinking = False
-                console.print("thinking override cleared; automatic setting will apply.",
-                              style="yellow", markup=False)
+                _write_log("info", "thinking override cleared; automatic setting will apply.")
                 continue
             agent.thinking = not agent.thinking
             agent.thinking_override = agent.thinking
-            console.print(f"thinking: {'on' if agent.thinking else 'off'} (manual override)",
-                          style="yellow", markup=False)
+            _write_log("info", f"thinking: {'on' if agent.thinking else 'off'} (manual override)")
             continue
         if text == "/ws":
             console.print(str(ws.root), markup=False)
@@ -874,22 +961,21 @@ def main(argv: list[str] | None = None) -> None:
                     result = index.index_folder(Path(argument))
                     audit.append("knowledge_index", root=result["root"],
                                  files_changed=result["files_changed"], chunks_added=result["chunks_added"])
-                    console.print(f"Indexed {result['root']}: {result['files_changed']} changed, "
+                    _write_log("ok", f"Indexed {result['root']}: {result['files_changed']} changed, "
                                   f"{result['files_unchanged']} unchanged, {result['files_removed']} removed, "
-                                  f"{result['chunks_added']} passages.", style="green", markup=False)
+                                  f"{result['chunks_added']} passages.")
                     if result["embedding_note"]:
-                        console.print(result["embedding_note"], style="yellow", markup=False)
+                        _write_log("warning", result["embedding_note"])
                 elif action == "search" and argument:
                     hits = index.search(argument)
                     audit.append("knowledge_search", hits=len(hits), query_chars=len(argument))
                     console.print(render_hits(hits), markup=False, highlight=False)
                     if index.embedding_note:
-                        console.print(f"Semantic search unavailable: {index.embedding_note}",
-                                      style="yellow", markup=False)
+                        _write_log("warning", f"Semantic search unavailable: {index.embedding_note}")
                 elif action == "watch" and argument:
                     root = index.start_watching(Path(argument))
                     audit.append("knowledge_watch", root=root, action="start")
-                    console.print(f"Watching {root} while Danica is open.", style="green", markup=False)
+                    _write_log("ok", f"Watching {root} while Danica is open.")
                 elif action == "stop" and argument:
                     stopped = index.stop_watching(Path(argument))
                     audit.append("knowledge_watch", path=argument, action="stop", stopped=stopped)
@@ -912,12 +998,11 @@ def main(argv: list[str] | None = None) -> None:
                     target = ws.resolve(argument)
                     output = index.write_graph(target)
                     audit.append("knowledge_graph_export", path=ws.display(output))
-                    console.print(f"Interactive knowledge graph saved: {ws.display(output)}",
-                                  style="green", markup=False)
+                    _write_log("ok", f"Interactive knowledge graph saved: {ws.display(output)}")
                 elif action == "commit" and argument:
                     preview = ws.knowledge_previews.get(argument)
                     if preview is None:
-                        console.print("No such preview in this session.", style="yellow", markup=False)
+                        _write_log("warning", "No such preview in this session.")
                         continue
                     target = Path(preview["path"])
                     console.print(f"Write-back preview for {target}:\n\n{preview['content']}",
@@ -930,11 +1015,11 @@ def main(argv: list[str] | None = None) -> None:
                     except (EOFError, KeyboardInterrupt):
                         answer = ""
                     if answer not in ("y", "yes"):
-                        console.print("No file was changed.", style="yellow", markup=False)
+                        _write_log("warning", "No file was changed.")
                         continue
                     written = index.commit_obsidian_preview(ws, argument, overwrite=overwrite)
                     audit.append("obsidian_write", path=str(written), overwritten=overwrite)
-                    console.print(f"Wrote {written}", style="green", markup=False)
+                    _write_log("ok", f"Wrote {written}")
                 elif action == "status":
                     status = index.status()
                     console.print(json.dumps(status, ensure_ascii=False, indent=2),
@@ -945,7 +1030,7 @@ def main(argv: list[str] | None = None) -> None:
                                   "graph <workspace-file.html> | commit <preview-id>",
                                   markup=False)
             except (KnowledgeError, OSError) as exc:
-                console.print(f"ERROR: {exc}", style="red", markup=False)
+                _write_log("error", f"{exc}")
             continue
         if text == "/reminder" or text.startswith("/reminder "):
             parts = text.split(maxsplit=3)
@@ -954,7 +1039,7 @@ def main(argv: list[str] | None = None) -> None:
                 if len(parts) == 4 and parts[1] == "add":
                     reminder_id = index.add_reminder(parts[2], parts[3])
                     audit.append("reminder_add", id=reminder_id)
-                    console.print(f"Reminder {reminder_id} scheduled.", style="green", markup=False)
+                    _write_log("ok", f"Reminder {reminder_id} scheduled.")
                 elif len(parts) == 2 and parts[1] == "list":
                     reminders = index.list_reminders()
                     if not reminders:
@@ -966,13 +1051,13 @@ def main(argv: list[str] | None = None) -> None:
                     console.print("Usage: /reminder add <ISO datetime> <text> | /reminder list",
                                   markup=False)
             except KnowledgeError as exc:
-                console.print(f"ERROR: {exc}", style="red", markup=False)
+                _write_log("error", f"{exc}")
             continue
         if text == "/agents" or text.startswith("/agents "):
             parts = text.split(maxsplit=2)
             supervisor = getattr(ws, "subagent_supervisor", None)
             if supervisor is None:
-                console.print("subagent supervisor is unavailable", style="yellow", markup=False)
+                _write_log("warning", "subagent supervisor is unavailable")
                 continue
             if len(parts) == 1:
                 children = supervisor.list()
@@ -985,10 +1070,10 @@ def main(argv: list[str] | None = None) -> None:
             if len(parts) == 3 and parts[1] == "run":
                 try:
                     child_id = supervisor.start(parts[2])
-                    console.print(f"Subagent {child_id} started. Use /agents to monitor or "
-                                  f"/agents kill {child_id} to stop it.", style="green", markup=False)
+                    _write_log("ok", f"Subagent {child_id} started. Use /agents to monitor or "
+                                  f"/agents kill {child_id} to stop it.")
                 except SubagentError as exc:
-                    console.print(f"ERROR: {exc}", style="red", markup=False)
+                    _write_log("error", f"{exc}")
                 continue
             if len(parts) == 3 and parts[1] == "peek":
                 child = next((item for item in supervisor.list() if item["id"] == parts[2]), None)
@@ -1003,15 +1088,13 @@ def main(argv: list[str] | None = None) -> None:
                                   else "Subagent is still running." if child else "No such subagent.",
                                   markup=False)
                 except SubagentError as exc:
-                    console.print(f"ERROR: {exc}", style="red", markup=False)
+                    _write_log("error", f"{exc}")
                 continue
             if len(parts) == 3 and parts[1] == "kill":
                 stopped = supervisor.kill(parts[2])
-                console.print("Subagent stopped." if stopped else "No running subagent with that id.",
-                              style="yellow", markup=False)
+                _write_log("warning", "Subagent stopped." if stopped else "No running subagent with that id.")
                 continue
-            console.print("Usage: /agents [run <task> | peek <id> | wait <id> | kill <id>]",
-                          style="yellow", markup=False)
+            _write_log("warning", "Usage: /agents [run <task> | peek <id> | wait <id> | kill <id>]")
             continue
         if text == "/context":
             console.print(agent.tracker.bar(agent.messages), markup=False)
@@ -1021,7 +1104,7 @@ def main(argv: list[str] | None = None) -> None:
         if text == "/audit":
             ok, count, problem = verify(audit.path)
             if ok:
-                console.print(f"audit log OK: {count} entries. chain intact", style="green", markup=False)
+                _write_log("ok", f"audit log OK: {count} entries. chain intact")
             else:
                 console.print(f"AUDIT LOG PROBLEM: {problem}", style="bold red", markup=False)
             continue
@@ -1031,11 +1114,11 @@ def main(argv: list[str] | None = None) -> None:
             if policy.full_access:
                 console.print("FULL ACCESS ON: Danica can run ANY command without asking. /fullaccess again to turn it off.", style="bold red", markup=False)
             else:
-                console.print("full access off", style="yellow", markup=False)
+                _write_log("warning", "full access off")
             continue
         if text.split()[0] in ("/undo", "/rewind"):
             if not checkpoints.available:
-                console.print("checkpoints are disabled (git not found)", style="yellow", markup=False)
+                _write_log("warning", "checkpoints are disabled (git not found)")
                 continue
             parts = text.split()
             try:
@@ -1048,11 +1131,11 @@ def main(argv: list[str] | None = None) -> None:
                     continue
                 else:
                     summary, safety = checkpoints.rewind(parts[1])
-                console.print(summary, style="green", markup=False)
+                _write_log("ok", summary)
                 if safety:
                     audit.append("restore", command=parts[0], safety=safety)
             except CheckpointError as e:
-                console.print(f"ERROR: {e}", style="red", markup=False)
+                _write_log("error", f"{e}")
             continue
         if text == "/sandbox":
             sb = CONFIG["sandbox"]
@@ -1074,7 +1157,7 @@ def main(argv: list[str] | None = None) -> None:
             if text.split()[1:] == ["clear"]:
                 if ws.todo_path and ws.todo_path.exists():
                     ws.todo_path.unlink()
-                console.print("TODO cleared", style="yellow", markup=False)
+                _write_log("warning", "TODO cleared")
             else:
                 console.print(read_todo(ws) or "(no TODO yet)", markup=False)
             continue
@@ -1082,7 +1165,7 @@ def main(argv: list[str] | None = None) -> None:
         if text == "/prune":
             # Manual prune, keeping only the 2 newest tool results (handy for testing)
             if not agent.prune(keep_recent=2):
-                console.print("nothing to prune", style="yellow", markup=False)
+                _write_log("warning", "nothing to prune")
             continue
 
         if text.split()[0] == "/compact":
@@ -1090,8 +1173,8 @@ def main(argv: list[str] | None = None) -> None:
             parts = text.split()
             tail = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
             if not agent.compact(tail):
-                console.print("nothing worth compacting yet: everything fits in the kept tail. "
-                              "Try /compact 500 to keep less.", style="yellow", markup=False)
+                _write_log("warning", "nothing worth compacting yet: everything fits in the kept tail. "
+                              "Try /compact 500 to keep less.")
             continue
         if text == "/summary":
             # The summary message always sits right after the system prompt
@@ -1119,20 +1202,20 @@ def main(argv: list[str] | None = None) -> None:
                 target = resolve_session(SESSIONS_DIR, arg, current=session_id)
                 parts, report = open_resumed(target, finish, on_event)
             except ValueError as e:
-                console.print(f"ERROR: {e}", style="red", markup=False)
+                _write_log("error", f"{e}")
                 continue
             except Exception as e:      # the old session stays active if loading failed
-                console.print(f"ERROR: could not resume: {type(e).__name__}: {e}", style="red", markup=False)
+                _write_log("error", f"could not resume: {type(e).__name__}: {e}")
                 continue
             ws, audit, checkpoints, policy, agent = parts    # switch over only on success
             session_id = target
             meta = load_session_meta(SESSIONS_DIR / target)
             project = lookup(Path(meta["project"])) if meta.get("project") else None
-            console.print(report, style="green", markup=False)
+            _write_log("ok", report)
             continue
         if text == "/taint":
             if ws.web and ws.web.tainted:
-                console.print("Untrusted web content is in this conversation. Sources:", style="yellow", markup=False)
+                _write_log("warning", "Untrusted web content is in this conversation. Sources:")
                 for source in ws.web.taint_sources:
                     console.print("  " + source, markup=False, highlight=False)
                 console.print("While tainted, shell commands and fetches from new sites always ask.\n"
@@ -1145,7 +1228,7 @@ def main(argv: list[str] | None = None) -> None:
             if ws.web and ws.web.tainted:
                 ws.web.clear_taint()
                 audit.append("untaint")
-                console.print("taint cleared. The web content is still in the context.", style="yellow", markup=False)
+                _write_log("warning", "taint cleared. The web content is still in the context.")
             else:
                 console.print("not tainted", markup=False)
             continue
@@ -1174,21 +1257,20 @@ def main(argv: list[str] | None = None) -> None:
                 info = lookup(path)
                 if info is None:                      # never trusted: ask first
                     if not ask_trust(path):
-                        console.print("not trusted, nothing changed", style="yellow", markup=False)
+                        _write_log("warning", "not trusted, nothing changed")
                         continue
                     info = register(path)
                     audit.append("project_trust", path=str(path), id=info["id"])
                 new_id = datetime.now().strftime("%Y%m%d-%H%M%S")
                 new_parts = build_session(new_id, finish, on_event, info)
             except ProjectError as e:
-                console.print(f"ERROR: {e}", style="red", markup=False)
+                _write_log("error", f"{e}")
                 continue
             ws, audit, checkpoints, policy, agent = new_parts
             session_id, project = new_id, info
             audit.append("session_start", workspace=str(ws.root), mode="project", project=info["id"])
-            console.print(f"Project mode: {info['name']}\n  folder: {ws.root}\n"
-                          f"New session {new_id}. The previous session stays available via /sessions and /resume.",
-                          style="green", markup=False)
+            _write_log("ok", f"Project mode: {info['name']}\n  folder: {ws.root}\n"
+                          f"New session {new_id}. The previous session stays available via /sessions and /resume.")
             continue
 
         if text == "/chat":
@@ -1196,7 +1278,7 @@ def main(argv: list[str] | None = None) -> None:
             project = None
             ws, audit, checkpoints, policy, agent = build_session(session_id, finish, on_event)
             audit.append("session_start", workspace=str(ws.root), mode="chat")
-            console.print(f"Normal chat. New session {session_id}.", style="green", markup=False)
+            _write_log("ok", f"Normal chat. New session {session_id}.")
             continue
         if text == "/instructions":
             console.print(agent.project_instructions or "(no project instructions loaded)", markup=False)
@@ -1217,7 +1299,7 @@ def main(argv: list[str] | None = None) -> None:
             else:
                 console.print("(no global skills found; add a folder with a SKILL.md)", markup=False)
             for error in errors:
-                console.print(f"WARNING: {error}", style="yellow", markup=False, highlight=False)
+                _write_log("warning", f"WARNING: {error}")
             continue
 
         if text == "/new":
@@ -1227,18 +1309,18 @@ def main(argv: list[str] | None = None) -> None:
             ws, audit, checkpoints, policy, agent = build_session(session_id, finish, on_event, project)
             audit.append("session_start", workspace=str(ws.root),
                          mode="project" if project else "chat")
-            console.print(f"New session {session_id}.", style="green", markup=False)
+            _write_log("ok", f"New session {session_id}.")
             continue
 
         if text == "/export":
             try:
                 out = export_session(APP_DIR / "sessions" / session_id, ws, project)
             except (ValueError, OSError) as e:
-                console.print(f"ERROR: {e}", style="red", markup=False)
+                _write_log("error", f"{e}")
                 continue
             audit.append("export", folder=str(out))
-            console.print(f"Exported to {out}\nRead conversation.md before sharing it: redaction "
-                          f"only catches well-known secret formats.", style="green", markup=False)
+            _write_log("ok", f"Exported to {out}\nRead conversation.md before sharing it: redaction "
+                          f"only catches well-known secret formats.")
             continue
 
         if text.split()[0] == "/memory":
@@ -1265,8 +1347,7 @@ def main(argv: list[str] | None = None) -> None:
             rest = text[len("/plan"):].strip()
             if not rest:
                 plan_next = True
-                console.print("Plan mode: your next request gets a plan first (read-only drafting, then you approve).",
-                              style="green", markup=False)
+                _write_log("ok", "Plan mode: your next request gets a plan first (read-only drafting, then you approve).")
                 continue
             if rest.lower() == "show":
                 if agent.last_plan:
@@ -1283,14 +1364,14 @@ def main(argv: list[str] | None = None) -> None:
                     console.print("usage: /plan auto ask | /plan auto off", markup=False)
                 continue
             if rest.startswith("/"):
-                console.print("a slash command can't be planned", style="yellow", markup=False)
+                _write_log("warning", "a slash command can't be planned")
                 continue
             text, force_plan = rest, True          # no "continue": it runs as an ordinary request below, with a plan
         # --- plan mode (hybrid): /plan forces it, and big-looking requests are offered one ---
         decision, plan, plan_auto = run_plan_mode(text, force_plan or plan_next, plan_auto, agent, audit)
         plan_next = False
         if decision == "cancel":
-            console.print("nothing was run", style="yellow", markup=False)
+            _write_log("warning", "nothing was run")
             console.print()
             continue
         # --- normal request: hand it to the agent ---
@@ -1301,18 +1382,22 @@ def main(argv: list[str] | None = None) -> None:
             # Normal answers were already streamed to the screen; only the
             # harness's "[stopped: ...]" notices still need printing
             if result.startswith("[stopped]"):
-                console.print(result, style="yellow", markup=False)
+                _write_log("warning", result)
             printer.present_pending(agent.charts_made)    # charts the answer forgot to show
             found = collect(ws, agent.checkpoints, agent.request_snap, agent.touched, printer.presented)
             artifacts = found.items
             show_artifacts(found)
         except KeyboardInterrupt:
-            finish()
-            console.print("[interrupted]", style="yellow", markup=False)
+            try:
+                finish()
+                _write_log("warning", "[interrupted]")
+            except Exception as e:
+                _write_log("error", f"{e}")
         except Exception as e:
             # Most likely cause: llama-server isn't running
             finish()
-            console.print(f"ERROR: {type(e).__name__}: {e}", style="red", markup=False)
+            # console.print(f"ERROR: {type(e).__name__}: {e}", style="red", markup=False)
+            _write_log("error", f"{type(e).__name__}: {e}")
 
         console.print()  # blank line between turns
 
@@ -1320,17 +1405,17 @@ def main(argv: list[str] | None = None) -> None:
         try:
             ws.subagent_supervisor.close()
         except SubagentError as exc:
-            console.print(f"ERROR stopping subagents: {exc}", style="red", markup=False)
+            _write_log("error", f"stopping subagents: {exc}")
     if _KNOWLEDGE_INDEX is not None:
         try:
             _KNOWLEDGE_INDEX.close()
         except KnowledgeError as exc:
-            console.print(f"ERROR stopping knowledge watchers: {exc}", style="red", markup=False)
+            _write_log("error", f"stopping knowledge watchers: {exc}")
     if _EXTENSION_MANAGER is not None:
         try:
             _EXTENSION_MANAGER.close()
         except ExtensionError as exc:
-            console.print(f"ERROR stopping extensions: {exc}", style="red", markup=False)
+            _write_log("error", f"stopping extensions: {exc}")
 
 if __name__ == "__main__":
     main()

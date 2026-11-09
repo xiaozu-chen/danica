@@ -1,0 +1,225 @@
+"""
+app_core.py - Session setup that has no terminal code in it.
+
+Ported from cli.py: build_session, open_resumed, apply_instructions, ask_trust and the
+shared knowledge-index / extension-manager singletons. Every place that used to call
+console.print() or prompt() now goes through a `ui` object (see danica/ui.py), so the
+Textual TUI and the classic CLI can share this file.
+
+cli.py is NOT changed yet; it keeps its own copies until Phase 6 is finished, so the
+old frontend stays a working baseline.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Callable
+
+from danica.agent import Agent
+from danica.audit import AuditLog
+from danica.capture import ProposalQueue
+from danica.checkpoints import Checkpoints
+from danica.config import APP_DIR, CONFIG
+from danica.embeddings import get_embedder
+from danica.extensions import ExtensionError, ExtensionManager
+from danica.knowledge import KnowledgeError, KnowledgeIndex
+from danica.memory import MemoryStore
+from danica.memory_index import FACTS_DB, MemoryIndex
+from danica.permissions import PermissionPolicy
+from danica.projects import (approve_instructions, load_session_meta, lookup,
+                             read_instructions, save_session_meta, scan)
+from danica.sessions import SESSIONS_DIR, load_records
+from danica.subagents import SubagentError, SubagentSupervisor
+from danica.ui import UI
+from danica.workspace import Workspace
+
+_KNOWLEDGE_INDEX: KnowledgeIndex | None = None
+_EXTENSION_MANAGER: ExtensionManager | None = None
+
+
+def short_path(root) -> str:
+    """The workspace as a short label. (cli.py calls relative_to(APP_DIR/"sessions") directly,
+    which raises ValueError in project mode because the root is then your own folder.)"""
+    root = Path(root)
+    try:
+        return str(root.relative_to(APP_DIR / "sessions"))
+    except ValueError:
+        return root.name or str(root)
+
+
+def knowledge_index() -> KnowledgeIndex:
+    global _KNOWLEDGE_INDEX
+    if _KNOWLEDGE_INDEX is None:
+        _KNOWLEDGE_INDEX = KnowledgeIndex(APP_DIR / "knowledge.db", get_embedder())
+    return _KNOWLEDGE_INDEX
+
+
+def extension_manager(audit=None, headless: bool = False) -> ExtensionManager:
+    global _EXTENSION_MANAGER
+    if _EXTENSION_MANAGER is None:
+        _EXTENSION_MANAGER = ExtensionManager(
+            APP_DIR, CONFIG, audit, enable_mcp=not headless, enable_hooks=not headless)
+    else:
+        _EXTENSION_MANAGER.audit = audit
+        if headless:
+            _EXTENSION_MANAGER.enable_hooks = False
+    return _EXTENSION_MANAGER
+
+
+def make_ask(ui: UI):
+    """The permission callback for PermissionPolicy. It runs on whatever thread the agent
+    runs on; ui.permission() blocks that thread until the user answers."""
+
+    def ask(tool: str, summary: str, tier, reason: str, can_remember: bool) -> str:
+        try:
+            answer = ui.permission(tool, summary, tier.value, reason, can_remember)
+        except Exception:
+            return "deny"                     # a broken dialog must never mean "allow"
+        return answer if answer in ("once", "session") else "deny"
+    return ask
+
+
+def apply_instructions(project: dict, agent, audit, ui: UI) -> None:
+    """Load the project's DANICA.md. New or changed text must be approved first."""
+    found = read_instructions(project["path"])
+    if found is None:
+        return
+    text, sha, cut = found
+    approved_now = False
+    if project.get("instructions_sha") != sha:
+        label = "changed" if project.get("instructions_sha") else "new"
+        detail = "Longer than the limit: only the text above would be loaded." if cut else ""
+        ok = ui.confirm(
+            f"This project has a {label} DANICA.md",
+            body=text,
+            detail=("Danica would follow it as instructions (it cannot override safety rules or "
+                    "permission prompts). " + detail).strip(),
+            yes="Load it", no="Skip")
+        if not ok:
+            ui.log("warning", "  DANICA.md not loaded.")
+            return
+        approve_instructions(project, sha)
+        approved_now = True
+    agent.set_project_instructions(text)
+    audit.append("instructions", sha=sha[:12], approved_now=approved_now)
+    ui.log("ok", f"  Loaded DANICA.md ({len(text)} characters.)")
+
+
+def build_session(session_id: str, ui: UI, on_event, project: dict | None = None,
+                  headless: bool = False, workspace_root: Path | None = None):
+    """Create everything one session needs.
+    project=None  -> normal chat: a throwaway workspace inside the session folder
+    project=info  -> project mode: the workspace IS the user's trusted folder
+    Returns (ws, audit, checkpoints, policy, agent), same as cli.build_session."""
+    session_dir = APP_DIR / "sessions" / session_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+
+    root = Path(project["path"]) if project else (
+        Path(workspace_root) if headless and workspace_root else session_dir / "workspace")
+    ws = Workspace(root, todo_path=session_dir / "TODO.md",
+                   sources_path=session_dir / "sources.json")
+    ws.knowledge_index = knowledge_index()
+    save_session_meta(session_dir, project["path"] if project else None)
+
+    audit = AuditLog(APP_DIR / "logs" / "audit.jsonl", session=session_id)
+
+    git_dir = Path(project["dir"]) / "git" if project else session_dir / "checkpoints" / "git"
+    checkpoints = Checkpoints(ws, git_dir)
+    if not checkpoints.available:
+        ui.log("warning", "  `git` was not found, so /undo and /rewind are disabled. "
+                          "(Install it with: winget install Git.Git)")
+
+    policy = PermissionPolicy(ask=None if headless else make_ask(ui))
+    policy.project_mode = project is not None
+    supervisor = SubagentSupervisor(ws, policy, audit, session_id)
+    ws.subagent_supervisor = supervisor
+    extensions = extension_manager(audit, headless)
+    ws.extension_manager = extensions
+    for error in extensions.errors:
+        on_event("notice", f"WARNING: extension disabled: {error}")
+    agent = Agent(
+        ws,
+        transcript_path=session_dir / "transcript.jsonl",
+        on_event=on_event,
+        policy=policy,
+        audit=audit,
+        checkpoints=checkpoints,
+    )
+    store = MemoryStore(APP_DIR / "memory",
+                        Path(project["dir"]) / "memory" if project else None,
+                        session_dir / "memory")
+    store.index = MemoryIndex(FACTS_DB, embedder=get_embedder(),
+                              min_similarity=CONFIG["embeddings"]["min_similarity"])
+    ws.memory = store
+    agent.memory = store
+    agent.proposals = ProposalQueue(session_dir / "proposals.json")
+    agent.plans_dir = session_dir / "plans"
+    if project:
+        apply_instructions(project, agent, audit, ui)
+    return ws, audit, checkpoints, policy, agent
+
+
+def open_resumed(target: str, ui: UI, on_event):
+    """Build a session around an existing folder and load its history.
+    Returns (the 5 session objects, a text report for the user)."""
+    records, bad = load_records(SESSIONS_DIR / target / "transcript.jsonl")
+    project = None
+    meta = load_session_meta(SESSIONS_DIR / target)
+    if meta.get("project"):
+        project = lookup(Path(meta["project"]))
+        if project is None or not Path(project["path"]).is_dir():
+            raise ValueError(f"that session worked in {meta['project']}, which is no longer "
+                             f"trusted or no longer exists. Use /project <path> to trust it again.")
+    parts = build_session(target, ui, on_event, project)
+    ws, audit, checkpoints, policy, agent = parts
+    fixed = agent.load_history(records)
+    audit.append("session_resume", workspace=str(ws.root), records=len(records),
+                 unreadable_lines=bad, repaired=fixed)
+
+    where = f"project {project['name']}" if project else "chat"
+    lines = [f"Resumed session {target} ({where}): {len(agent.messages) - 1} messages in context, "
+             f"{agent.compactions} compaction(s)."]
+    if agent.user_requests:
+        lines.append("Last request: " + agent.user_requests[-1][:120])
+    if bad or fixed:
+        lines.append(f"Repairs: {bad} unreadable transcript line(s) skipped, "
+                     f"{fixed} broken tool-call record(s) fixed.")
+    lines.append("Permission approvals and the /undo stack start fresh "
+                 "(/rewind still lists the old checkpoints). Try /todo and /summary.")
+    return parts, "\n".join(lines)
+
+
+def ask_trust(path: Path, ui: UI) -> bool:
+    """The trust dialog. Returns True only on an explicit yes."""
+    files, size, capped, has_git = scan(path)
+    count = f"{files:,}+" if capped else f"{files:,}"
+    body = (f"{path}\n\n{count} files, {size / 1_000_000:,.0f} MB (ignoring .git, .venv, node_modules)"
+            + ("; it is a git repository" if has_git else ""))
+    detail = ("Trusting means Danica can read and change files here. Commands still ask for "
+              "permission, and every request is snapshotted so /undo can roll it back. "
+              "Snapshots live outside your folder and never touch your own .git.")
+    if capped or size > 500_000_000:
+        detail += " This folder is big: the first snapshot may take a while."
+    return ui.confirm("Trust this folder as a Danica project?", body=body, detail=detail,
+                      yes="Trust", no="Cancel")
+
+
+def shutdown(ws, log: Callable[[str, str], None] | None = None) -> None:
+    """Stop subagents, knowledge watchers and extensions (what cli.py does after its loop)."""
+    log = log or (lambda level, text: None)
+    supervisor = getattr(ws, "subagent_supervisor", None) if ws is not None else None
+    if supervisor is not None:
+        try:
+            supervisor.close()
+        except SubagentError as exc:
+            log("error", f"stopping subagents: {exc}")
+    if _KNOWLEDGE_INDEX is not None:
+        try:
+            _KNOWLEDGE_INDEX.close()
+        except KnowledgeError as exc:
+            log("error", f"stopping knowledge watchers: {exc}")
+    if _EXTENSION_MANAGER is not None:
+        try:
+            _EXTENSION_MANAGER.close()
+        except ExtensionError as exc:
+            log("error", f"stopping extensions: {exc}")

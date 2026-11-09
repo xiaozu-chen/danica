@@ -99,7 +99,7 @@ def extract(user_text: str, store: MemoryStore) -> list[tuple[str, str]]:
     source = clean_note(user_text)[:MAX_SOURCE]
     reply = chat([{"role": "system", "content": SYSTEM},
                   {"role": "user", "content": "USER MESSAGE:\n" + source}],
-                 thinking=False, temperature=0.1, max_tokens=300)
+                 thinking=False, temperature=0.1)
 
     out: list[tuple[str, str]] = []
     seen: set[str] = set()

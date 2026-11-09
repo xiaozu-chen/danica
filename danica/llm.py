@@ -20,7 +20,6 @@ def stream_chat(
     messages: list[dict],
     thinking: bool = False,
     temperature: float = 0.7,
-    max_tokens: int = 2048,
     tools: list[dict] | None = None,
     include_usage: bool = False,
 ) -> Iterator[dict]:
@@ -41,7 +40,6 @@ def stream_chat(
         "messages": messages,
         "stream": True,
         "temperature": temperature,
-        "max_tokens": max_tokens,
         # Qwen's chat template reads this flag to switch thinking on/off.
         "chat_template_kwargs": {"enable_thinking": thinking},
     }
@@ -119,7 +117,6 @@ def chat(
         messages: list[dict],
         thinking: bool = False,
         temperature: float = 0.0,
-        max_tokens: int = 4096,
 ) -> dict:
     """
     Non-streaming convenience wrapper: runs stream_chat and collects everything.
@@ -127,7 +124,7 @@ def chat(
     Temperature default to 0 so eval runs are as repeatable as possible.
     """
     thinking_parts, content_parts = [], []
-    for piece in stream_chat(messages, thinking, temperature, max_tokens):
+    for piece in stream_chat(messages, thinking, temperature):
         (thinking_parts if piece["type"] == "thinking" else content_parts).append(piece["text"])
 
     return {"thinking": "".join(thinking_parts), "content": "".join(content_parts)}

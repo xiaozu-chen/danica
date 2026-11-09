@@ -15,6 +15,7 @@ Guards that keep a small local model from going off the rails:
 import json
 import secrets
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable
@@ -118,6 +119,11 @@ class Agent:
         self.ws = ws
         self.thinking = thinking
         self.thinking_override: bool | None = None
+        # Set from ANOTHER thread (the TUI) to stop the current request. The agent checks it
+        # between stream chunks and before each tool call, then raises KeyboardInterrupt so the
+        # existing cleanup (every tool_call gets a result) runs. A tool that is already running
+        # (for example a long shell command) is not killed; it finishes first.
+        self.cancel_event = threading.Event()
         self._thinking_for_request: bool | None = None
         self.max_steps = max_steps
         self.on_event = on_event or (lambda kind, data: None)
@@ -169,6 +175,15 @@ class Agent:
         self.did_tool_work = False
 
     # ------------------------------------------------------------------ helpers
+
+    def cancel(self) -> None:
+        """Ask the running request to stop. Safe to call from any thread."""
+        self.cancel_event.set()
+
+    def _check_cancel(self) -> None:
+        if self.cancel_event.is_set():
+            self.cancel_event.clear()
+            raise KeyboardInterrupt
 
     def _write_transcript(self, record: dict) -> None:
         """Append one JSON line to the transcript (messages, and event records)."""
@@ -236,7 +251,7 @@ class Agent:
         """One model call while drafting: nothing is streamed to the screen (the plan is shown formatted)."""
         content, calls = [], []
         for piece in stream_chat(msgs, thinking=bool(CONFIG["planning"]["thinking"]), temperature=0.3,
-                                 max_tokens=4096, tools=schemas):
+                                  tools=schemas):
             if piece["type"] == "tool_calls":
                 calls = piece["calls"]
             elif piece["type"] == "content":
@@ -330,10 +345,10 @@ class Agent:
             thinking=(self._thinking_for_request if self._thinking_for_request is not None
                       else self.thinking),
             temperature=0.3,       # low: tool calls should be steady, not creative
-            max_tokens=4096,
             tools=tool_schemas(),
             include_usage=True,
         ):
+            self._check_cancel()
             if piece["type"] == "usage":
                 # Exact prompt size: replace all earlier estimates
                 self.tracker.record(piece["prompt_tokens"], msg_count)
@@ -398,7 +413,7 @@ class Agent:
             parts: list[str] = []
             unexpected_calls = False
             for piece in stream_chat(messages, thinking=False, temperature=0.1,
-                                     max_tokens=512, tools=None):
+                                      tools=None):
                 if piece["type"] == "content":
                     parts.append(piece["text"])
                 elif piece["type"] == "tool_calls":
@@ -711,6 +726,7 @@ class Agent:
     def run(self, user_text: str, plan: "Plan | None" = None) -> str:
         """Handle one user request. Returns the model's final text answer."""
         # Snapshot the workspace BEFORE anything changes, so /undo can return here
+        self.cancel_event.clear()
         self.request_snap, self.touched = None, []
         self.did_tool_work = False
         self.ws.knowledge_sources = {}
@@ -861,6 +877,7 @@ class Agent:
                     parallel_results = []
                     for i, call in enumerate(calls):
                         try:
+                            self._check_cancel()
                             result = self._execute(call)
                         except KeyboardInterrupt:
                             # Every tool_call needs a matching result, otherwise the
@@ -883,4 +900,3 @@ class Agent:
             if not repair_requested:
                 return f"[stopped: reached the limit of {self.max_steps} steps]"
         return f"[stopped: reached the limit of {self.max_steps} steps]"
-    

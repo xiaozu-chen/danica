@@ -1,0 +1,98 @@
+Screen {
+    layout: vertical;
+    background: #16161e;
+    color: #c0caf5;
+}
+
+/* ---- transcript ---- */
+#transcript {
+    height: 1fr;
+    padding: 0 2;
+    scrollbar-size-vertical: 1;
+    scrollbar-color: #3b4261;
+    scrollbar-background: #16161e;
+}
+
+.welcome { margin: 1 0 0 0; }
+.user { margin: 1 0 0 0; color: #ffffff; }
+.notice { margin: 1 0 0 0; }
+.say { margin: 1 0 0 0; }
+.citations { margin: 1 0 0 0; }
+.artifacts { margin: 1 0 0 0; }
+.thinking { margin: 1 0 0 0; color: #6b7089; }
+.toolcall { margin: 1 0 0 0; }
+
+AssistantMessage {
+    margin: 1 0 0 0;
+    padding: 0;
+    background: transparent;
+}
+
+.inline-image {
+    width: auto;
+    height: auto;
+    max-width: 80;
+    max-height: 24;
+    margin: 1 0 0 0;
+}
+
+/* ---- prompt box ---- */
+#busy {
+    height: 1;
+    padding: 0 3;
+}
+
+#prompt-box {
+    height: auto;
+    margin: 0 1;
+    padding: 0 1;
+    border: round #ff9e64;
+}
+
+#caret {
+    width: 2;
+    color: #ff9e64;
+    text-style: bold;
+}
+
+#prompt {
+    height: 1;
+    padding: 0;
+    border: none;
+    background: transparent;
+}
+
+#prompt:focus {
+    border: none;
+    background: transparent;
+}
+
+#status {
+    height: 1;
+    padding: 0 2;
+    color: #a9b1d6;
+}
+
+/* ---- dialogs ---- */
+PermissionScreen, ConfirmScreen {
+    align: center middle;
+    background: black 60%;
+}
+
+.dialog {
+    width: 80%;
+    max-width: 110;
+    height: auto;
+    max-height: 85%;
+    padding: 1 2;
+    background: #1f2335;
+    border: round #ff9e64;
+}
+
+.dialog.warn { border: round #e0af68; }
+
+.dialog-title { text-style: bold; margin-bottom: 1; }
+.dialog-reason { margin-bottom: 1; }
+.dialog-body { height: auto; max-height: 18; margin-bottom: 1; background: #16161e; padding: 0 1; }
+.dialog-buttons { height: auto; }
+.dialog-buttons Button { margin-right: 2; }

@@ -191,7 +191,7 @@ def summarize(previous: str, rendered: str) -> tuple[str | None, str]:
             reply = chat(
                 [{"role": "system", "content": SUMMARIZER_SYSTEM},
                  {"role": "user", "content": asked}],
-                thinking=False, temperature=0.2, max_tokens=1500,
+                thinking=False, temperature=0.2,
             )
         except Exception as e:   # server down, timeout...: fall through to the retry/fallback
             problem = f"model call failed: {type(e).__name__}"
