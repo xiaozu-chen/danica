@@ -49,6 +49,6 @@ Design principles
 
 ## Licenses
 
-[text](LICENSE)
+[MIT License](LICENSE)
 
-Third part licenses: [text](THIRD_PARTY_LICENSES.md)
+[Third Party Licenses](THIRD_PARTY_LICENSES.md)
