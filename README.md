@@ -42,3 +42,13 @@ Design principles
   skills/            user-managed global SKILL.md folders (project skills are never loaded)
   plugins/  hooks/  logs/audit.jsonl
 ```
+
+![alt text](something_something.jpg)
+
+---
+
+## Licenses
+
+[text](LICENSE)
+
+Third part licenses: [text](THIRD_PARTY_LICENSES.md)
