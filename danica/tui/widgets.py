@@ -23,6 +23,16 @@ from textual.widgets import Markdown, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
 from danica.config import APP_DIR
+from danica.partial_json import partial_fields
+
+# textual-image asks the terminal what it can draw (Sixel / Kitty graphics, cell size) at IMPORT
+# time, and that question cannot be answered once Textual owns stdin. So import it here, at module
+# load, before the app starts. Imported lazily (inside image_widget) the probe fails and it silently
+# falls back to half-cell rendering, which is what made the charts blurry.
+try:
+    from textual_image.widget import Image as _InlineImage
+except Exception:                       # optional dependency
+    _InlineImage = None
 from danica.ui import TAG_COLORS, TAG_WIDTH
 
 ACCENT = "#64acff"
@@ -172,17 +182,37 @@ class ToolCall(Static):
     PREVIEW = 400
     FULL = 6000
 
-    def __init__(self, name: str, args) -> None:
+    def __init__(self, name: str, args, streaming: bool = False) -> None:
         self.tool = name
-        self.call_args = args
         self.title_text = name.replace("_", " ").title()
+        self.result: str | None = None
+        self.expanded = False
+        self.streaming = streaming          # True while the model is still writing the arguments
+        self.raw = ""                       # the argument JSON received so far (streaming only)
+        self._dirty = False
+        self._timer = None
+        self._set_args(self._padded({}) if streaming else args)
+        super().__init__(self._build(), classes="toolcall")
+
+    def _set_args(self, args) -> None:
+        self.call_args = args
         self.edit = edit_pair(args)
         self.ckey = None if self.edit else content_key(args)
         self.command = args.get("command") if self.tool == "run_shell" and isinstance(args, dict) \
             and isinstance(args.get("command"), str) else None
-        self.result: str | None = None
-        self.expanded = False
-        super().__init__(self._build(), classes="toolcall")
+
+    def _padded(self, fields: dict) -> dict:
+        """Half-arrived arguments, with the file tools' fields filled in as empty strings so the
+        write / edit rendering works from the very first character."""
+        args = dict(fields)
+        if self.tool == "write_file":
+            args.setdefault("path", "")
+            args.setdefault("content", "")
+        elif self.tool == "edit_file":
+            args.setdefault("path", "")
+            args.setdefault("old_string", "")
+            args.setdefault("new_string", "")
+        return args
 
     # -- pieces -------------------------------------------------------------------------
 
@@ -216,7 +246,8 @@ class ToolCall(Static):
                     if not line.startswith(("---", "+++"))]
             added = sum(1 for line in diff if line.startswith("+"))
             removed = sum(1 for line in diff if line.startswith("-"))
-            header.append(f"  +{added} -{removed}", style="dim")
+            header.append(f"  +{added}", style="#9ece6a")
+            header.append(f" -{removed}", style="#f7768e")
             if not diff:
                 return Text("(no change)", style="dim")
             body = Text(no_wrap=False)
@@ -234,10 +265,12 @@ class ToolCall(Static):
         if self.ckey:
             code = self.call_args[self.ckey]
             lines = code.splitlines()
-            header.append(f"  ({len(lines):,} line{'s' if len(lines) != 1 else ''})", style="dim")
+            header.append(f"  +{len(lines):,}", style="#9ece6a")
+            header.append(" -0", style="#f7768e")
             shown = "\n".join(lines[:limit])
             try:
-                lexer = Syntax.guess_lexer(str(self.call_args.get("path")), code)
+                path = str(self.call_args.get("path"))
+                lexer = Syntax.guess_lexer(path, code) if path else "text"
             except Exception:
                 lexer = "text"
             return Group(highlighted(shown, lexer), *filter(None, [self._more(len(lines) - limit)]))
@@ -271,6 +304,40 @@ class ToolCall(Static):
         return Group(*parts) if len(parts) > 1 else header
 
     # -- behaviour ----------------------------------------------------------------------
+
+    def on_mount(self) -> None:
+        if self.streaming:                  # redraw at most 10x/second, however fast tokens arrive
+            self._timer = self.set_interval(0.1, self._tick)
+
+    def feed(self, fragment: str) -> None:
+        """A piece of the argument JSON arrived (called for every streamed fragment)."""
+        self.raw += fragment
+        self._dirty = True
+
+    def _tick(self) -> None:
+        if self.streaming and self._dirty:
+            self._dirty = False
+            self._set_args(self._padded(partial_fields(self.raw)))
+            self.update(self._build())
+
+    def _stop_streaming(self) -> None:
+        self.streaming = False
+        if self._timer is not None:
+            self._timer.stop()
+            self._timer = None
+
+    def finalize(self, args) -> None:
+        """The arguments are complete: switch to the real, parsed ones."""
+        self._stop_streaming()
+        self._set_args(args)
+        self.update(self._build())
+
+    def abort(self) -> None:
+        """The request was cancelled before this call ever ran."""
+        if self.streaming:
+            self._stop_streaming()
+            self.result = "ERROR: interrupted"
+            self.update(self._build())
 
     def set_result(self, text) -> None:
         self.result = str(text)
@@ -330,8 +397,9 @@ class ArtifactsList(Static):
 def image_widget(path: Path, label: str):
     """Inline picture via the optional `textual-image` package, else a one-line placeholder."""
     try:
-        from textual_image.widget import Image
-        widget = Image(path)
+        if _InlineImage is None:
+            raise ImportError("textual-image is not installed")
+        widget = _InlineImage(path)
         widget.add_class("inline-image")
         return widget
     except Exception:
@@ -339,7 +407,7 @@ def image_widget(path: Path, label: str):
                       classes="say")
 
 
-def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.2.5") -> Panel:
+def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.3.2") -> Panel:
     left = Text(justify="center")
     left.append("Welcome back!\n\n", style="bold")
     left.append("  /\\_/\\ \n ( o.o )\n  > ^ <\n\n", style=ACCENT)

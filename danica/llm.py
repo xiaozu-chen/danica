@@ -22,6 +22,7 @@ def stream_chat(
     temperature: float = 0.7,
     tools: list[dict] | None = None,
     include_usage: bool = False,
+    stream_tools: bool = False,
 ) -> Iterator[dict]:
     """
     Stream a chat completion from llama-server.
@@ -91,22 +92,33 @@ def stream_chat(
                 # Tool-call fragments: the name arrives whole, the arguments
                 # arrive as pieces of a JSON string that we append together.
                 for tc in delta.get("tool_calls") or []:
+                    index = tc.get("index", 0)
                     slot = pending.setdefault(
-                        tc.get("index", 0), {"id": "", "name": "", "arguments": ""}
+                        index, {"id": "", "name": "", "arguments": "", "announced": False}
                     )
                     if tc.get("id"):
                         slot["id"] = tc["id"]
                     fn = tc.get("function") or {}
                     if fn.get("name"):
                         slot["name"] = fn["name"]
-                    if fn.get("arguments"):
-                        slot["arguments"] += fn["arguments"]
+                    frag = fn.get("arguments") or ""
+                    slot["arguments"] += frag
+
+                    # Tell the caller the moment a call starts, then pass each argument piece on
+                    if stream_tools and slot["name"]:
+                        if not slot["announced"]:
+                            slot["announced"] = True
+                            yield {"type": "tool_start", "index": index, "name": slot["name"]}
+                            frag = slot["arguments"]      # anything that arrived before the name
+                        if frag:
+                            yield {"type": "tool_delta", "index": index, "text": frag}
         
     # Stream finished: hand over the assembled tool calls (if any).
     if pending:
         calls = []
         for index in sorted(pending):
             call = pending[index]
+            call.pop("announced", None)
             # Some server versions omit ids; the API needs one to pair results with calls
             call["id"] = call["id"] or f"call_{index}"
             calls.append(call)

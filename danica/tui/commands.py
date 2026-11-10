@@ -17,6 +17,12 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Callable
+import shutil
+import socket
+import subprocess
+import sys
+from typing import Optional
+from danica.app_core import ResumeCancelled
 
 COMMANDS: dict[str, Callable] = {}
 
@@ -191,6 +197,9 @@ def _resume(app, args):
         arg = args.split()[0] if args else ""
         target = resolve_session(SESSIONS_DIR, arg, current=app.session_id)
         parts, report = open_resumed(target, app.ui, app.bridge)
+    except ResumeCancelled as e:
+        app.ui.log("info", str(e))
+        return
     except ValueError as e:
         app.ui.log("error", f"{e}")
         return

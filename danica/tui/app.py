@@ -89,6 +89,8 @@ class DanicaApp(App):
         self._assistant: AssistantMessage | None = None
         self._thinking: ThinkingBlock | None = None
         self._pending: deque[ToolCall] = deque()
+        self._stream_widgets: dict[int, ToolCall] = {}   # tool calls still being streamed, by index
+        self._stream_queue: deque[ToolCall] = deque()    # same, in order, waiting for their final args
 
     # ------------------------------------------------------------------ layout
 
@@ -287,6 +289,8 @@ class DanicaApp(App):
         self._assistant = None
         self._thinking = None
         self._pending.clear()
+        self._stream_widgets.clear()
+        self._stream_queue.clear()
 
     def _request_worker(self, text: str, forced: bool = False) -> None:
         agent, ws, audit = self.agent, self.ws, self.audit
@@ -336,11 +340,26 @@ class DanicaApp(App):
             self._thinking.finish()
             self._thinking = None
 
-        if kind == "tool_call":
-            name, args = data
-            widget = ToolCall(name, args)
-            self._pending.append(widget)
+        if kind == "tool_start":                      # the model just named a tool: show it NOW
+            widget = ToolCall(data["name"], {}, streaming=True)
+            self._stream_widgets[data["index"]] = widget
+            self._stream_queue.append(widget)
             self.mount_block(widget)
+            return
+        if kind == "tool_delta":                      # one more piece of its arguments
+            widget = self._stream_widgets.get(data["index"])
+            if widget is not None:
+                widget.feed(data["text"])
+            return
+        if kind == "tool_call":                       # arguments complete: reuse the live widget
+            name, args = data
+            widget = self._stream_queue.popleft() if self._stream_queue else None
+            if widget is None:                        # planning turns don't stream tool calls
+                widget = ToolCall(name, args)
+                self.mount_block(widget)
+            else:
+                widget.finalize(args)
+            self._pending.append(widget)
         elif kind == "tool_result":
             if self._pending:
                 self._pending.popleft().set_result(data)
@@ -379,6 +398,10 @@ class DanicaApp(App):
             self.add_notice("warning", f"  Could not show {rel}: {exc}")
 
     def on_request_done(self, msg: RequestDone) -> None:
+        for w in list(self._stream_queue):       # cancelled mid-stream: stop their spinners
+            w.abort()
+        self._stream_queue.clear()
+        self._stream_widgets.clear()
         for k, v in self.filter.flush():
             self._emit(k, v)
         self._close_assistant()

@@ -36,6 +36,8 @@ from danica.workspace import Workspace
 _KNOWLEDGE_INDEX: KnowledgeIndex | None = None
 _EXTENSION_MANAGER: ExtensionManager | None = None
 
+class ResumeCancelled(ValueError):
+    """"""
 
 def short_path(root) -> str:
     """The workspace as a short label. (cli.py calls relative_to(APP_DIR/"sessions") directly,
@@ -156,12 +158,20 @@ def build_session(session_id: str, ui: UI, on_event, project: dict | None = None
     agent.plans_dir = session_dir / "plans"
     if project:
         apply_instructions(project, agent, audit, ui)
+
+    report = agent.context_report()
+    if report.status == "too_small":
+        ui.log("warning", f"  The context window ({report.window:,} tokens) is too small for Danica: "
+                          f"the system prompt and tools alone need about {report.fixed:,}. "
+                          f"Restart llama-server with -c {report.recommended_window:,} or more.")
     return ws, audit, checkpoints, policy, agent
 
 
 def open_resumed(target: str, ui: UI, on_event):
     """Build a session around an existing folder and load its history.
-    Returns (the 5 session objects, a text report for the user)."""
+    Returns (the 5 session objects, a text report for the user).
+    Raises ValueError (message shown to the user) if it can't or shouldn't be resumed.
+    Blocking: it may ask the user and call the model, so call it from a worker thread."""
     records, bad = load_records(SESSIONS_DIR / target / "transcript.jsonl")
     project = None
     meta = load_session_meta(SESSIONS_DIR / target)
@@ -172,7 +182,35 @@ def open_resumed(target: str, ui: UI, on_event):
                              f"trusted or no longer exists. Use /project <path> to trust it again.")
     parts = build_session(target, ui, on_event, project)
     ws, audit, checkpoints, policy, agent = parts
-    fixed = agent.load_history(records)
+
+    try:
+        fixed = agent.load_history(records)
+
+        report = agent.context_report()
+        if report.status == "too_small":
+            raise ValueError(f"The context window ({report.window:,} tokens) is too small: the "
+                             f"system prompt and tools alone need about {report.fixed:,}. Restart "
+                             f"llama-server with -c {report.recommended_window:,} or more.")
+        if report.status == "over":
+            if not ui.confirm("This session doesn't fit the context window",
+                              f"It is about {report.used:,} tokens, but the window is {report.window:,}. "
+                              f"Danica can summarize the older part so it fits. The full transcript "
+                              f"stays on disk, but the compaction is saved, so resuming later with a "
+                              f"bigger window will also start from the summary.",
+                              yes="Compact and resume", no="Cancel"):
+                raise ValueError("Resume cancelled.")
+            report = agent.fit_to_window()
+            if report.status != "ok":
+                raise ValueError(f"Could not make this session fit {report.window:,} tokens. "
+                                 f"Restart llama-server with a larger -c to resume it.")
+            ui.log("info", f"Session compacted to about {report.used:,} tokens.")
+    except BaseException:
+        try:
+            shutdown(ws)            # release what build_session started (git, subagents, extensions)
+        except Exception:
+            pass
+        raise
+
     audit.append("session_resume", workspace=str(ws.root), records=len(records),
                  unreadable_lines=bad, repaired=fixed)
 

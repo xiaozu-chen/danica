@@ -23,7 +23,8 @@ from typing import Callable
 from danica.llm import stream_chat
 from danica.tools import run_tool, tool_schemas
 from danica.workspace import Workspace
-from danica.config import CONFIG
+from danica.config import CONFIG, refresh_context_size
+from danica.context_guard import (ESTIMATE_MARGIN, ContextReport, truncate_to_budget)
 from danica.compaction import (build_message, fallback_narrative, find_cut, harvest,
                                is_summary, render, summarize)
 from danica.context import CHARS_PER_TOKEN, ContextTracker, estimate_tokens
@@ -349,11 +350,15 @@ class Agent:
             temperature=0.3,       # low: tool calls should be steady, not creative
             tools=tool_schemas(),
             include_usage=True,
+            stream_tools=True,
         ):
             self._check_cancel()
             if piece["type"] == "usage":
                 # Exact prompt size: replace all earlier estimates
                 self.tracker.record(piece["prompt_tokens"], msg_count)
+                continue
+            if piece["type"] in ("tool_start", "tool_delta"):
+                self.on_event(piece["type"], piece)   # live tool-call display
                 continue
             if piece["type"] == "tool_calls":
                 calls = piece["calls"]
@@ -470,7 +475,8 @@ class Agent:
         # The exact token count is unknown until the server answers, so start
         # fresh: estimates only. Pruning wasn't saved, so the first request's
         # pressure check will prune again if the history is big.
-        self.tracker = ContextTracker(CONFIG["model"]["context"])
+        # Ask the server again: it may have been restarted with a different -c since Danica started.
+        self.tracker = ContextTracker(refresh_context_size())
         self.denied_in_row = 0
         # Taint is not saved in the transcript, so rebuild it: a resumed history that
         # contains web content is tainted. Sites the user typed stay trusted.
@@ -482,6 +488,38 @@ class Agent:
                 state.mark_tainted("earlier web content in the resumed session")
                 break
         return fixed
+
+    # -- safe loading ---------------------------------------------------------------------
+
+    def context_report(self) -> ContextReport:
+        """Does the conversation fit the window? Estimates only (no model call), with a safety
+        margin, and counting the tool schemas the server sees but the message list does not."""
+        tools = int(len(json.dumps(tool_schemas())) / CHARS_PER_TOKEN)
+        fixed = int(estimate_tokens(self.messages[:1]) * ESTIMATE_MARGIN) + tools
+        history = int(estimate_tokens(self.messages[1:]) * ESTIMATE_MARGIN) if len(self.messages) > 1 else 0
+        return ContextReport(self.tracker.window, fixed, history)
+
+    def fit_to_window(self) -> ContextReport:
+        """Shrink a loaded history until context_report().status == "ok". May call the model (to
+        summarize), so run it in a worker thread. Cheapest step first; every step is skipped once
+        the history fits. Check the returned report: anything but "ok" means it could not be made to fit."""
+        over = lambda: self.context_report().status == "over"
+        if over():
+            self.prune(keep_recent=2)                       # old tool output -> stubs
+        if over():
+            self.prune(keep_recent=0)                       # ...all of it
+        if over():
+            self.compact()                                  # summarize the older part
+        if over():
+            self.compact(int(self.tracker.window * 0.03))   # keep almost nothing verbatim
+        if over():                                          # no model call: cut the biggest bodies
+            cuts = truncate_to_budget(self.messages, over)
+            if cuts:
+                self.on_event("notice", f"[context] shortened {cuts} oversized message(s) to fit; "
+                                        f"the full text stays in the transcript")
+        report = self.context_report()
+        self.tracker.record(report.used, len(self.messages))   # the status bar shows the new size
+        return report
 
     def compact(self, tail_tokens: int | None = None) -> bool:
         """Replace the old part of the conversation with a summary.
