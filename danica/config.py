@@ -148,6 +148,8 @@ def load_config() -> dict:
     # Fetch context size using the resolved server base URL
     server_url = cfg.get("server", {}).get("base_url", DEFAULTS["server"]["base_url"])
     user_set_context = "context" in user.get("model", {} if CONFIG_PATH.exists else False)
+
+    # [removed]
     # if not user_set_context:
     #     try:
     #         context_size = get_llama_context_size(server_url)

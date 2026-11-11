@@ -140,3 +140,4 @@ PermissionScreen, ConfirmScreen, ChoiceScreen, TextScreen {
 
 .dialog-buttons Button:last-of-type { margin-right: 0; }
 .dialog-buttons Button:focus { background: #3b4261; text-style: bold; }
+

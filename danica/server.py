@@ -67,7 +67,8 @@ def probe(url: str, timeout: float = 2.0) -> int:
     except httpx.TimeoutException:
         raise ServerError(f"{url} did not answer in time.") from None
     except httpx.HTTPError:
-        raise ServerError(f"Could not connect to {url}. Is llama-server running?") from None
+        raise ServerError(f"Could not connect to {url}."
+                           " Is llama-server running?") from None
     if response.status_code == 503:
         raise ServerError("The server is still loading the model. Try again in a moment.")
     if response.status_code != 200:

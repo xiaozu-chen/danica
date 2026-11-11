@@ -7,6 +7,14 @@ four methods instead, so the same code can run under the classic Rich/prompt_too
 
 Rule for implementers: confirm() and permission() BLOCK until the user answers. A frontend
 that owns the terminal (Textual) must therefore only call them from a worker thread.
+
+██████   █████  ███    ██ ██  ██████  █████ 
+██   ██ ██   ██ ████   ██ ██ ██      ██   ██
+██   ██ ███████ ██ ██  ██ ██ ██      ███████
+██   ██ ██   ██ ██  ██ ██ ██ ██      ██   ██
+██████  ██   ██ ██   ████ ██  ██████ ██   ██
+
+
 """
 
 from __future__ import annotations
@@ -19,7 +27,6 @@ TAG_COLORS = {
     "OK": "#00FF00",
     "FAIL": "#FFA500",
     "INFO": "white",
-    "THINKING": "#808080",
 }
 TAG_WIDTH = max(map(len, TAG_COLORS))   # updates itself if you add a longer label
 

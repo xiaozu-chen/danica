@@ -17,25 +17,89 @@ from danica.config import set_server
 from danica.server import ServerError, normalize_url, probe
 
 INTRO = (
-    "Danica is a local coding and research assistant. The model runs on your own computer "
-    "through llama-server (part of llama.cpp), and nothing leaves your machine.\n\n"
+    "A local-first, CLI-only agentic assistant for coding, research, presentations, notes and productivity.\n\n"
     "Start llama-server with a model first, for example:\n"
-    "  llama-server -m your-model.gguf -c 65536 --jinja --port 8080\n"
-    "then press Start."
+    "  [yellow]llama-server -m your-model.gguf -c 65536 --jinja --port 8080[/yellow]\n\n"
+    "Having a trouble? Visit llama.cpp / llama-server documentation:\n"
+    "  [cyan]https://llama.app/docs/serve[/cyan]\n\n"
+    "Recommended model: Qwen3.5 family\n\n"
+    "then press Start.\n"
+    ""
 )
+
+_FORM_CSS = """
+{S} { align: center middle; }
+{S} {BOX} { width: 80%; min-width: 60; max-width: 100; height: auto;
+            padding: 1 3; background: ansi_default; }
+{S} .heading { text-style: bold; margin-top: 1; }
+{S} #status { height: auto; margin: 1 0; text-wrap: wrap; }
+{S} .buttons { height: auto; }
+{S} .input { height: auto; border: solid #c9c9c9 !important; }
+
+/* resting */
+{S} .buttons Button {
+    width: 1fr;
+    min-width: 0;
+    margin-right: 2;
+    color: #c9c9c9 !important;
+    background: transparent !important;
+    background-tint: transparent !important;
+    tint: transparent !important;
+    border: solid #c9c9c9 !important;
+    text-style: none !important;
+}
+/* hover */
+{S} .buttons Button:hover {
+    color: #ffffff !important;
+    border: solid #ffffff !important;
+    text-style: bold !important;
+}
+/* focus (what you get after clicking) */
+{S} .buttons Button:focus {
+    color: #ffffff !important;
+    border: solid #ffffff !important;
+    text-style: bold !important;      /* kills the default "bold reverse" */
+}
+/* the press flash */
+{S} .buttons Button.-active {
+    color: #ffffff !important;
+    border: solid #ffffff !important;
+    tint: transparent !important;
+}
+/* disabled while checking */
+{S} .buttons Button:disabled {
+    color: #6b6b6b !important;
+    border: solid #6b6b6b !important;
+    opacity: 1 !important;
+    text-style: none !important;
+}
+{S} .buttons Button.-busy {
+    color: #ffffff !important;
+    border: solid #ffffff !important;
+    text-style: bold !important;
+}
+"""
+
+
+def _css(selector: str, box: str) -> str:
+    return _FORM_CSS.replace("{S}", selector).replace("{BOX}", box)
 
 
 class _ServerForm:
     """Shared by both screens: validate the URL box, check the server off the UI thread."""
+    _checking = False
 
     def _status(self, text: str, style: str = "") -> None:
         self.query_one("#status", Static).update(Text(text, style=style))
 
     def _busy(self, busy: bool) -> None:
-        self.query_one("#go", Button).disabled = busy
-        self.query_one("#url", Input).disabled = busy
+        self._checking = busy
+        self.query_one("#go", Button).set_class(busy, "-busy")
+        self.query_one("#url", Input).read_only = busy   # blocks typing, keeps normal look
 
     def _start_check(self) -> None:
+        if self._checking:                               # ignore clicks/Enter while checking
+            return
         try:
             url = normalize_url(self.query_one("#url", Input).value)
         except ServerError as exc:
@@ -75,29 +139,11 @@ class _ServerForm:
 
 
 class SetupScreen(_ServerForm, Screen[int]):
-    DEFAULT_CSS = """
-    SetupScreen { align: center middle; }
-    SetupScreen #setup { width: 80%; min-width: 60; max-width: 100; height: auto;
-                         padding: 1 3; background: ansi_default; }
-    SetupScreen .heading { text-style: bold; margin-top: 1; }
-    SetupScreen #status { height: auto; margin: 1 0; }
-    SetupScreen .buttons { height: auto; }
-    SetupScreen .buttons Button {
-        width: 1fr;                  /* equal shares of the row, so every button fits */
-        min-width: 0;
-        margin-right: 2;
-        color: #c9c9c9 !important;
-        background: transparent;      /* slightly lighter than the dialog so buttons are visible */
-        border: solid #c9c9c9 !important;     /* Forces the solid white border override */
-    }
-    SetupScreen .buttons Button:hover {
-        background: transparent !important;
-        text-style: bold !important;
-        border: solid #ffffff !important;
-        color: #ffffff !important;
-    }
-    SetupScreen .input{ height: auto; border: solid #c9c9c9 !important; }
-    """
+    DEFAULT_CSS = _css("SetupScreen", "#setup")
+
+    BODY = (
+        ""
+    )
 
     def __init__(self, url: str) -> None:
         super().__init__()
@@ -105,7 +151,15 @@ class SetupScreen(_ServerForm, Screen[int]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="setup"):
-            yield Static("Welcome to Danica\n", classes="heading")
+            yield Static("""
+
+██████   █████  ███    ██ ██  ██████  █████ 
+██   ██ ██   ██ ████   ██ ██ ██      ██   ██
+██   ██ ███████ ██ ██  ██ ██ ██      ███████
+██   ██ ██   ██ ██  ██ ██ ██ ██      ██   ██
+██████  ██   ██ ██   ████ ██  ██████ ██   ██   ✦ v1.4.0
+
+""", classes="heading")
             yield Static(INTRO)
             yield Static("Connectivity\n", classes="heading")
             yield Static("llama-server address")
@@ -120,29 +174,7 @@ class SetupScreen(_ServerForm, Screen[int]):
 
 
 class DisconnectedScreen(_ServerForm, ModalScreen[int]):
-    DEFAULT_CSS = """
-    DisconnectedScreen { align: center middle; }
-    DisconnectedScreen #box { width: 80%; min-width: 60; max-width: 100; height: auto;
-                         padding: 1 3; background: ansi_default; }
-    DisconnectedScreen .heading { text-style: bold; margin-top: 1; }
-    DisconnectedScreen #status { height: auto; margin: 1 0; }
-    DisconnectedScreen .buttons { height: auto; }
-        DisconnectedScreen .buttons Button {
-            width: 1fr;                  /* equal shares of the row, so every button fits */
-            min-width: 0;
-            margin-right: 2;
-            color: #c9c9c9 !important;
-            background: transparent;      /* slightly lighter than the dialog so buttons are visible */
-            border: solid #c9c9c9 !important;     /* Forces the solid white border override */
-        }
-        DisconnectedScreen .buttons Button:hover {
-            background: transparent !important;
-            text-style: bold !important;
-            border: solid #ffffff !important;
-            color: #ffffff !important;
-        }
-        DisconnectedScreen .input{ height: auto; border: solid #c9c9c9 !important; }
-    """
+    DEFAULT_CSS = _css("DisconnectedScreen", "#box")
 
     def __init__(self, url: str, reason: str = "") -> None:
         super().__init__()

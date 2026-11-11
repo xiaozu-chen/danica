@@ -438,7 +438,7 @@ def image_widget(path: Path, label: str):
 #     return Panel(body, title=f" Danica v{version} ", title_align="left",
 #                  border_style=ACCENT, box=box.ASCII3, padding=(1, 1))
 
-def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.3.5") -> Panel:
+def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.4.0") -> Panel:
     # Left column content
     left = Text(justify="center")
     left.append("Welcome back boss!\n\n", style="bold")
