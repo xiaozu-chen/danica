@@ -110,7 +110,7 @@ class Agent:
         ws: Workspace,
         transcript_path: Path | None = None,
         thinking: bool = False,
-        max_steps: int = 25,
+        max_steps: int = 125,
         on_event: EventCallback | None = None,
         policy: PermissionPolicy | None = None,
         audit: AuditLog | None = None,

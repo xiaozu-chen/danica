@@ -8,6 +8,7 @@ import difflib
 import time
 from datetime import datetime
 from pathlib import Path
+import random
 
 from rich import box
 from rich.console import Group
@@ -37,6 +38,13 @@ from danica.ui import TAG_COLORS, TAG_WIDTH
 
 ACCENT = "#64acff"
 HISTORY_PATH = APP_DIR / "history.txt"
+
+TIPS_LABEL = [
+    "Maybe ask danica to code or something",
+    "/help if you're lost :)",
+    "Talk.",
+    "...No tips",
+]
 
 
 # ----------------------------------------------------------------------------- transcript
@@ -407,29 +415,106 @@ def image_widget(path: Path, label: str):
                       classes="say")
 
 
-def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.3.2") -> Panel:
-    left = Text(justify="center")
-    left.append("Welcome back!\n\n", style="bold")
-    left.append("  /\\_/\\ \n ( o.o )\n  > ^ <\n\n", style=ACCENT)
-    left.append(f"project: {project_name}\n" if project_name else "chat mode\n", style="dim")
-    left.append(ws_label, style="dim")
+# def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.3.2") -> Panel:
+#     left = Text(justify="center")
+#     left.append("Welcome back!\n\n", style="bold")
+#     left.append("  /\\_/\\ \n ( o.o )\n  > ^ <\n\n", style=ACCENT)
+#     left.append(f"project: {project_name}\n" if project_name else "chat mode\n", style="dim")
+#     left.append(ws_label, style="dim")
 
+#     right = Text()
+#     right.append("Tips for getting started\n", style=f"bold {ACCENT}")
+#     right.append("/help      list every command\n")
+#     right.append("/new       fresh session\n")
+#     right.append("/think     toggle thinking\n")
+#     right.append("Ctrl+O     expand tool output\n")
+#     right.append("\n")
+#     right.append("Esc/Ctrl+C stops a task · Ctrl+D quits", style="dim")
+
+#     body = Table(box=box.SQUARE, show_edge=False, show_header=False, padding=(0, 2), expand=True)
+#     body.add_column(ratio=2, justify="center", vertical="middle")
+#     body.add_column(ratio=3, vertical="middle")
+#     body.add_row(left, right)
+#     return Panel(body, title=f" Danica v{version} ", title_align="left",
+#                  border_style=ACCENT, box=box.ASCII3, padding=(1, 1))
+
+def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.3.5") -> Panel:
+    # Left column content
+    left = Text(justify="center")
+    left.append("Welcome back boss!\n\n", style="bold")
+    left.append("""
+
+⠀⠀⠀⠀⠀⠀⢀⡴⢲⡄⠀⠀⠀⢀⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⢀⡞⠀⠀⡇⠀⢀⡴⠋⠁⢸⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀ 
+⠀⠀⠀⠀⠀⣸⠁⠀⠀⡇⣠⠟⠀⠀⠀⣼⣠⣤⣤⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⣿⠀⢠⢤⡿⠃⣀⠀⢀⡞⠉⠁⠀⠀⠈⠙⠶⡄⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⣻⣰⡏⣼⢁⡴⠋⣰⠋⠀⠀⠀⠀⠀⠀⠀⠀⠹⡄⣀⡀⠀⠀⠀⠀
+⠀⠀⠀⢀⡾⠋⠉⠁⠀⠙⠁⠞⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢹⡈⢷⠀⠀⠀⠀
+⠀⠀⠀⣼⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠄⠀⠀⠀⠀⠀⠀⠀⢀⣧⡾⠁⠀⠀⠀
+⠀⠀⠀⡏⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠄⠀⠀⠀⠀⠀⠀⠀⣾⠃⠀⠀⠀⠀⠀
+⠀⠀⠀⣹⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⠁⠀⠀⡀⠀⠀⢰⡾⠋⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⢻⡇⣀⡀⠀⠺⣿⠇⠀⣀⣤⣄⣀⣠⣬⣥⣤⠾⠛⠁⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠉⠛⠓⠂⠤⠤⠖⠊⠉⠉⠉⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+
+
+""", style=ACCENT)
+    left.append(f"project: {project_name}\n" if project_name else "chat mode\n", style="dim")
+    left.append(f"{ws_label}", style="dim")
+
+
+    # Right column content
     right = Text()
     right.append("Tips for getting started\n", style=f"bold {ACCENT}")
-    right.append("/help      list every command\n")
-    right.append("/new       fresh session\n")
-    right.append("/think     toggle thinking\n")
-    right.append("Ctrl+O     expand tool output\n")
-    right.append("\n")
-    right.append("Esc/Ctrl+C stops a task · Ctrl+D quits", style="dim")
+    right.append(f"{random.choice(TIPS_LABEL)}\n")
 
-    body = Table(box=box.SQUARE, show_edge=False, show_header=False, padding=(0, 2), expand=True)
+    right.append("─" * 40 + "\n", style="dim")
+
+    right.append("Recent activity\n", style=f"bold {ACCENT}")
+
+    from danica.sessions import list_sessions
+    infos = list_sessions()
+    
+    if not infos:
+        right.append("No recent activity", style="dim")
+    else:
+        lines = []
+        for info in infos:
+            text = Text()
+            text.append(info["id"], style="dim")
+            text.append(f" {info['preview']}")
+            lines.append(text)
+        right.append(Text("\n").join(lines))
+
+    # Calculate required height for the vertical divider
+    left_height = left.plain.count("\n") + 1
+    right_height = right.plain.count("\n") + 1
+    max_height = max(left_height, right_height)
+
+    # Use a 3-column table: Left content, Divider line, Right content
+    body = Table(
+        box=None, 
+        show_edge=False, 
+        show_header=False, 
+        padding=(0, 1), 
+        expand=True
+    )
     body.add_column(ratio=2, justify="center", vertical="middle")
+    body.add_column(width=1, justify="center", vertical="middle")  # Divider column
     body.add_column(ratio=3, vertical="middle")
-    body.add_row(left, right)
-    return Panel(body, title=f" Danica v{version} ", title_align="left",
-                 border_style=ACCENT, box=box.ROUNDED, padding=(1, 1))
+    
+    # Add the vertical line character to the middle column
+    divider = Text("\n".join(["│"] * max_height), style="dim")
+    
+    body.add_row(left, divider, right)
 
+    return Panel(
+        body, 
+        title=f" Danica v{version} ", 
+        title_align="left",
+        border_style=ACCENT, 
+        box=box.ASCII3, 
+        padding=(1, 1)
+    )
 
 # ----------------------------------------------------------------------------- bottom area
 

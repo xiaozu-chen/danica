@@ -14,6 +14,7 @@ Threading model (the important part):
 
 from __future__ import annotations
 
+import random
 import threading
 from collections import deque
 from datetime import datetime
@@ -43,6 +44,45 @@ from danica.tui.widgets import (ACCENT, ArtifactsList, AssistantMessage, BusyLin
 IDLE_PLACEHOLDER = f"Ask Danica…"
 BUSY_PLACEHOLDER = "Working…  Esc stops the task"
 
+WORKING_LABELS = [
+    # Original labels
+    "Working",
+    "I Hate Work",
+    "My Name is Dan btw",
+    "badda bing, badda boom",
+    "Existential crisis",
+    "Hi Boss!!!",
+    "Shush, I'm Working",
+    " ",
+    "Thinking harder than Claude himself",
+    "I Think Hard, ChatGPT Think Smart",
+    "Why Not Give this Task to Claude? I mean he's better.",
+    "I'm Doing Rocket Science",
+    "...Code goes KABOOM!",
+    "Danica'ing"
+    # AI & Bot Banter
+    "Consulting my single remaining brain cell",
+    "Beep boop, pretend I'm working",
+    "Overthinking this so you don't have to",
+    "Gemini is typing... aggressively",
+    "Whispering to the GPUs",
+    # Coding & Tech Humor
+    "Asking Stack Overflow for emotional support",
+    "It worked on my machine",
+    "Turning coffee into broken code",
+    "Ctrl+C, Ctrl+V, call it a day",
+    "Shh... if I don't move, the bugs can't see me",
+    # General Productivity Memes
+    "1% actual work, 99% staring at the screen",
+    "Error 404: Motivation Not Found",
+    "Wait, you guys are getting paid?",
+    "I promise I know what I'm doing (I don't)",
+    "Applying aggressive keyboard tapping for effect",
+    "Simulating productivity",
+    "If it works, don't touch it",
+    "Fueled by panic and cold coffee",
+    "Brb, questioning all my life choices",
+]
 
 class _PlanCancelled(Exception):
     pass
@@ -280,7 +320,7 @@ class DanicaApp(App):
         self._reset_stream_state()
         forced = force_plan or self.plan_next
         self.plan_next = False
-        self.set_working(True, "working", kind="request")
+        self.set_working(True, random.choice(WORKING_LABELS), kind="request")
         self.engine.submit(self._request_worker, text, forced)
 
     def _reset_stream_state(self) -> None:

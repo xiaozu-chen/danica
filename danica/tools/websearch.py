@@ -59,26 +59,37 @@ def _searxng_at(query: str, base: str) -> list[dict]:
     return [r for r in results if isinstance(r, dict)]
 
 
+def _duckduckgo(query: str) -> list[dict]:
+    """Search DuckDuckGo through the `ddgs` package (no server, no API key)."""
+    try:
+        from ddgs import DDGS
+    except ImportError:
+        raise SearchError("the 'ddgs' package is not installed. Tell the user to run: pip install ddgs")
+    try:
+        hits = DDGS(timeout=15).text(query, max_results=MAX_RESULTS)
+    except Exception as e:   # ddgs raises its own rate-limit/timeout types
+        raise SearchError(f"the DuckDuckGo search failed ({type(e).__name__})")
+    # Normalise to the title/url/content shape the rest of this file expects
+    return [{"title": h.get("title", ""), "url": h.get("href", ""), "content": h.get("body", "")}
+            for h in hits or [] if isinstance(h, dict)]
+
+
 def _searxng(query: str) -> list[dict]:
-    """Use the local SearXNG first and the configured hosted instance on connection failure."""
+    """Use the local SearXNG first; on connection failure use the configured fallback provider."""
     primary = str(CONFIG["web"].get("search_url", "")).rstrip("/")
-    fallback = str(CONFIG["web"].get("search_fallback_url", "")).rstrip("/")
+    fallback_name = str(CONFIG["web"].get("search_fallback", "duckduckgo")).lower()
     try:
         return _searxng_at(query, primary)
     except httpx.ConnectError as exc:
-        if not fallback or fallback == primary:
+        fallback = PROVIDERS.get(fallback_name) if fallback_name != "searxng" else None
+        if fallback is None:
             raise SearchError(f"could not reach the search server at {primary}. "
-                              "SearxNG may not be running; start it or configure a fallback URL.") from exc
-        try:
-            return _searxng_at(query, fallback)
-        except httpx.ConnectError as fallback_exc:
-            raise SearchError(
-                f"could not reach the primary search server at {primary} or its fallback at {fallback}"
-            ) from fallback_exc
+                              "SearxNG may not be running; start it or set search_fallback = \"duckduckgo\".") from exc
+        return fallback(query)
 
 
 # Add a keyed provider here later (it must return dicts with title/url/content)
-PROVIDERS = {"searxng": _searxng}
+PROVIDERS = {"searxng": _searxng, "duckduckgo": _duckduckgo}
 
 
 def _one_line(text: str, limit: int) -> str:

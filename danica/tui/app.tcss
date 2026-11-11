@@ -2,6 +2,7 @@ Screen {
     layout: vertical;
     background: ansi_default;
     color: #c0caf5;
+    
 }
 
 /* ---- transcript ---- */

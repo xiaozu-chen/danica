@@ -32,9 +32,9 @@ DEFAULTS = {
     "sandbox": {"memory_mb": 2048, "max_processes": 64},
     "pruning": {"keep_recent": 6, "min_chars": 400},
     "compaction": {"tail_fraction": 0.12},
-    "web": {"user_agent": "Danica/0.1 (local research assistant)",
+    "web": {"user_agent": "Danica/1.3.2 (local research assistant)",
             "search_provider": "searxng", "search_url": "http://localhost:8888",
-            "search_fallback_url": "https://search.utilibre.org"},
+            "search_fallback": "duckduckgo"},   # used when local SearXNG is unreachable; "" disables
     "embeddings": {"enabled": True, "url": "http://localhost:8081",
                    "model_name": "nomic-embed-text-v1.5", "min_similarity": 0.50,
                    "merge_similarity": 0.88},
