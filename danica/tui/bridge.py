@@ -104,3 +104,14 @@ class TextualUI:
         from danica.tui.modals import TextScreen
         answer = self._ask(TextScreen(title, default))
         return answer if isinstance(answer, str) else None
+
+    def ask_screen(self, screen):
+        """Show a screen that dismisses with a value; block the worker thread until it does."""
+        return self._ask(screen)
+
+class ServerEvent(Message):
+    """The server monitor saw a change: kind is "offline", "online", or "ctx_changed"."""
+    def __ini__(self, kind: str , data) -> None:
+        super().__init__()
+        self.kind = kind
+        self.data = data

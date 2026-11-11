@@ -1,4 +1,5 @@
 """
+[deprecated]
 cli.py - The terminal frontend.
 Run from the project root:  python -m danica.cli
 Commands: /think (toggle thinking), /ws (show workspace path), /exit

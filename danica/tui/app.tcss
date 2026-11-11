@@ -1,7 +1,7 @@
 Screen {
     layout: vertical;
     background: ansi_default;
-    color: #c0caf5;
+    color: #ffffff;
     
 }
 
@@ -20,7 +20,7 @@ Screen {
 .say { margin: 1 0 0 0; }
 .citations { margin: 1 0 0 0; }
 .artifacts { margin: 1 0 0 0; }
-.thinking { margin: 1 0 0 0; color: #6b7089; }
+.thinking { margin: 1 0 0 0; color: #858585; }
 .toolcall { margin: 1 0 0 0; }
 
 AssistantMessage {
@@ -47,12 +47,12 @@ AssistantMessage {
     height: auto;
     margin: 0 1;
     padding: 0 1;
-    border: round #64acff;
+    border: round #ffffff;
 }
 
 #caret {
     width: 2;
-    color: #64acff;
+    color: #ffffff;
     text-style: bold;
 }
 
@@ -78,14 +78,14 @@ AssistantMessage {
     max-height: 10;
     margin: 0 1;
     padding: 0;
-    background: #1f2335;
-    border: round #3b4261;
+    background: #272727;
+    border: round #5c5c5c;
     outline: none;
     scrollbar-size-vertical: 1;
-    scrollbar-color: #3b4261;
-    scrollbar-background: #1f2335;
-    scrollbar-color-hover: #3b4261;
-    scrollbar-color-active: #3b4261;
+    scrollbar-color: #5e5e5e;
+    scrollbar-background: #353535;
+    scrollbar-color-hover: #5e5e5e;
+    scrollbar-color-active: #5a5a5a;
 }
 
 #popup > .option-list--option-highlighted { background: #3b4261; }
@@ -95,7 +95,7 @@ AssistantMessage {
 #status {
     height: 1;
     padding: 0 2;
-    color: #a9b1d6;
+    color: #d6d6d6;
 }
 
 /* ---- dialogs ---- */
@@ -106,18 +106,37 @@ PermissionScreen, ConfirmScreen, ChoiceScreen, TextScreen {
 
 .dialog {
     width: 80%;
+    min-width: 84;             /* room for three buttons side by side */
     max-width: 110;
     height: auto;
-    max-height: 85%;
+    max-height: 90%;           /* was 50%: it clipped the bottom of tall dialogs */
     padding: 1 2;
-    background: #1f2335;
-    border: round #64acff;
+    background: #313131;
+    border: round #ffffff;
 }
 
-.dialog.warn { border: round #e0af68; }
+.dialog.warn { border: round #ffbf5f; }
 
 .dialog-title { text-style: bold; margin-bottom: 1; }
 .dialog-reason { margin-bottom: 1; }
-.dialog-body { height: auto; max-height: 18; margin-bottom: 1; background: #16161e; padding: 0 1; }
+
+.dialog-body {
+    height: auto;
+    max-height: 12;            /* was 18: keeps the buttons on screen on short terminals */
+    margin-bottom: 1;
+    background: #222222;
+    padding: 0 1;
+    overflow-y: auto;          /* long commands scroll instead of pushing the buttons away */
+}
+
 .dialog-buttons { height: auto; }
-.dialog-buttons Button { margin-right: 2; }
+
+.dialog-buttons Button {
+    width: 1fr;                /* equal shares of the row, so every button fits */
+    min-width: 0;
+    margin-right: 2;
+    background: #3f3f3f;       /* slightly lighter than the dialog so buttons are visible */
+}
+
+.dialog-buttons Button:last-of-type { margin-right: 0; }
+.dialog-buttons Button:focus { background: #3b4261; text-style: bold; }

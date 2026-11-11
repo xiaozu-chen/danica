@@ -36,7 +36,7 @@ except Exception:                       # optional dependency
     _InlineImage = None
 from danica.ui import TAG_COLORS, TAG_WIDTH
 
-ACCENT = "#64acff"
+ACCENT = "#ffffff"
 HISTORY_PATH = APP_DIR / "history.txt"
 
 TIPS_LABEL = [
@@ -443,20 +443,17 @@ def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.3.5
     left = Text(justify="center")
     left.append("Welcome back boss!\n\n", style="bold")
     left.append("""
-
 ⠀⠀⠀⠀⠀⠀⢀⡴⢲⡄⠀⠀⠀⢀⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⢀⡞⠀⠀⡇⠀⢀⡴⠋⠁⢸⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀ 
-⠀⠀⠀⠀⠀⣸⠁⠀⠀⡇⣠⠟⠀⠀⠀⣼⣠⣤⣤⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⣿⠀⢠⢤⡿⠃⣀⠀⢀⡞⠉⠁⠀⠀⠈⠙⠶⡄⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⣻⣰⡏⣼⢁⡴⠋⣰⠋⠀⠀⠀⠀⠀⠀⠀⠀⠹⡄⣀⡀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⢀⡞⠀⠀⡇⠀⢀⡴⠋⠁⢸⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⣸⠁⠀⠀⡇⣠⠟⠀⠀⠀⣼⣠⣤⣤⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⣿⠀⢠⢤⡿⠃⣀⠀⢀⡞⠉⠁⠀⠀⠈⠙⠶⡄⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⣻⣰⡏⣼⢁⡴⠋⣰⠋⠀⠀⠀⠀⠀⠀⠀⠀⠹⡄⣀⡀⠀⠀⠀
 ⠀⠀⠀⢀⡾⠋⠉⠁⠀⠙⠁⠞⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢹⡈⢷⠀⠀⠀⠀
 ⠀⠀⠀⣼⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠄⠀⠀⠀⠀⠀⠀⠀⢀⣧⡾⠁⠀⠀⠀
 ⠀⠀⠀⡏⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠄⠀⠀⠀⠀⠀⠀⠀⣾⠃⠀⠀⠀⠀⠀
 ⠀⠀⠀⣹⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⠁⠀⠀⡀⠀⠀⢰⡾⠋⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⢻⡇⣀⡀⠀⠺⣿⠇⠀⣀⣤⣄⣀⣠⣬⣥⣤⠾⠛⠁⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠉⠛⠓⠂⠤⠤⠖⠊⠉⠉⠉⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-
-
 """, style=ACCENT)
     left.append(f"project: {project_name}\n" if project_name else "chat mode\n", style="dim")
     left.append(f"{ws_label}", style="dim")
@@ -481,7 +478,7 @@ def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.3.5
         for info in infos:
             text = Text()
             text.append(info["id"], style="dim")
-            text.append(f" {info['preview']}")
+            text.append(f" {info['preview']}", style="bold")
             lines.append(text)
         right.append(Text("\n").join(lines))
 
@@ -500,7 +497,7 @@ def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.3.5
     )
     body.add_column(ratio=2, justify="center", vertical="middle")
     body.add_column(width=1, justify="center", vertical="middle")  # Divider column
-    body.add_column(ratio=3, vertical="middle")
+    body.add_column(ratio=3, vertical="top")
     
     # Add the vertical line character to the middle column
     divider = Text("\n".join(["│"] * max_height), style="dim")

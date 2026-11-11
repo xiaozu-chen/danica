@@ -620,3 +620,19 @@ def _agents(app, args):
             ui.log("warning", "Usage: /agents [run <task> | peek <id> | wait <id> | kill <id>]")
     except SubagentError as exc:
         ui.log("error", f"{exc}")
+
+
+@command("/dialogs")
+def _dialogs(app, args):
+    """Debug: pop the confirm and permission dialogs without any model."""
+    ok = app.ui.confirm("Test confirm", "Body text goes here.", "detail line", "Yes", "No")
+    app.ui.log("info", f"confirm -> {ok}")
+
+    answer = app.ui.permission(
+        tool="write_file",
+        summary="write_file(path='demo.py', 60 lines)",
+        tier="ask",                      # use one of your real tier names
+        reason="Writes outside the last-approved folder",
+        can_remember=True,
+    )
+    app.ui.log("info", f"permission -> {answer}")   # "once", "session" or "deny"

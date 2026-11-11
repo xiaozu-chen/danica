@@ -19,6 +19,7 @@ import threading
 from collections import deque
 from datetime import datetime
 from pathlib import Path
+import argparse
 
 from rich.text import Text
 from textual.app import App, ComposeResult
@@ -34,12 +35,15 @@ from danica.config import CONFIG
 from danica.imageview import ImageError, check_image
 from danica.plan_flow import run_plan_mode
 from danica.present import PresentFilter
-from danica.tui.bridge import AgentEvent, EventBridge, RequestDone, TextualUI
+from danica.tui.bridge import AgentEvent, EventBridge, RequestDone, TextualUI, ServerEvent
 from danica.tui.commands import command_names, dispatch
 from danica.tui.engine import Engine
 from danica.tui.widgets import (ACCENT, ArtifactsList, AssistantMessage, BusyLine, Citations,
                                 CommandPopup, Notice, PromptInput, Say, StatusBar, ThinkingBlock, ToolCall,
                                 UserMessage, image_widget, welcome_panel)
+from danica.tui.modals import ConfirmScreen
+from danica.server import ServerError, ServerMonitor, probe
+from danica.tui.connection import DisconnectedScreen, SetupScreen
 
 IDLE_PLACEHOLDER = f"Ask Danica…"
 BUSY_PLACEHOLDER = "Working…  Esc stops the task"
@@ -100,7 +104,7 @@ class DanicaApp(App):
         Binding("ctrl+o", "toggle_tools", "Expand tool output", show=False),
     ]
 
-    def __init__(self) -> None:
+    def __init__(self, bypass: bool = False) -> None:
         super().__init__()
         self.theme = "ansi-dark"
         self.ui_thread = 0
@@ -131,6 +135,8 @@ class DanicaApp(App):
         self._pending: deque[ToolCall] = deque()
         self._stream_widgets: dict[int, ToolCall] = {}   # tool calls still being streamed, by index
         self._stream_queue: deque[ToolCall] = deque()    # same, in order, waiting for their final args
+        self.bypass = bypass
+        self.monitor: ServerMonitor | None = None
 
     # ------------------------------------------------------------------ layout
 
@@ -157,10 +163,13 @@ class DanicaApp(App):
 
     def on_unmount(self) -> None:
         # Stop a running request, then close sqlite-backed objects ON the engine thread
+        if self.monitor:
+            self.monitor.stop()
         if self.agent is not None:
             self.agent.cancel()
         ws = self.ws
-        self.engine.submit(shutdown, ws)
+        if ws is not None:
+            self.engine.submit(shutdown, ws)
         self.engine.stop()
 
     def _engine_error(self, exc: BaseException) -> None:
@@ -173,10 +182,33 @@ class DanicaApp(App):
 
     def boot(self) -> None:
         try:
+            if not self._ensure_server():
+                return                              # the user quit from the set-up screen
             self.swap_session(None, boot=True)
         except Exception as exc:
             self.ui.log("error", f"could not start a session: {type(exc).__name__}: {exc}")
             self._call(self.set_working, False)
+
+    def _ensure_server(self) -> bool:
+        """Worker thread. Make sure llama-server answers before any session is built, because
+        Agent reads the context window when it is created."""
+        if self.bypass:
+            return True
+        url = CONFIG["server"]["base_url"]
+        try:
+            n_ctx = probe(url)
+        except ServerError:
+            n_ctx = self.ui.ask_screen(SetupScreen(url))     # blocks until Start works or Quit
+            if n_ctx is None:
+                return False
+        CONFIG["model"]["context"] = n_ctx
+        self.monitor = ServerMonitor(
+            lambda: CONFIG["server"]["base_url"],
+            lambda kind, data: self.post_message(ServerEvent(kind, data)),
+        )
+        self.monitor.n_ctx = n_ctx
+        self.monitor.start()
+        return True
 
     def swap_session(self, project: dict | None, note: str | None = None, boot: bool = False) -> None:
         """Build a new session (worker thread: it may open dialogs) and show it.
@@ -437,7 +469,49 @@ class DanicaApp(App):
         except ImageError as exc:
             self.add_notice("warning", f"  Could not show {rel}: {exc}")
 
+    def on_server_event(self, msg: ServerEvent) -> None:
+        if msg.kind == "offline":
+            if not any(isinstance(s, DisconnectedScreen) for s in self.screen_stack):
+                self.push_screen(DisconnectedScreen(CONFIG["server"]["base_url"], msg.data),
+                                 self._reconnected)
+        elif msg.kind == "online":                        # it came back by itself
+            if isinstance(self.screen, DisconnectedScreen):
+                self.screen.dismiss(msg.data)             # -> _reconnected
+        elif msg.kind == "ctx_changed":                   # restarted quickly with another -c
+            self.engine.submit(self._reconcile_context, msg.data[1])
+
+    def _reconnected(self, n_ctx: int | None) -> None:
+        if n_ctx is not None:
+            if self.monitor:
+                self.monitor.mark_online(n_ctx)
+            self.engine.submit(self._reconcile_context, n_ctx)
+
+    def _reconcile_context(self, n_ctx: int) -> None:     # engine thread: may ask / call the model
+        agent = self.agent
+        if agent is None:
+            return
+        self._call(lambda: self.set_working(True, "Checking context", kind="command"))
+        try:
+            old = agent.tracker.window
+            report = agent.adopt_window(n_ctx)
+            if n_ctx != old:
+                self.ui.log("warning", f"The server's context window changed: {old:,} -> {n_ctx:,} tokens.")
+            if report.status == "too_small":
+                self.ui.log("error", f"The context window ({n_ctx:,} tokens) is too small for Danica. "
+                                     f"Restart llama-server with -c {report.recommended_window:,} or more.")
+            elif report.status == "over":
+                if self.ui.confirm("The conversation no longer fits",
+                                   f"It is about {report.used:,} tokens, but the window is now {n_ctx:,}. "
+                                   f"Summarize the older part now?", yes="Compact now", no="Later"):
+                    report = agent.fit_to_window()
+                    self.ui.log("info" if report.status == "ok" else "error",
+                                f"Context is now about {report.used:,} of {n_ctx:,} tokens.")
+        finally:
+            self._call(self.set_working, False)
+
     def on_request_done(self, msg: RequestDone) -> None:
+        if msg.error and self.monitor:
+            self.monitor.check_now()
         for w in list(self._stream_queue):       # cancelled mid-stream: stop their spinners
             w.abort()
         self._stream_queue.clear()
@@ -541,7 +615,7 @@ class DanicaApp(App):
         if agent is None:
             return Text("starting…", style="dim")
         level = agent.tracker.level(agent.messages)
-        color = {"ok": "green", "prune": "yellow", "compact": "yellow", "stop": "red"}.get(level, "white")
+        color = {"ok": "white", "prune": "yellow", "compact": "orange", "stop": "red"}.get(level, "white")
         t = Text()
         t.append(f"ctx {agent.tracker.bar(agent.messages)}", style=color)
         t.append(" | " + ("think" if agent.thinking else "fast"))
@@ -596,9 +670,14 @@ class DanicaApp(App):
         for widget in self.query(ToolCall):
             widget.toggle()
 
-
+    
 def main() -> None:
-    DanicaApp().run()
+    parser = argparse.ArgumentParser(prog="danica")           # NEW
+    parser.add_argument("--bypass", action="store_true",      # NEW
+                        help="skip the llama-server check (testing and debugging)")
+    args = parser.parse_args()                                # NEW
+
+    DanicaApp(bypass=args.bypass).run()           # was: DanicaApp().run()
 
 
 if __name__ == "__main__":

@@ -23,7 +23,7 @@ from typing import Callable
 from danica.llm import stream_chat
 from danica.tools import run_tool, tool_schemas
 from danica.workspace import Workspace
-from danica.config import CONFIG, refresh_context_size
+from danica.config import CONFIG
 from danica.context_guard import (ESTIMATE_MARGIN, ContextReport, truncate_to_budget)
 from danica.compaction import (build_message, fallback_narrative, find_cut, harvest,
                                is_summary, render, summarize)
@@ -109,7 +109,7 @@ class Agent:
         self,
         ws: Workspace,
         transcript_path: Path | None = None,
-        thinking: bool = False,
+        thinking: bool = True,
         max_steps: int = 125,
         on_event: EventCallback | None = None,
         policy: PermissionPolicy | None = None,
@@ -476,7 +476,8 @@ class Agent:
         # fresh: estimates only. Pruning wasn't saved, so the first request's
         # pressure check will prune again if the history is big.
         # Ask the server again: it may have been restarted with a different -c since Danica started.
-        self.tracker = ContextTracker(refresh_context_size())
+        # self.tracker = ContextTracker(refresh_context_size())
+
         self.denied_in_row = 0
         # Taint is not saved in the transcript, so rebuild it: a resumed history that
         # contains web content is tainted. Sites the user typed stay trusted.
@@ -498,6 +499,16 @@ class Agent:
         fixed = int(estimate_tokens(self.messages[:1]) * ESTIMATE_MARGIN) + tools
         history = int(estimate_tokens(self.messages[1:]) * ESTIMATE_MARGIN) if len(self.messages) > 1 else 0
         return ContextReport(self.tracker.window, fixed, history)
+
+    def adopt_window(self, n_ctx: int) -> ContextReport:
+        """The server (re)connected, maybe restarted with a different -c. Use its real window from
+        now on and re-check the history against it. Does not shrink anything."""
+        if n_ctx != self.tracker.window:
+            self.tracker = ContextTracker(n_ctx)
+            CONFIG["model"]["context"] = n_ctx
+        report = self.context_report()
+        self.tracker.record(report.used, len(self.messages))
+        return report
 
     def fit_to_window(self) -> ContextReport:
         """Shrink a loaded history until context_report().status == "ok". May call the model (to

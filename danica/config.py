@@ -6,6 +6,7 @@ Anything the user doesn't set falls back to DEFAULTS, so the file is optional.
 
 import os
 import tomllib # built into Python 3.11+, read-only TOML parser
+import re
 from pathlib import Path
 import requests
 from rich.console import Console
@@ -46,8 +47,8 @@ DEFAULTS = {
     # auto: "ask" offers a plan for big-looking requests, "off" = only /plan. min_score: how many of the 5 signals make a request "big"
     "planning": {"auto": "ask", "thinking": True, "min_score": 3},
     "thinking": {
-        "auto": True,
-        "classifier_enabled": True,
+        "auto": False,
+        "classifier_enabled": False,
         "classifier_url": "http://127.0.0.1:8082",
         "classifier_model": "SmolLM2-135M-thinking",
         "log_decisions": True,
@@ -89,6 +90,31 @@ def get_llama_context_size(server_url: str, timeout: float = 2.0) -> int:
         # _log("error", f"Error connecting to llama-server: {e}")
         raise
 
+def save_server_url(url: str) -> None:
+    """Write base_url under [server] in config.toml, keeping everything else as it is."""
+    text = CONFIG_PATH.read_text(encoding="utf-8") if CONFIG_PATH.exists() else ""
+    line = f'base_url = "{url}"'
+    section = re.search(r"(?ms)^\[server\][ \t]*\n(.*?)(?=^\[|\Z)", text)
+    if section:
+        body = section.group(1)
+        if re.search(r"(?m)^[ \t]*base_url[ \t]*=", body):
+            body = re.sub(r"(?m)^[ \t]*base_url[ \t]*=.*$", lambda _: line, body)
+        else:
+            body = line + "\n" + body
+        text = text[:section.start(1)] + body + text[section.end(1):]
+    else:
+        text = text.rstrip() + ("\n\n" if text.strip() else "") + f"[server]\n{line}\n"
+    CONFIG_PATH.write_text(text, encoding="utf-8")
+
+
+def set_server(url: str, n_ctx: int) -> None:
+    """Use this server from now on: update CONFIG, and remember the address if it changed."""
+    changed = CONFIG["server"]["base_url"] != url
+    CONFIG["server"]["base_url"] = url
+    CONFIG["model"]["context"] = n_ctx
+    if changed:
+        save_server_url(url)
+
 def load_config() -> dict:
     APP_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -122,13 +148,13 @@ def load_config() -> dict:
     # Fetch context size using the resolved server base URL
     server_url = cfg.get("server", {}).get("base_url", DEFAULTS["server"]["base_url"])
     user_set_context = "context" in user.get("model", {} if CONFIG_PATH.exists else False)
-    if not user_set_context:
-        try:
-            context_size = get_llama_context_size(server_url)
-            cfg["model"]["context"] = context_size
-            _log("info", f"Active context size (n_ctx): {context_size}")
-        except Exception:
-            _log("fail", f"Failed to retrieve context size. Falling back to default: {cfg['model']['context']}")
+    # if not user_set_context:
+    #     try:
+    #         context_size = get_llama_context_size(server_url)
+    #         cfg["model"]["context"] = context_size
+    #         _log("info", f"Active context size (n_ctx): {context_size}")
+    #     except Exception:
+    #         _log("fail", f"Failed to retrieve context size. Falling back to default: {cfg['model']['context']}")
 
     return cfg
 

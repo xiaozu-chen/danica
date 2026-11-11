@@ -79,7 +79,7 @@ class ContextTracker:
             return "prune"
         return "ok"
 
-    def bar(self, messages: list[dict], width: int = 20) -> str:
+    def bar(self, messages: list[dict], width: int = 10) -> str:
         """Text bar like  |███████             | 34%  22,300 / 65,536"""
         f = min(self.fraction(messages), 1.0)
         filled = round(f * width)
