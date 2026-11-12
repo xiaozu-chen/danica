@@ -36,7 +36,7 @@ HELP = """Commands
   Sessions  /sessions  /resume [number|id]  /export
   Files     /artifacts  /open <n>  /save <n> [folder]
   Safety    /fullaccess  /sandbox  /audit  /undo  /rewind [id]  /taint  /untaint
-  Web       /sources
+  Web       /sources  /webcache [status | list | search <words> | clear]
   Memory    /memory [list | add [scope] <text> | review | capture | search <words> | merge | forget <id> | show <id> | status | reindex | path]
   Knowledge /knowledge [index|search|watch|stop|status|digest|graph|commit <preview-id>]
   Reminder  /reminder add <ISO datetime> <text>  | list
@@ -57,7 +57,7 @@ DESCRIPTIONS = {
     "/save": "copy a file out (default: Downloads)", "/memory": "saved notes (review, merge, forget…)",
     "/fullaccess": "toggle FULL ACCESS", "/sandbox": "explain the shell sandbox",
     "/audit": "verify the audit log", "/undo": "undo the last request", "/rewind": "list or restore checkpoints",
-    "/taint": "show untrusted web content", "/untaint": "clear the taint flag", "/sources": "web sources so far",
+    "/taint": "show untrusted web content", "/untaint": "clear the taint flag", "/sources": "web sources so far", "/webcache": "stored web pages (status, list, search, clear)",
     "/knowledge": "local notes index (index, search, watch…)", "/reminder": "add or list reminders",
     "/agents": "subagents (run, peek, wait, kill)", "/ws": "show the workspace path", "/skills": "list global skills",
     "/config": "show the settings", "/diagrams": "diagram engine status", "/help": "list every command",
@@ -574,6 +574,41 @@ def _reminder(app, args):
             app.ui.say("Usage: /reminder add <ISO datetime> <text> | /reminder list")
     except KnowledgeError as exc:
         app.ui.log("error", f"{exc}")
+
+
+@command("/webcache")
+def _webcache(app, args):
+    """Look at or empty the persistent web cache (see webcache.py)."""
+    from danica.webcache import age_text, get_web_cache
+    ui = app.ui
+    cache = get_web_cache()
+    if cache is None:
+        ui.log("warning", "the web cache is switched off ([webcache] enabled = false in config.toml)")
+        return
+    sub, _, arg = args.partition(" ")
+    arg = arg.strip()
+    try:
+        if sub in ("", "status"):
+            st = cache.status()
+            ui.say(f"{st['pages']} page(s) stored ({st['stale_pages']} past their freshness window), "
+                   f"{st['searches']} search(es), {st['vectors']} meaning-vector(s)."
+                   + (f"\nMeaning search is off: {st['embedding_note']}" if st["embedding_note"] else ""))
+        elif sub == "list":
+            rows = cache.recent(25)
+            ui.say("\n".join(f"{age_text(age):>6} ago{' OLD' if stale else '    '}  {title[:60] or '(no title)'}  {url[:80]}"
+                             for url, title, age, stale in rows) or "The web cache is empty.")
+        elif sub == "search" and arg:
+            hits = cache.search(arg, 8)
+            ui.say("\n".join(f"{h.score:.4f}  {h.title[:60]}  {h.url[:80]}  ({h.via}, {age_text(h.age)} ago)"
+                             for h in hits) or "Nothing stored matches.")
+        elif sub == "clear":
+            if ui.confirm("Clear the web cache?", "Every stored page and search is deleted. "
+                          "Danica will fetch from the web again.", yes="Clear", no="Keep"):
+                ui.log("ok", f"Removed {cache.clear()} stored page(s).")
+        else:
+            ui.log("warning", "Usage: /webcache [status | list | search <words> | clear]")
+    except Exception as exc:                  # a damaged cache file must not crash the command
+        ui.log("error", f"web cache: {type(exc).__name__}: {exc}")
 
 
 @command("/agents")

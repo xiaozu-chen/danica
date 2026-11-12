@@ -64,6 +64,9 @@ def make_stub(name: str, args: dict, result: str) -> str:
     elif name == "web_search":
         what = (f"web_search {str(args.get('query', '?'))[:100]!r}: {n} lines of results "
                 f"(search again if you need them)")
+    elif name == "web_cache_search":
+        what = (f"web_cache_search {str(args.get('query', '?'))[:100]!r}: {n} lines of results "
+                f"(free to search again)")
     elif name == "recall":
         what = f"recall {str(args.get('query', '?'))[:100]!r}: {n} lines of notes (search again if you need them)"
     else:

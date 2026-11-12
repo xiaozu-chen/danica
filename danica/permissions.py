@@ -50,6 +50,7 @@ TOOL_TIERS = {
     "delegate": Tier.EXECUTE,
     "knowledge_search": Tier.READ,
     "knowledge_synthesize": Tier.READ,
+    "web_cache_search": Tier.READ,
 }
 
 # (regex, reason) pairs for commands that can destroy things or pull in code.

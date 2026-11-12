@@ -56,6 +56,12 @@ DEFAULTS = {
     },
     "mcp": {"servers": {}},
     "hooks": {"before": [], "after": []},
+    "webcache": {
+        "enabled": True,
+        "max_pages": 400,
+        "half_life_days": 30,
+        "digest_items": 6
+    }, 
 }
 
 console = Console()

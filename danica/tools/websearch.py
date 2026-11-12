@@ -18,6 +18,7 @@ from danica.secret_scan import find_secrets
 from danica.tools.registry import tool
 from danica.web import WebState, clean_text, host_of, safe_attr, state_for
 from danica.workspace import Workspace
+from danica.webcache import age_text, get_web_cache, safe_call, wants_live
 
 MAX_QUERY = 300
 MAX_RESULTS = 8
@@ -96,6 +97,25 @@ def _one_line(text: str, limit: int) -> str:
     """Clean untrusted text and squeeze it onto one line."""
     return " ".join(clean_text(str(text))[0].split())[:limit]
 
+def _clean_results(raw: list[dict], limit: int) -> list[tuple[str, str, str]]:
+    """Provider results -> up to `limit` (title, url, snippet): plain web URLs only, no duplicates."""
+    results, seen = [], set()
+    for r in raw:
+        url = str(r.get("url", "")).strip()
+        if not url.startswith(("http://", "https://")) or len(url) > MAX_URL_CHARS:
+            continue
+        if any(ord(c) <= 32 or ord(c) == 127 for c in url):
+            continue
+        key = WebState.key(url)
+        if key in seen:
+            continue
+        seen.add(key)
+        results.append((_one_line(r.get("title", ""), TITLE_CHARS) or "(no title)",
+                        url, _one_line(r.get("content", ""), SNIPPET_CHARS)))
+        if len(results) >= limit:
+            break
+    return results
+
 
 @tool(
     "web_search",
@@ -118,33 +138,53 @@ def web_search(ws: Workspace, query: str, count: int = 5) -> str:
         count = min(max(1, int(count)), MAX_RESULTS)
     except (TypeError, ValueError):
         return "ERROR: 'count' must be a number"
+    # [replace start]
+    cache = get_web_cache()
+    cache_note = ""          # tells the model when the answer did NOT come from a live search
+    results: list | None = None
 
-    provider = PROVIDERS.get(CONFIG["web"].get("search_provider", "searxng"))
-    if provider is None:
-        return "ERROR: unknown search provider in config.toml"
-    try:
-        raw = provider(query)
-    except SearchError as e:
-        return f"ERROR: {e}"
+    # 1) Same question asked before and still fresh -> no web request at all.
+    #    Freshness-sensitive queries ("latest", "price"...) skip this and go live.
+    if cache and not wants_live(query):
+        hit = safe_call(cache.get_search, query)
+        if hit:
+            results = [tuple(r) for r in hit.results]
+            cache_note = (f"served from the local cache (searched {age_text(hit.age)} ago, "
+                          f"no web request was made)")
 
-    results, seen = [], set()
-    for r in raw:
-        url = str(r.get("url", "")).strip()
-        # Only plain web URLs: no javascript:, file:, data:, no control characters
-        if not url.startswith(("http://", "https://")) or len(url) > MAX_URL_CHARS:
-            continue
-        if any(ord(c) <= 32 or ord(c) == 127 for c in url):
-            continue
-        key = WebState.key(url)
-        if key in seen:
-            continue
-        seen.add(key)
-        results.append((_one_line(r.get("title", ""), TITLE_CHARS) or "(no title)",
-                        url, _one_line(r.get("content", ""), SNIPPET_CHARS)))
-        if len(results) >= count:
-            break
+    # 2) Live search. A good answer is stored for next time.
+    error = ""
+    if results is None:
+        provider = PROVIDERS.get(CONFIG["web"].get("search_provider", "searxng"))
+        if provider is None:
+            return "ERROR: unknown search provider in config.toml"
+        try:
+            raw = provider(query)
+        except SearchError as e:
+            raw, error = [], str(e)
+        results = _clean_results(raw, MAX_RESULTS)
+        if results and cache:
+            safe_call(cache.put_search, query, results)
+
+    # 3) Live search failed or found nothing (rate limit, offline): fall back to what is stored
+    if not results and cache:
+        old = safe_call(cache.get_search, query, True)       # an expired copy of this exact search
+        if old:
+            results = [tuple(r) for r in old.results]
+            cache_note = (f"the live search failed ({error or 'no results'}), so this is an OLD cached "
+                          f"copy from {age_text(old.age)} ago and may be out of date")
+        else:                                                # or stored PAGES that match by meaning
+            pages = safe_call(cache.search, query, count, default=[])
+            if pages:
+                results = [(_one_line(h.title, TITLE_CHARS) or "(no title)", h.url, h.snippet[:SNIPPET_CHARS])
+                           for h in pages]
+                cache_note = (f"the live search failed ({error or 'no results'}). These are pages already "
+                              f"stored locally that match; web_fetch reads them without the network")
     if not results:
-        return f'No results for "{safe_attr(query)}".'
+        return f"ERROR: {error}" if error else f'No results for "{safe_attr(query)}".'
+    results = results[:count]
+
+    # replace end
 
     state = state_for(ws)
     for _, url, _ in results:          # result sites become "known": fetching them is free
@@ -164,4 +204,6 @@ def web_search(ws: Workspace, query: str, count: int = 5) -> str:
             lines.append("   " + snippet)
     lines.append("</untrusted_web_content>")
     lines.append("Snippets are not citable. Use web_fetch on a result to read it and get passage ids.")
+    if cache_note:
+        lines.append("Note: " + cache_note + ".")    
     return "\n".join(lines)

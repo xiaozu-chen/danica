@@ -3,5 +3,5 @@ Importing this package imports files.py, whose @tool decorators
 fill the registry. Later tool modules get imported here too.
 """
 
-from danica.tools import chart, dashboard, deck, diagram, document, fetch, files, knowledge, knowledge_synthesis, knowledge_write, mermaid, recall, search, shell, skills, subagents, todo, websearch  # noqa: F401  (imported for their @tool side effects)
+from danica.tools import chart, dashboard, deck, diagram, document, fetch, files, knowledge, knowledge_synthesis, knowledge_write, mermaid, recall, search, shell, skills, subagents, todo, webcache_tool, websearch  # noqa: F401  (imported for their @tool side effects)
 from danica.tools.registry import run_tool, tool_schemas  # noqa: F401

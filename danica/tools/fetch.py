@@ -28,6 +28,7 @@ from danica.web import (MAX_TEXT_CHARS, WebState, clean_text, html_to_text, rend
                         safe_attr, split_passages, host_of, state_for)
 from danica.workspace import Workspace
 from danica.config import CONFIG
+from danica.webcache import age_text, get_web_cache, safe_call
 
 MAX_BYTES = 3_000_000
 MAX_REDIRECTS = 5
@@ -225,6 +226,12 @@ def _extract(data: bytes, ctype: str, charset: str, truncated: bool) -> tuple[st
     return text, title, notes
 
 
+def _is_blocked(message: str) -> bool:
+    """Errors where an old copy must NOT be served: our own safety blocks (private address,
+    secret in URL, bad port...). Only 'the site said no / was unreachable' may fall back."""
+    return not (message.startswith("HTTP ") or "could not find the host" in message
+                or "too many redirects" in message)
+
 # ------------------------------------------------------------------ the tool
 
 @tool(
@@ -247,17 +254,34 @@ def web_fetch(ws: Workspace, url: str, start: int = 1) -> str:
 
     src = state.lookup(url)
     if src is None:
-        try:
-            _validate(url)       # fail fast, before touching the network
-            final, ctype, data, truncated, charset = _download(url)
-            text, title, notes = _extract(data, ctype, charset, truncated)
-        except FetchError as e:
-            return f"ERROR: {e}"
-        except httpx.HTTPError as e:
-            return f"ERROR: network problem ({type(e).__name__}). Check the URL or try again later."
-        if final != url:
+        cache = get_web_cache()                  # the persistent cache (survives sessions)
+        page = safe_call(cache.get_page, state.key(url)) if cache else None
+        notes: list[str] = []
+        if page is not None:                     # fresh copy on disk: no network request
+            title, passages, final = page.title, page.passages, page.final_url
+            notes.append(f"served from the local cache (fetched {age_text(page.age)} ago, "
+                         f"no web request was made)")
+        else:                                    # go to the network
+            try:
+                _validate(url)       # fail fast, before touching the network
+                final, ctype, data, truncated, charset = _download(url)
+                text, title, notes = _extract(data, ctype, charset, truncated)
+                passages = split_passages(text)
+                if cache:                        # remember it (unchanged pages only reset the clock)
+                    safe_call(cache.put_page, state.key(url), final, title, passages)
+            except (FetchError, httpx.HTTPError) as e:
+                # Rate-limited, offline or blocked: an OLD copy beats an error
+                old = safe_call(cache.get_page, state.key(url), True) if cache else None
+                if old is None or (isinstance(e, FetchError) and _is_blocked(str(e))):
+                    if isinstance(e, FetchError):
+                        return f"ERROR: {e}"
+                    return f"ERROR: network problem ({type(e).__name__}). Check the URL or try again later."
+                title, passages, final = old.title, old.passages, old.final_url
+                notes = [f"the live fetch failed ({str(e)[:80]}), so this is an OLD cached copy "
+                         f"from {age_text(old.age)} ago and may be out of date"]
+        if final != url and not any("redirected" in n or "cache" in n for n in notes):
             notes.append(f"redirected to {final}")
-        src = state.add(url, final, title, split_passages(text), notes)
+        src = state.add(url, final, title, passages, notes)
     # Taint on EVERY read, cached or not: after /untaint, re-reading a cached
     # page puts its text back in context. Also remember the sites involved.
     state.mark_tainted(src.final_url)
