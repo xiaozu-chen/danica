@@ -35,12 +35,12 @@ from danica.config import CONFIG
 from danica.imageview import ImageError, check_image
 from danica.plan_flow import run_plan_mode
 from danica.present import PresentFilter
-from danica.tui.bridge import AgentEvent, EventBridge, RequestDone, TextualUI, ServerEvent
+from danica.tui.bridge import (AgentEvent, EventBridge, RequestDone, TextualUI, ServerEvent, SubagentBridge, SubagentEvent)
 from danica.tui.commands import command_names, dispatch
 from danica.tui.engine import Engine
 from danica.tui.widgets import (ACCENT, ArtifactsList, AssistantMessage, BusyLine, Citations,
                                 CommandPopup, Notice, PromptInput, Say, StatusBar, ThinkingBlock, ToolCall,
-                                UserMessage, image_widget, welcome_panel)
+                                UserMessage, image_widget, welcome_panel, SubagentPane)
 from danica.tui.modals import ConfirmScreen
 from danica.server import ServerError, ServerMonitor, probe
 from danica.tui.connection import DisconnectedScreen, SetupScreen
@@ -102,7 +102,9 @@ class DanicaApp(App):
         Binding("escape", "interrupt", "Stop", show=False),
         Binding("ctrl+d", "eof", "Quit", priority=True, show=False),
         Binding("ctrl+o", "toggle_tools", "Expand tool output", show=False),
+        Binding("ctrl+g", "toggle_agents", "Show/hide subagent pane", show=False),
     ]
+
 
     def __init__(self, bypass: bool = False) -> None:
         super().__init__()
@@ -112,6 +114,7 @@ class DanicaApp(App):
         self.engine = Engine(self._engine_error)
         self._poll_queued = False
         self.bridge = EventBridge(self)
+        self.subagent_bridge = SubagentBridge(self) # subagent progress -> split pane
 
         self.is_ready = False            # a session exists
         self.working = False             # a request or command is running
@@ -141,7 +144,10 @@ class DanicaApp(App):
     # ------------------------------------------------------------------ layout
 
     def compose(self) -> ComposeResult:
-        yield VerticalScroll(id="transcript")
+        # Split screen: chat on the left, subagent pane on the right (hidden until one runs)
+        with Horizontal(id="main"):
+            yield VerticalScroll(id="transcript")
+            yield SubagentPane(id="agents-pane")
         yield BusyLine(id="busy")
         yield CommandPopup(id="popup")
         with Horizontal(id="prompt-box"):
@@ -155,6 +161,7 @@ class DanicaApp(App):
         if hasattr(transcript, "anchor"):        # stay pinned to the bottom until the user scrolls up
             transcript.anchor()
         self.query_one(CommandPopup).hide()
+        self.query_one("#agents-pane", SubagentPane).display = False
         self.query_one(PromptInput).focus()
         self.set_working(True, "starting")
         self.engine.start()
@@ -229,6 +236,9 @@ class DanicaApp(App):
         self.ws, self.audit, self.checkpoints, self.policy, self.agent = ws, audit, checkpoints, policy, agent
         self.session_id, self.project = session_id, project
         self.artifacts = []
+        # The TUI draws subagents itself, so the supervisor must not open a console window
+        if ws.subagent_supervisor is not None:
+            ws.subagent_supervisor.on_event = self.subagent_bridge
         if start_mode:
             extra = {"project": project["id"]} if project else {}
             audit.append("session_start", workspace=str(ws.root), mode=start_mode, **extra)
@@ -386,6 +396,17 @@ class DanicaApp(App):
         self.post_message(RequestDone(result, error, found))
 
     # ------------------------------------------------------------------ agent events (UI thread)
+
+    def on_subagent_event(self, msg: SubagentEvent) -> None:
+        """UI thread. A subagent reported progress: open the split pane on "start" and feed it."""
+        pane = self.query_one("#agents-pane", SubagentPane)
+        if msg.kind == "start":
+            pane.display = True                        # the chat shrinks to the left half
+        pane.handle(msg.child_id, msg.kind, msg.data)
+
+    def action_toggle_agents(self) -> None:
+        pane = self.query_one("#agents-pane", SubagentPane)
+        pane.display = not pane.display
 
     def on_agent_event(self, ev: AgentEvent) -> None:
         kind, data = ev.kind, ev.data

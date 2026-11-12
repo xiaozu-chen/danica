@@ -23,6 +23,14 @@ class AgentEvent(Message):
         self.kind = kind
         self.data = data
 
+class SubagentEvent(Message):
+    """One progress event from a running subagent. Handled by DanicaApp.on_subagent_event."""
+
+    def __init__(self, child_id: str, kind: str, data) -> None:
+        super().__init__()
+        self.child_id = child_id
+        self.kind = kind
+        self.data = data
 
 class RequestDone(Message):
     """The agent.run() worker finished. `found` is the artifact list (or None)."""
@@ -41,6 +49,14 @@ class EventBridge:
     def __call__(self, kind: str, data) -> None:
         self.app.post_message(AgentEvent(kind, data))
 
+class SubagentBridge:
+    """The supervisor's on_event callback. Runs on worker threads; post_message is thread-safe."""
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    def __call__(self, child_id: str, kind: str, data) -> None:
+        self.app.post_message(SubagentEvent(child_id, kind, data))
 
 class TextualUI:
     def __init__(self, app) -> None:

@@ -10,7 +10,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Callable, TYPE_CHECKING
 
 from danica.audit import AuditLog
 from danica.workspace import Workspace
@@ -24,6 +24,10 @@ MAX_DEPTH = 1
 MAX_TASK_CHARS = 12_000
 MAX_RESULT_BYTES = 32_000
 MAX_SUMMARY_CHARS = 8_000
+
+# agent events worth showing to a human watching a subagent.
+# tool_start/tool_delta are skipped: they fire for every streamed token.
+WATCHED_EVENTS = ("content", "thinking", "tool_call", "tool_result", "notice", "citations") 
 
 
 @dataclass
@@ -41,6 +45,36 @@ class Child:
 class SubagentError(Exception):
     """A rejected task or an explicit child-process/IPC failure."""
 
+
+def _one_line(value, limit: int) -> str:
+    """Flatten any value to one line of a most `limit` characters."""
+    text = " ".join(str(value).split())
+    return text if len(text) <= limit else text[:limit - 1] + "..."
+
+def wire_event(kind: str, data) -> dict | None:
+    """Agent event -> small JSON-safe dict for the socket (None = nobody sees it.)"""
+    if kind not in WATCHED_EVENTS:
+        return None
+    if kind == "tool_call":
+        name, args = data
+        return {"kind": kind, "data": [str(name), _one_line(args, 300)]}
+    if kind == "tool_result":
+        return {"kind": kind, "data": _one_line(data, 400)}
+    return {"kind": kind, "data": str(data)[:4000]}
+
+def describe_event(kind: str, data) -> tuple[str, str] | None:
+    """Wire event -> (rich style, one line). content/thinking stream, so the caller handles them."""
+    if kind == "tool_call":
+        name, summary = data
+        return "bold cyan", f"▶ {name}  {summary}"
+    if kind == "tool_result":
+        return "dim", f"↳ {data}"
+    if kind == "notice":
+        return "yellow", f"! {_one_line(data, 300)}"
+    if kind == "citations":
+        return "dim", _one_line(data, 300)
+    return None
+    
 
 def _read_line(conn: socket.socket, limit: int) -> bytes:
     data = bytearray()
@@ -69,6 +103,7 @@ class SubagentSupervisor:
         timeout_seconds: int = 300,
         max_turns: int = 8,
         new_console: bool = True,
+        on_event: Callable[[str, str, object], None] | None = None,
     ):
         self.ws = ws
         self.policy = policy
@@ -80,10 +115,22 @@ class SubagentSupervisor:
         self.children: list[Child] = []
         self._lock = threading.Lock()
         self._threads: dict[str, threading.Thread] = {}
+        # on_event(child_id, kind, data): set by a UI that subagents itself (the TUI panel).
+        # While set, no separate console opens. Called from worker threads: only hand events over.
+        self.on_event = on_event
 
     def _log(self, event: str, **data) -> None:
         if self.audit:
             self.audit.append(event, **data)
+
+    def _emit(self, child_id: str, kind: str, data) -> None:
+        """Forward an event to the UI; a broken callback must never break the subagent."""
+        if self.on_event is None:
+            return
+        try:
+            self.on_event(child_id, kind, data)
+        except Exception:
+            pass
 
     def run(self, task: str, depth: int = 0, *,
             _ready: threading.Event | None = None,
@@ -117,15 +164,20 @@ class SubagentSupervisor:
                 "--host", "127.0.0.1", "--port", str(listener.getsockname()[1]),
                 "--token", token,
             ]
-            flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0) if (
-                self.new_console and os.name == "nt") else 0
+            # A separate console is only the FALLBACK, when nothing here shows the subagent itself
+            use_console = self.new_console and os.name == "nt" and self.on_event is None
+            if use_console:
+                command.append("--console")       # worker prints progress and pauses at the end
+            # BUG FIX: stdout/stderr were DEVNULL even for the new console -> blank window.
+            # None = inherit, i.e. write to the console that was just created.
+            quiet = None if use_console else subprocess.DEVNULL
             process = subprocess.Popen(
                 command,
                 cwd=str(self.ws.root),
                 stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=flags,
+                stdout=quiet,
+                stderr=quiet,
+                creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0) if use_console else 0,
             )
             child.process = process
             child.status = "running"
@@ -135,6 +187,7 @@ class SubagentSupervisor:
                 _ready.set()
             self._log("subagent_start", child=child_id, depth=depth,
                       task_chars=len(task), workspace=str(self.ws.root))
+            self._emit(child_id, "start", task)
 
             try:
                 conn, _ = listener.accept()
@@ -159,12 +212,25 @@ class SubagentSupervisor:
                     "audit_path": str(self.audit.path) if self.audit else "",
                 }
                 conn.sendall(json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n")
-                response = _read_line(conn, MAX_RESULT_BYTES)
-            if not response:
+                # The worker now sends MANY lines: progress events, then ONE final result line.
+                reader = conn.makefile("rb")
+                result = None
+                while True:
+                    line = reader.readline(MAX_RESULT_BYTES + 1)
+                    if not line:
+                        break                                  # worker closed without a result
+                    if len(line) > MAX_RESULT_BYTES:
+                        raise SubagentError("subagent protocol message exceeded its size limit")
+                    message = json.loads(line.decode("utf-8"))
+                    if not isinstance(message, dict) or message.get("token") != token:
+                        raise SubagentError("subagent returned an invalid protocol response")
+                    if message.get("type") == "event":         # progress: show it, keep reading
+                        self._emit(child_id, str(message.get("kind", "")), message.get("data"))
+                        continue
+                    result = message                            # anything else is the final result
+                    break
+            if result is None:
                 raise SubagentError("subagent closed IPC without returning a result")
-            result = json.loads(response.decode("utf-8"))
-            if not isinstance(result, dict) or result.get("token") != token:
-                raise SubagentError("subagent returned an invalid protocol response")
             if result.get("status") != "completed":
                 raise SubagentError(str(result.get("error") or "subagent failed"))
             summary = result.get("summary")
@@ -281,8 +347,23 @@ class SubagentSupervisor:
                     return True
         return False
 
+def _print_event(live: dict, kind: str, data) -> None:
+    """Write one event to a subagent's own console. Streamed text is joined into lines."""
+    if kind in ("content", "thinking"):
+        if kind == "thinking" and not live["open"]:
+            return                                    # hide private reasoning
+        print(data, end="", flush=True)
+        live["open"] = not str(data).endswith("\n")
+        return
+    if live["open"]:                                  # finish a half-written text line first
+        print(flush=True)
+        live["open"] = False
+    described = describe_event(kind, data)
+    if described:
+        print(described[1], flush=True)
 
-def run_worker_connection(host: str, port: int, token: str) -> None:
+
+def run_worker_connection(host: str, port: int, token: str, console: bool = False) -> None:
     """Connect to the supervisor and execute one bounded task."""
     with socket.create_connection((host, port), timeout=15) as conn:
         conn.settimeout(360)
@@ -319,8 +400,28 @@ def run_worker_connection(host: str, port: int, token: str) -> None:
         for source in sources:
             web_state.mark_tainted(source)
         web_state.known_hosts.update(hosts)
+        # Agent may call on_event from several threads (parallel reads): one lock covers both outputs
+        send_lock = threading.Lock()
+        live = {"open": False}                    # True while a streamed text line is unfinished
+
+        def report(kind: str, data) -> None:
+            wire = wire_event(kind, data)
+            if wire is None:
+                return
+            with send_lock:
+                try:                                         # 1) to the supervisor (TUI pane)
+                    line = json.dumps({"token": token, "type": "event", **wire}, ensure_ascii=False)
+                    conn.sendall(line.encode("utf-8") + b"\n")
+                except OSError:
+                    pass                                     # supervisor gone: keep working
+                if console:                                  # 2) to this window (fallback)
+                    _print_event(live, wire["kind"], wire["data"])
+
         agent = Agent(ws, max_steps=min(int(payload.get("max_turns", 1)), 8),
-                      policy=policy, audit=audit)
+                      policy=policy, audit=audit, on_event=report)
+        if console:
+            print(f"Danica subagent {payload.get('child_id', '')}\n"
+                  f"Task: {str(payload.get('task', ''))[:300]}\n" + "-" * 60, flush=True)
         child_prompt = (
             "You are a depth-1 research subagent. Work only in the provided workspace and within "
             "the inherited permissions. Do not attempt to spawn another agent. Return a concise, "
@@ -335,4 +436,9 @@ def run_worker_connection(host: str, port: int, token: str) -> None:
         except Exception as exc:
             response = {"token": token, "status": "failed",
                         "error": f"{type(exc).__name__}: {exc}"[:500]}
-        conn.sendall(json.dumps(response, ensure_ascii=False).encode("utf-8") + b"\n")
+        with send_lock:
+            conn.sendall(json.dumps(response, ensure_ascii=False).encode("utf-8") + b"\n")
+        if console:                                  # keep the window readable before it closes
+            print(f"\n{'-' * 60}\n{response['status'].upper()}: "
+                  f"{response.get('error') or 'summary sent to the main Danica window'}", flush=True)
+            time.sleep(8 if response["status"] == "completed" else 30)

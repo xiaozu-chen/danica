@@ -22,6 +22,8 @@ from textual.binding import Binding
 from textual.message import Message
 from textual.widgets import Markdown, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
+from textual.containers import Vertical
+from textual.widgets import Markdown, OptionList, RichLog, Static, TextArea
 
 from danica.config import APP_DIR
 from danica.partial_json import partial_fields
@@ -671,6 +673,66 @@ class CommandPopup(OptionList):
         index = self.highlighted
         return self.matches[index] if index is not None and 0 <= index < len(self.matches) else None
 
+class SubagentPane(Vertical):
+    """Right-hand half of the split screen: a live view of the running subagent.
+    head = status, log = finished lines, live = the line being streamed right now.
+    All methods run on the UI thread."""
+
+    def compose(self):
+        yield Static("", id="sub-head")
+        yield RichLog(id="sub-log", wrap=True, markup=False, highlight=False)
+        yield Static("", id="sub-live")
+
+    def on_mount(self) -> None:
+        self.border_title = "Subagent"
+        self._text = ""                                   # streamed text not yet a full line
+
+    def _log(self) -> RichLog:
+        return self.query_one("#sub-log", RichLog)
+
+    def _head(self, text: str, style: str = "bold") -> None:
+        self.query_one("#sub-head", Static).update(Text(text, style=style))
+
+    def _live(self, text: str = "", style: str = "dim") -> None:
+        self.query_one("#sub-live", Static).update(Text(text[-200:], style=style))
+
+    def _flush(self) -> None:
+        """Turn any half-streamed text into a finished log line."""
+        if self._text.strip():
+            self._log().write(Text(self._text.strip()))
+        self._text = ""
+        self._live()
+
+    def handle(self, child_id: str, kind: str, data) -> None:
+        from danica.subagents import describe_event
+        log = self._log()
+        if kind == "start":
+            if log.lines:                                 # a second subagent: separate the runs
+                log.write(Text("─" * 40, style="dim"))
+            self._text = ""
+            self._head(f"● {child_id} running", "bold green")
+            log.write(Text("Task: " + " ".join(str(data).split())[:300], style="bold"))
+        elif kind == "content":
+            self._text += str(data)
+            *done, self._text = self._text.split("\n")     # complete lines go to the log
+            for line in done:
+                if line.strip():
+                    log.write(Text(line))
+            self._live(self._text, "")
+        elif kind == "thinking":
+            self._live("thinking… " + " ".join(str(data).split()), "dim italic")
+        elif kind in ("done", "failed", "killed"):
+            self._flush()
+            label = {"done": ("✔ finished", "bold green"), "failed": ("✘ failed", "bold red"),
+                     "killed": ("■ stopped", "bold yellow")}[kind]
+            self._head(f"{label[0]}  {child_id}", label[1])
+            if kind != "done":                            # "done" carries the summary, and the
+                log.write(Text(str(data), style=label[1]))   # main transcript already gets it
+        else:                                             # tool_call / tool_result / notice / ...
+            self._flush()
+            described = describe_event(kind, data)
+            if described:
+                log.write(Text(described[1], style=described[0]))
 
 class BusyLine(Static):
     FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"

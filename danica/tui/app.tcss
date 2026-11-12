@@ -141,3 +141,17 @@ PermissionScreen, ConfirmScreen, ChoiceScreen, TextScreen {
 .dialog-buttons Button:last-of-type { margin-right: 0; }
 .dialog-buttons Button:focus { background: #3b4261; text-style: bold; }
 
+/* ---- split screen: chat | subagent pane ---- */
+#main { height: 1fr; }
+
+#agents-pane {
+    width: 45%;                 /* the chat keeps the other 55% */
+    height: 100%;
+    margin: 0 1 0 0;
+    border: round #5c5c5c;
+}
+
+#sub-head { height: 1; padding: 0 1; }
+#sub-log  { height: 1fr; padding: 0 1; background: transparent; scrollbar-size-vertical: 1; }
+#sub-live { height: auto; max-height: 3; padding: 0 1; }
+
