@@ -36,7 +36,7 @@ HELP = """Commands
   Sessions  /sessions  /resume [number|id]  /export
   Files     /artifacts  /open <n>  /save <n> [folder]
   Safety    /fullaccess  /sandbox  /audit  /undo  /rewind [id]  /taint  /untaint
-  Web       /sources  /webcache [status | list | search <words> | clear]
+  Web       /sources  /webcache [status | list | search <words> | |reindex | clear]
   Memory    /memory [list | add [scope] <text> | review | capture | search <words> | merge | forget <id> | show <id> | status | reindex | path]
   Knowledge /knowledge [index|search|watch|stop|status|digest|graph|commit <preview-id>]
   Reminder  /reminder add <ISO datetime> <text>  | list
@@ -57,7 +57,7 @@ DESCRIPTIONS = {
     "/save": "copy a file out (default: Downloads)", "/memory": "saved notes (review, merge, forget…)",
     "/fullaccess": "toggle FULL ACCESS", "/sandbox": "explain the shell sandbox",
     "/audit": "verify the audit log", "/undo": "undo the last request", "/rewind": "list or restore checkpoints",
-    "/taint": "show untrusted web content", "/untaint": "clear the taint flag", "/sources": "web sources so far", "/webcache": "stored web pages (status, list, search, clear)",
+    "/taint": "show untrusted web content", "/untaint": "clear the taint flag", "/sources": "web sources so far", "/webcache": "stored web pages (status, list, search, reindex, clear)",
     "/knowledge": "local notes index (index, search, watch…)", "/reminder": "add or list reminders",
     "/agents": "subagents (run, peek, wait, kill)", "/ws": "show the workspace path", "/skills": "list global skills",
     "/config": "show the settings", "/diagrams": "diagram engine status", "/help": "list every command",
@@ -590,7 +590,9 @@ def _webcache(app, args):
     try:
         if sub in ("", "status"):
             st = cache.status()
-            ui.say(f"{st['pages']} page(s) stored ({st['stale_pages']} past their freshness window), "
+            ui.say(
+                f"Folder: {st['folder']}  (one .md file per page; the index rebuilds from them)\n"
+                f"{st['pages']} page(s) stored ({st['stale_pages']} past their freshness window), "
                    f"{st['searches']} search(es), {st['vectors']} meaning-vector(s)."
                    + (f"\nMeaning search is off: {st['embedding_note']}" if st["embedding_note"] else ""))
         elif sub == "list":
@@ -605,8 +607,12 @@ def _webcache(app, args):
             if ui.confirm("Clear the web cache?", "Every stored page and search is deleted. "
                           "Danica will fetch from the web again.", yes="Clear", no="Keep"):
                 ui.log("ok", f"Removed {cache.clear()} stored page(s).")
+        elif sub == "reindex":                    # after editing or deleting .md files in bulk
+            done = cache.reindex()
+            ui.log("ok", f"Index rebuilt: {done['indexed']} file(s) read, {done['removed']} forgotten, "
+                         f"{done['skipped']} skipped (not cache files).")
         else:
-            ui.log("warning", "Usage: /webcache [status | list | search <words> | clear]")
+            ui.log("warning", "Usage: /webcache [status | list | search <words> | reindex | clear]")
     except Exception as exc:                  # a damaged cache file must not crash the command
         ui.log("error", f"web cache: {type(exc).__name__}: {exc}")
 
