@@ -44,6 +44,7 @@ from danica.planner import (Plan, PlanError, PlanFormatError, parse_plan, plan_n
 from danica.tools.skills import skills_prompt
 from danica.thinking import ThinkingClassifier, log_thinking_decision
 from danica.webcache import age_text, get_web_cache
+from danica.loopguard import LoopGuard
 
 SYSTEM_PROMPT = """You are Danica, a careful coding assistant running locally in a terminal on Windows.
 You work inside a workspace folder. All file paths are relative to it.
@@ -162,7 +163,8 @@ class Agent:
         self.policy = policy or PermissionPolicy()
         # Consecutive permissions denials. Two "no"s in a row means the user is
         # telling us to stop, so we hand control back instead of probing more.
-        self.denied_in_row = 0
+        self.denied_in_row = 0 
+        self.guard = LoopGuard()    # loop detection for the current request (see loopguard.py) 
         self.cached_web = ""    # the [Web cache] reminder for the current request (see _cache_context)
         self.web_used = False   # did the current request read the web? (answers should then cite)
         self.audit = audit # None = no logging (tests)
@@ -384,7 +386,9 @@ class Agent:
             self._messages_for_model(),
             thinking=(self._thinking_for_request if self._thinking_for_request is not None
                       else self.thinking),
-            temperature=0.3,       # low: tool calls should be steady, not creative
+            # low: tool calls should be steady, not creative. The loop guard warms it up for a few
+            # turns after it catches a loop (an unchanged context at low temperature repeats itself)
+            temperature=self.guard.temperature(0.3),
             tools=tool_schemas(),
             include_usage=True,
             stream_tools=True,
@@ -860,6 +864,7 @@ class Agent:
         self.web_used = False
 
         self.denied_in_row = 0
+        self.guard = LoopGuard()          # fresh loop memory for every user request
 
         # Log only the size of the request, not its text (the transcript has the text)
         self._log("user_request", chars=len(user_text))
@@ -868,8 +873,6 @@ class Agent:
         should_reflect = bool(plan or read_todo(self.ws))
 
         for repair_round in range(2):
-            last_signature = None
-            repeats = 0
             empty_retried = False
             repair_requested = False
 
@@ -955,35 +958,63 @@ class Agent:
                     self._check_citations(content)
                     self._propose_memory(user_text)
                     return content
+#
+                # Loop guard, step 1: calls it has already BLOCKED are not run at all. The model gets
+                # an error instead (and after a few of those the request stops).
+                blocked: dict[str, str] = {}
+                for call in calls:
+                    error, stop = self.guard.check_blocked(call)
+                    if stop:
+                        self._log("loop_guard", level="stop", tool=call["name"])
+                        for c in calls:               # every tool_call needs a result in the history
+                            self._add({"role": "tool", "tool_call_id": c["id"],
+                                       "content": "ERROR: stopped by the loop guard"})
+                        return stop
+                    if error:
+                        blocked[call["id"]] = error
+                        self._log("loop_guard", level="blocked", tool=call["name"])
+                runnable = [c for c in calls if c["id"] not in blocked]
 
-                # Repeat detector: same tool + same arguments, step after step
-                signature = tuple((c["name"], c["arguments"]) for c in calls)
-                repeats = repeats + 1 if signature == last_signature else 0
-                last_signature = signature
-                if repeats >= 4:
-                    return "[stopped: Danica kept repeating the same tool call]"
-
-                parallel_results = self._execute_parallel_reads(calls)
+                parallel_results = self._execute_parallel_reads(runnable) if runnable else []
                 if parallel_results is None:
                     parallel_results = []
-                    for i, call in enumerate(calls):
+                    for i, call in enumerate(runnable):
                         try:
                             self._check_cancel()
                             result = self._execute(call)
                         except KeyboardInterrupt:
                             # Every tool_call needs a matching result, otherwise the
                             # history is invalid next turn. Fill the gaps, then re-raise.
-                            for rest in calls[i:]:
+                            for rest in runnable[i:] + [c for c in calls if c["id"] in blocked]:
                                 self._add({"role": "tool", "tool_call_id": rest["id"],
                                            "content": "ERROR: interrupted by the user"})
                             raise
                         parallel_results.append((call, result))
-
-                for call, result in parallel_results:
-                    if repeats >= 2:
-                        result += "\nNOTE: you have repeated this exact call. Try a different approach."
+#
+                # Put the results back in the order the model asked for them
+                by_id = {c["id"]: r for c, r in parallel_results}
+                reminder, stop = "", ""
+                for call in calls:
+                    if call["id"] in blocked:
+                        result = blocked[call["id"]]
+                    else:
+                        result = by_id[call["id"]]
+                        # Loop guard, step 2: log the finished call; it may add a note or a reminder
+                        verdict = self.guard.record(call, result)
+                        if verdict.note:
+                            result += "\n" + verdict.note
+                        reminder = reminder or verdict.reminder
+                        stop = stop or verdict.stop
                     self.on_event("tool_result", result)
                     self._add({"role": "tool", "tool_call_id": call["id"], "content": result})
+                if stop:
+                    self._log("loop_guard", level="stop")
+                    return stop
+                if reminder:                          # "are you done?": what broke the loop by hand
+                    self._log("loop_guard", level="reminder")
+                    self.on_event("notice", "[loop guard] repeating the same calls; asking Danica "
+                                            "whether the task is already finished")
+                    self._add({"role": "user", "content": reminder})
 
                 # Circuit breaker: the user said no twice, so stop and ask them
                 if self.denied_in_row >= 2:
