@@ -70,7 +70,7 @@ def _save(ws: Workspace, text: str) -> str:
     with open(ws.todo_path, "w", encoding="utf-8", newline="\n") as f:
         f.write(text)
     total, done = counts(text)
-    msg = f"OK: TODO.md updated ({done}/{total} items done)"
+    msg = f"OUTPUT: TODO.md updated ({done}/{total} items done)"
     if total and done == total:
         msg += ". Every item is done: verify the result, then give your final summary."
     return msg
@@ -102,7 +102,7 @@ def todo(ws: Workspace, action: str, content: str = "", item: str | int = "") ->
     if action == "clear":
         if ws.todo_path.exists():
             ws.todo_path.unlink()
-        return "OK: TODO.md cleared"
+        return "OUTPUT: TODO.md cleared"
 
     if action == "set":
         if not content.strip():

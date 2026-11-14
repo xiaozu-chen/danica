@@ -122,7 +122,7 @@ def write_file(ws: Workspace, path: str, content: str) -> str:
     with open(p, "w", encoding="utf-8", newline="\n") as f:
         f.write(content)
     verb = "overwrote" if existed else "created"
-    return f"OK: {verb} {ws.display(p)} ({len(content.splitlines())} lines)"
+    return f"OUTPUT: {verb} {ws.display(p)} ({len(content.splitlines())} lines)"
 
 
 @tool(
@@ -168,7 +168,7 @@ def edit_file(
     new_text = text.replace(old_string, new_string)  # replaces all; count==1 otherwise
     with open(p, "w", encoding="utf-8", newline="\n") as f:
         f.write(new_text)
-    return f"OK: edited {ws.display(p)} ({count} replacement{'s' if count != 1 else ''})"
+    return f"OUTPUT: edited {ws.display(p)} ({count} replacement{'s' if count != 1 else ''})"
 
 
 @tool(

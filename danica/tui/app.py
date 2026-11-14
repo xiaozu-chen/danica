@@ -714,7 +714,6 @@ class DanicaApp(App):
         if self.ws is not None:
             label = "Start folder: " if self.open_root is not None else "Workspace: "
         t.append(" | " + label + short_path(self.ws.root), style="#C6C0BE")
-        t.append(" | " + label + short_path(self.ws.root), style="#C6C0BE")
         return t
 
     def refresh_status(self) -> None:

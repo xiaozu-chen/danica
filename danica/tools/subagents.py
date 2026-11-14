@@ -11,6 +11,6 @@ def delegate(ws, task: str) -> str:
     if supervisor is None:
         return "ERROR: subagent delegation is unavailable in this session."
     try:
-        return "OK: " + supervisor.run(task)
+        return "OUTPUT: " + supervisor.run(task)
     except SubagentError as exc:
         return f"ERROR: delegation failed: {type(exc).__name__}: {exc}"

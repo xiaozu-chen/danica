@@ -100,7 +100,7 @@ def deck(ws: Workspace, source: str, theme: str = "clean", title: str = "", sour
                         + ", ".join(report.unfetched_urls))
     images = sum(1 for b in blocks if b["t"] == "img")
     shown = ws.display(out)
-    result = (f"OK: saved {shown} ({max(1, out.stat().st_size // 1024)} KB, {count} slides, "
+    result = (f"OUTPUT: saved {shown} ({max(1, out.stat().st_size // 1024)} KB, {count} slides, "
               f"{images} image(s), {len(listing)} source(s)). Tell the user where it is.")
     if warnings:
         result += "\nNotes: " + "; ".join(warnings)

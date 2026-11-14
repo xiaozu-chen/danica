@@ -54,7 +54,7 @@ def diagram(ws: Workspace, file: str) -> str:
 
     out.write_bytes(png)
     shown = ws.display(out)
-    result = (f'OK: saved {shown} ({max(1, len(png) // 1024)} KB). It is finished: do NOT call this tool again for this file. To show it in chat, write '
+    result = (f'OUTPUT: saved {shown} ({max(1, len(png) // 1024)} KB). It is finished: do NOT call this tool again for this file. To show it in chat, write '
               f'<present file="{shown}"/> on its own line in your reply, then add one short sentence and stop. To put it in a document or '
               f'a deck, write ![caption]({shown}) in the Markdown file instead.')
     return result + (f"\nNote: {note}" if note else "")
