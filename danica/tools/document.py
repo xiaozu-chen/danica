@@ -43,7 +43,7 @@ def document(ws: Workspace, source: str, format: str = "docx", title: str = "", 
         return "ERROR: the source must be a Markdown file (.md). Write it with write_file first."
     if not p.is_file():
         return f"ERROR: '{source}' is not a file. Write the Markdown with write_file first."
-    if is_sensitive_path(p.relative_to(ws.root)):
+    if is_sensitive_path(ws.rel(p)):
         return "ERROR: that file is blocked: it looks like a credentials file"
     if p.stat().st_size > MAX_SOURCE_BYTES:
         return f"ERROR: the Markdown file is too big (limit {MAX_CHARS:,} characters)"

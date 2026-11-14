@@ -440,7 +440,8 @@ def image_widget(path: Path, label: str):
 #     return Panel(body, title=f" Danica v{version} ", title_align="left",
 #                  border_style=ACCENT, box=box.ASCII3, padding=(1, 1))
 
-def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.4.0") -> Panel:
+def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.4.0",
+                  open_mode: bool = False) -> Panel:
     # Left column content
     left = Text(justify="center")
     left.append("Welcome back boss!\n\n", style="bold")
@@ -457,7 +458,12 @@ def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.4.0
 ⠀⠀⠀⢻⡇⣀⡀⠀⠺⣿⠇⠀⣀⣤⣄⣀⣠⣬⣥⣤⠾⠛⠁⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠉⠛⠓⠂⠤⠤⠖⠊⠉⠉⠉⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
 """, style=ACCENT)
-    left.append(f"project: {project_name}\n" if project_name else "chat mode\n", style="dim")
+    if open_mode:                      # impossible to miss: this session can reach the whole disk
+        left.append("\u26a0  OPEN MODE  \u26a0\n", style="bold white on red")
+        left.append("full disk access\n", style="bold red")
+        left.append("start folder:\n", style="dim")
+    else:
+        left.append(f"project: {project_name}\n" if project_name else "chat mode\n", style="dim")
     left.append(f"{ws_label}", style="dim")
 
 
@@ -508,9 +514,9 @@ def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.4.0
 
     return Panel(
         body, 
-        title=f" Danica v{version} ", 
+        title=f" Danica v{version}  \u26a0 OPEN MODE " if open_mode else f" Danica v{version} ",
         title_align="left",
-        border_style=ACCENT, 
+        border_style="bold red" if open_mode else ACCENT,
         box=box.ASCII3, 
         padding=(1, 1)
     )

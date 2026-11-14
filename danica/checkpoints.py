@@ -38,14 +38,15 @@ class CheckpointError(Exception):
 
 
 class Checkpoints:
-    def __init__(self, ws: Workspace, git_dir: Path):
+    def __init__(self, ws: Workspace, git_dir: Path, disabled: bool = False):
         self.ws = ws
         self.git_dir = Path(git_dir)
         # One entry per request: the snapshot id from BEFORE it ran,
         # or None if taking that snapshot failed.
         self.undo_stack: list[str | None] = []
         self.git = find_program("git")           # never searches the current directory (see pathsearch.py)
-        self.available = self.git is not None
+        # disabled=True: snapshots are switched off on purpose (Open Mode, start folder too broad)
+        self.available = self.git is not None and not disabled
         if self.available:
             self._init_repo()
 

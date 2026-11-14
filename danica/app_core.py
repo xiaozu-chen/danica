@@ -25,6 +25,7 @@ from danica.extensions import ExtensionError, ExtensionManager
 from danica.knowledge import KnowledgeError, KnowledgeIndex
 from danica.memory import MemoryStore
 from danica.memory_index import FACTS_DB, MemoryIndex
+from danica.openmode import anchor_dir, ensure_anchor, open_mode_note, start_folder_problem
 from danica.permissions import PermissionPolicy
 from danica.projects import (approve_instructions, load_session_meta, lookup,
                              read_instructions, save_session_meta, scan)
@@ -108,31 +109,46 @@ def apply_instructions(project: dict, agent, audit, ui: UI) -> None:
 
 
 def build_session(session_id: str, ui: UI, on_event, project: dict | None = None,
-                  headless: bool = False, workspace_root: Path | None = None):
+                  headless: bool = False, workspace_root: Path | None = None,
+                  open_root: Path | None = None):
     """Create everything one session needs.
     project=None  -> normal chat: a throwaway workspace inside the session folder
     project=info  -> project mode: the workspace IS the user's trusted folder
+    open_root=dir -> OPEN MODE: `dir` is only the START folder; the whole disk is reachable except
+                     the protected areas (openmode.py). The caller has ALREADY shown the warning.
     Returns (ws, audit, checkpoints, policy, agent), same as cli.build_session."""
     session_dir = APP_DIR / "sessions" / session_id
     session_dir.mkdir(parents=True, exist_ok=True)
 
-    root = Path(project["path"]) if project else (
-        Path(workspace_root) if headless and workspace_root else session_dir / "workspace")
+    if open_root is not None:
+        problem = start_folder_problem(Path(open_root))
+        if problem:
+            raise ValueError(f"Open Mode can't start there: {problem}")
+    root = (Path(open_root) if open_root is not None else Path(project["path"]) if project else (
+        Path(workspace_root) if headless and workspace_root else session_dir / "workspace"))
     ws = Workspace(root, todo_path=session_dir / "TODO.md",
-                   sources_path=session_dir / "sources.json")
+                   sources_path=session_dir / "sources.json", open_mode=open_root is not None)
     ws.knowledge_index = knowledge_index()
-    save_session_meta(session_dir, project["path"] if project else None)
+    save_session_meta(session_dir, project["path"] if project else None,
+                      str(ws.root) if open_root is not None else None)
 
     audit = AuditLog(APP_DIR / "logs" / "audit.jsonl", session=session_id)
 
     git_dir = Path(project["dir"]) / "git" if project else session_dir / "checkpoints" / "git"
-    checkpoints = Checkpoints(ws, git_dir)
-    if not checkpoints.available:
+    # Open Mode: /undo can only cover the START folder, and only if it is a sensible size of folder
+    # (the same rules as a project). Otherwise snapshots are switched off and we say so.
+    snapshots_off = open_root is not None and _too_broad_for_snapshots(ws.root)
+    checkpoints = Checkpoints(ws, git_dir, disabled=snapshots_off)
+    if snapshots_off:
+        ui.log("warning", "  /undo and /rewind are OFF: the start folder is too broad to snapshot. "
+                          "Start Open Mode from a project folder to get them back.")
+    elif not checkpoints.available:
         ui.log("warning", "  `git` was not found, so /undo and /rewind are disabled. "
                           "(Install it with: winget install Git.Git)")
 
     policy = PermissionPolicy(ask=None if headless else make_ask(ui))
     policy.project_mode = project is not None
+    policy.open_root = ws.root if open_root is not None else None      # switches Open Mode rules on
     supervisor = SubagentSupervisor(ws, policy, audit, session_id)
     ws.subagent_supervisor = supervisor
     extensions = extension_manager(audit, headless)
@@ -158,6 +174,12 @@ def build_session(session_id: str, ui: UI, on_event, project: dict | None = None
     agent.plans_dir = session_dir / "plans"
     if project:
         apply_instructions(project, agent, audit, ui)
+    if open_root is not None:
+        try:
+            ensure_anchor()          # ~/.danica/outputs, where generated files go
+        except OSError:
+            pass                     # not fatal: writes there just ask like any other outside path
+        agent.set_mode_note(open_mode_note(ws.root, snapshots_off))
 
     report = agent.context_report()
     if report.status == "too_small":
@@ -180,7 +202,17 @@ def open_resumed(target: str, ui: UI, on_event):
         if project is None or not Path(project["path"]).is_dir():
             raise ValueError(f"that session worked in {meta['project']}, which is no longer "
                              f"trusted or no longer exists. Use /project <path> to trust it again.")
-    parts = build_session(target, ui, on_event, project)
+    open_root = None
+    if meta.get("mode") == "open" and meta.get("open_root"):
+        # Open Mode never switches itself back on: the warning is shown again, every time
+        open_root = Path(meta["open_root"])
+        if not open_root.is_dir():
+            raise ValueError(f"that session was in Open Mode, but its start folder {open_root} "
+                             f"no longer exists.")
+        if not confirm_open_mode(open_root, ui):
+            raise ValueError("Open Mode was not confirmed, so the session was not resumed. "
+                             "(You can /resume it again and confirm, or work in Chat Mode.)")
+    parts = build_session(target, ui, on_event, project, open_root=open_root)
     ws, audit, checkpoints, policy, agent = parts
 
     try:
@@ -214,7 +246,8 @@ def open_resumed(target: str, ui: UI, on_event):
     audit.append("session_resume", workspace=str(ws.root), records=len(records),
                  unreadable_lines=bad, repaired=fixed)
 
-    where = f"project {project['name']}" if project else "chat"
+    where = (f"OPEN MODE (start folder {open_root})" if open_root is not None
+             else f"project {project['name']}" if project else "chat")
     lines = [f"Resumed session {target} ({where}): {len(agent.messages) - 1} messages in context, "
              f"{agent.compactions} compaction(s)."]
     if agent.user_requests:
@@ -225,6 +258,51 @@ def open_resumed(target: str, ui: UI, on_event):
     lines.append("Permission approvals and the /undo stack start fresh "
                  "(/rewind still lists the old checkpoints). Try /todo and /summary.")
     return parts, "\n".join(lines)
+
+
+def _too_broad_for_snapshots(path: Path) -> bool:
+    """A start folder /undo can't sensibly snapshot: a drive root, your home folder (or above it)."""
+    from danica.projects import ProjectError, check_allowed
+    try:
+        check_allowed(path)
+    except ProjectError:
+        return True
+    return False
+
+
+def resolve_open_start(requested: str, launch: Path) -> tuple[Path | None, str, str]:
+    """Pick the Open Mode start folder. Returns (folder, notice, error); folder is None on error.
+    - a folder you NAMED is used as given (or refused with the reason: you asked for it)
+    - otherwise the launch folder is used, unless it is protected or too broad to snapshot, in which
+      case we fall back to the anchor (~/.danica) and say why."""
+    if requested.strip():
+        start = Path(requested.strip().strip('"')).expanduser()
+        problem = start_folder_problem(start)
+        return (None, "", problem) if problem else (start.resolve(), "", "")
+    problem = start_folder_problem(launch) or ("too broad to snapshot" if _too_broad_for_snapshots(launch.resolve()) else "")
+    if not problem:
+        return launch.resolve(), "", ""
+    try:
+        anchor = ensure_anchor()
+    except OSError as exc:
+        return None, "", f"the launch folder can't be used ({problem}) and {anchor_dir()} can't be created: {exc}"
+    return anchor, f"Launch folder not used ({problem}); starting in the anchor folder {anchor}.", ""
+
+
+def confirm_open_mode(start: Path, ui: UI) -> bool:
+    """The Open Mode warning. Returns True only on an explicit yes. Shown every time."""
+    body = (f"Start folder: {start}\n\n"
+            "Open Mode lets Danica read your whole disk and write anywhere you approve, instead of "
+            "staying in one folder.")
+    detail = ("STILL BLOCKED: Windows and Program Files, AppData (browser profiles, saved logins), other "
+              "users' profiles, credential folders (.ssh, .aws...), network paths and Danica's own data. "
+              "STILL ASKS: writing outside the start folder, and every shell command except look-only ones. "
+              "NOT PROTECTED: everything else on this computer, including documents and photos. "
+              "/undo only covers the start folder, so changes elsewhere cannot be rolled back. "
+              "Anything Danica reads from a web page could try to steer it: keep Open Mode for tasks you "
+              "are watching. It ends with /chat, /project or /new and is never switched on automatically.")
+    return ui.confirm("\u26a0  Enable OPEN MODE (full disk access)?", body=body, detail=detail,
+                      yes="Enable Open Mode", no="Cancel")
 
 
 def ask_trust(path: Path, ui: UI) -> bool:

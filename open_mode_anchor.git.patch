@@ -1,0 +1,149 @@
+diff --git a/danica/app_core.py b/danica/app_core.py
+index 18625d7..a698908 100644
+--- a/danica/app_core.py
++++ b/danica/app_core.py
+@@ -25,7 +25,7 @@ from danica.extensions import ExtensionError, ExtensionManager
+ from danica.knowledge import KnowledgeError, KnowledgeIndex
+ from danica.memory import MemoryStore
+ from danica.memory_index import FACTS_DB, MemoryIndex
+-from danica.openmode import open_mode_note, start_folder_problem
++from danica.openmode import anchor_dir, ensure_anchor, open_mode_note, start_folder_problem
+ from danica.permissions import PermissionPolicy
+ from danica.projects import (approve_instructions, load_session_meta, lookup,
+                              read_instructions, save_session_meta, scan)
+@@ -175,6 +175,10 @@ def build_session(session_id: str, ui: UI, on_event, project: dict | None = None
+     if project:
+         apply_instructions(project, agent, audit, ui)
+     if open_root is not None:
++        try:
++            ensure_anchor()          # ~/.danica/outputs, where generated files go
++        except OSError:
++            pass                     # not fatal: writes there just ask like any other outside path
+         agent.set_mode_note(open_mode_note(ws.root, snapshots_off))
+ 
+     report = agent.context_report()
+@@ -266,6 +270,25 @@ def _too_broad_for_snapshots(path: Path) -> bool:
+     return False
+ 
+ 
++def resolve_open_start(requested: str, launch: Path) -> tuple[Path | None, str, str]:
++    """Pick the Open Mode start folder. Returns (folder, notice, error); folder is None on error.
++    - a folder you NAMED is used as given (or refused with the reason: you asked for it)
++    - otherwise the launch folder is used, unless it is protected or too broad to snapshot, in which
++      case we fall back to the anchor (~/.danica) and say why."""
++    if requested.strip():
++        start = Path(requested.strip().strip('"')).expanduser()
++        problem = start_folder_problem(start)
++        return (None, "", problem) if problem else (start.resolve(), "", "")
++    problem = start_folder_problem(launch) or ("too broad to snapshot" if _too_broad_for_snapshots(launch.resolve()) else "")
++    if not problem:
++        return launch.resolve(), "", ""
++    try:
++        anchor = ensure_anchor()
++    except OSError as exc:
++        return None, "", f"the launch folder can't be used ({problem}) and {anchor_dir()} can't be created: {exc}"
++    return anchor, f"Launch folder not used ({problem}); starting in the anchor folder {anchor}.", ""
++
++
+ def confirm_open_mode(start: Path, ui: UI) -> bool:
+     """The Open Mode warning. Returns True only on an explicit yes. Shown every time."""
+     body = (f"Start folder: {start}\n\n"
+diff --git a/danica/openmode.py b/danica/openmode.py
+index 6f21f8a..3b49a18 100644
+--- a/danica/openmode.py
++++ b/danica/openmode.py
+@@ -162,6 +162,32 @@ def shell_protected_hit(command: str, base: Path) -> tuple[str, str] | None:
+     return None
+ 
+ 
++# ------------------------------------------------------------------ the anchor folder
++
++def anchor_dir() -> Path:
++    """Danica's home base in Open Mode: ~/.danica (override: [open_mode] anchor = "D:/danica-home").
++    It is used (1) as the START folder when the folder you launched from can't be (protected or too
++    broad to snapshot) and (2) as the place generated files go (see outputs_dir). It is deliberately
++    NOT the AppData folder: that one holds sessions/logs and stays protected."""
++    custom = CONFIG.get("open_mode", {}).get("anchor")
++    base = Path(str(custom)).expanduser() if custom else Path.home() / ".danica"
++    try:
++        return base.resolve()
++    except OSError:
++        return base
++
++
++def outputs_dir() -> Path:
++    """Where Danica saves files it GENERATES in Open Mode (decks, charts, documents, scratch)."""
++    return anchor_dir() / "outputs"
++
++
++def ensure_anchor() -> Path:
++    """Create ~/.danica/outputs if missing and return the anchor. Safe to call repeatedly."""
++    outputs_dir().mkdir(parents=True, exist_ok=True)
++    return anchor_dir()
++
++
+ # ------------------------------------------------------------------ the start folder
+ 
+ def start_folder_problem(path: Path) -> str | None:
+@@ -179,11 +205,14 @@ def start_folder_problem(path: Path) -> str | None:
+ 
+ def open_mode_note(start: Path, snapshots_off: bool = False) -> str:
+     """What the model is told about Open Mode (one short block, sent with every request)."""
++    out = outputs_dir()
+     return (f"OPEN MODE is on. You may read and search ANY folder on this computer with absolute "
+             f"paths (D:/Projects/app/main.py). Relative paths start from the start folder: {start}. "
+             f"Some areas are protected and always refused: Windows and Program Files, AppData, other "
+             f"users' profiles, credential folders, Danica's own data. Do not try to reach them another "
+             f"way. Writing OUTSIDE the start folder makes the user confirm each time, and every shell "
+             f"command except look-only ones (ls, cat, git status...) asks. "
++            f"Files you GENERATE (decks, charts, documents, scratch work) go in {out} unless the user "
++            f"names another place or you are editing an existing file; writing there never asks. "
+             + ("/undo is off for this session. " if snapshots_off else "/undo covers only the start folder. ")
+             + "Work in the start folder unless the task needs somewhere else.")
+diff --git a/danica/permissions.py b/danica/permissions.py
+index a68d3d6..e0c24a9 100644
+--- a/danica/permissions.py
++++ b/danica/permissions.py
+@@ -15,7 +15,7 @@ from enum import Enum
+ from pathlib import Path
+ from typing import Callable
+ 
+-from danica.openmode import shell_protected_hit
++from danica.openmode import outputs_dir, shell_protected_hit
+ from danica.tools.registry import TOOLS
+ from danica.web import host_of
+ 
+@@ -265,7 +265,9 @@ class PermissionPolicy:
+             target = (self.open_root / str(args.get(arg) or "")).resolve()
+         except (OSError, ValueError, RuntimeError):
+             return None
+-        return None if target.is_relative_to(self.open_root) else target
++        if target.is_relative_to(self.open_root) or target.is_relative_to(outputs_dir()):
++            return None        # inside the start folder, or in the anchor's outputs folder: no ask
++        return target
+ 
+     def check(self, tool: str, args: dict, tainted_by=(), known_hosts=frozenset()) -> tuple[bool, str]:
+         """Return (allowed, message_for_model_if_denied). Sets self.last_how.
+diff --git a/danica/tui/commands.py b/danica/tui/commands.py
+index 7dad092..5c8f086 100644
+--- a/danica/tui/commands.py
++++ b/danica/tui/commands.py
+@@ -238,13 +238,14 @@ def _project(app, args):
+ @command("/openmode")
+ def _openmode(app, args):
+     """Enter Open Mode: the whole disk, minus the protected areas (see openmode.py)."""
+-    from danica.app_core import confirm_open_mode
+-    from danica.openmode import start_folder_problem
+-    start = Path(args.strip().strip('"') or app.launch_dir).expanduser()
+-    problem = start_folder_problem(start)
++    from danica.app_core import confirm_open_mode, resolve_open_start
++    # a folder you name is used as given; with no argument the launch folder, or ~/.danica if it won't do
++    start, notice, problem = resolve_open_start(args, app.launch_dir)
+     if problem:
+         app.ui.log("error", f"Open Mode can't start there: {problem}")
+         return
++    if notice:
++        app.ui.log("warning", notice)
+     if not confirm_open_mode(start.resolve(), app.ui):         # the warning, every single time
+         app.ui.log("warning", "Open Mode not enabled, nothing changed")
+         return

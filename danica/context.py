@@ -80,8 +80,12 @@ class ContextTracker:
         return "ok"
 
     def bar(self, messages: list[dict], width: int = 10) -> str:
-        """Text bar like  |███████             | 34%  22,300 / 65,536"""
+        """Text bar like  [███▍      ] 34%  22,300 / 65,536"""
+        partials = ' ▏▎▍▌▋▊▉'                       # 0/8 .. 7/8 of a cell
         f = min(self.fraction(messages), 1.0)
-        filled = round(f * width)
-        return (f"|{'█' * filled}{' ' * (width - filled)}| {f:.0%}  "
+        units = round(f * width * 8)                # each cell = 8 units
+        full, rem = divmod(units, 8)
+        bar = '█' * full + (partials[rem] if rem else '')
+        white_space = ' ' * (width - len(bar))
+        return (f"[{bar}{white_space}] {f:.0%}  "
                 f"{self.used(messages):,} / {self.window:,}")

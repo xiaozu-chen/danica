@@ -163,7 +163,8 @@ class Agent:
         self.policy = policy or PermissionPolicy()
         # Consecutive permissions denials. Two "no"s in a row means the user is
         # telling us to stop, so we hand control back instead of probing more.
-        self.denied_in_row = 0 
+        self.denied_in_row = 0
+        self.mode_note = ""        # Open Mode: what the model is told about it (see app_core.open_mode_note)
         self.guard = LoopGuard()    # loop detection for the current request (see loopguard.py) 
         self.cached_web = ""    # the [Web cache] reminder for the current request (see _cache_context)
         self.web_used = False   # did the current request read the web? (answers should then cite)
@@ -224,6 +225,10 @@ class Agent:
         if hits:
             self._log("memory_recall", auto=True, hits=len(hits))   # counts only, never note text
         return [(h.id, f"- [{h.scope}, id {h.id}] {h.summary}") for h in hits]
+
+    def set_mode_note(self, note: str) -> None:
+        """Text sent with every model call while Open Mode is on."""
+        self.mode_note = note
 
     def _cache_context(self, text: str) -> str:
         """A short [Web cache] reminder: stored pages that match THIS request first, then the most
@@ -362,6 +367,8 @@ class Agent:
                 block += ("\nAlso relevant to the user's current request (found by searching "
                           "saved memory):\n" + "\n".join(more))
             extra.append({"role": "user", "content": block})
+        if self.mode_note:                       # Open Mode: where Danica may work (see app_core)
+            extra.append({"role": "user", "content": "[harness note, not from the user] " + self.mode_note})
         if self.cached_web:                      # stored web pages (see _cache_context)
             extra.append({"role": "user", "content": self.cached_web})
         text = read_todo(self.ws)

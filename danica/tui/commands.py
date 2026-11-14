@@ -7,7 +7,7 @@ call from any thread. A handler may return ("request", text) to start an agent r
 command finishes (used by `/plan <request>`).
 
 Ported: /exit /help /think /ws /mode /context /todo /summary /new
-        /sessions /resume /project /chat /export /instructions /config /skills /prune /compact /plan
+        /sessions /resume /project /openmode /chat /export /instructions /config /skills /prune /compact /plan
         /fullaccess /sandbox /audit /undo /rewind /taint /untaint /sources /artifacts /open /save
         /memory /knowledge /reminder /agents /diagrams
 Not yet: /imagetest (see NOT_PORTED)
@@ -31,7 +31,7 @@ NOT_PORTED = {"/imagetest"}
 HELP = """Commands
   Chat      /think  toggle thinking      /think auto  use automatic setting      /new  fresh session, same mode      /exit
   Plans     /plan [<request>]  /plan show  /plan auto ask|off
-  Project   /mode  /project [path]  /chat  /instructions
+  Project   /mode  /project [path]  /openmode [folder]  /chat  /instructions
   Context   /context  /prune  /compact [tokens]  /summary  /todo [clear]
   Sessions  /sessions  /resume [number|id]  /export
   Files     /artifacts  /open <n>  /save <n> [folder]
@@ -48,7 +48,8 @@ Esc or Ctrl+C stops the current task. Ctrl+O expands tool output. Ctrl+D quits."
 DESCRIPTIONS = {
     "/think": "toggle thinking (auto to reset)", "/new": "fresh session, same mode", "/exit": "quit",
     "/plan": "draft a plan first (show | auto ask|off)", "/mode": "chat or project mode",
-    "/project": "trust and open a real folder", "/chat": "back to a throwaway chat",
+    "/project": "trust and open a real folder",
+    "/openmode": "OPEN MODE: whole-disk access (warns first)", "/chat": "back to a throwaway chat",
     "/instructions": "show the loaded DANICA.md", "/context": "how full the context is",
     "/prune": "drop old tool output", "/compact": "summarize earlier messages",
     "/summary": "show the compaction summary", "/todo": "show the TODO (clear to reset)",
@@ -125,7 +126,10 @@ def _ws(app, args):
 
 @command("/mode")
 def _mode(app, args):
-    if app.project:
+    if app.open_root is not None:
+        app.ui.say(f"\u26a0 OPEN MODE (full disk access; protected areas stay blocked)\n"
+                   f"  start folder: {app.ws.root}\n  /chat, /project or /new leave Open Mode")
+    elif app.project:
         app.ui.say(f"project mode: {app.project['name']}\n  folder: {app.ws.root}")
     else:
         app.ui.say(f"normal chat (throwaway workspace)\n  folder: {app.ws.root}\n"
@@ -230,6 +234,24 @@ def _project(app, args):
         app.ui.log("error", f"{e}")
 
 
+@command("/openmode")
+def _openmode(app, args):
+    """Enter Open Mode: the whole disk, minus the protected areas (see openmode.py)."""
+    from danica.app_core import confirm_open_mode, resolve_open_start
+    # a folder you name is used as given; with no argument the launch folder, or ~/.danica if it won't do
+    start, notice, problem = resolve_open_start(args, app.launch_dir)
+    if problem:
+        app.ui.log("error", f"Open Mode can't start there: {problem}")
+        return
+    if notice:
+        app.ui.log("warning", notice)
+    if not confirm_open_mode(start.resolve(), app.ui):         # the warning, every single time
+        app.ui.log("warning", "Open Mode not enabled, nothing changed")
+        return
+    app.audit.append("open_mode_enter", start=str(start.resolve()))
+    app.swap_session(None, open_root=start.resolve())
+
+
 @command("/chat")
 def _chat(app, args):
     app.swap_session(None, note="Normal chat. New session {id}.")
@@ -245,7 +267,8 @@ def _export(app, args):
     from danica.config import APP_DIR
     from danica.export import export_session
     try:
-        out = export_session(APP_DIR / "sessions" / app.session_id, app.ws, app.project)
+        out = export_session(APP_DIR / "sessions" / app.session_id, app.ws,
+                             app.project or ({"name": "Open Mode", "path": str(app.ws.root)} if app.open_root else None))
     except (ValueError, OSError) as e:
         app.ui.log("error", f"{e}")
         return

@@ -35,7 +35,7 @@ def chart(ws: Workspace, file: str) -> str:
         return "ERROR: the data file must end in .json (write it with write_file first)"
     if not p.is_file():
         return f"ERROR: '{file}' is not a file. Write the JSON data file with write_file first."
-    if is_sensitive_path(p.relative_to(ws.root)):
+    if is_sensitive_path(ws.rel(p)):
         return "ERROR: that file is blocked: it looks like a credentials file"
     if p.stat().st_size > MAX_SPEC_BYTES:
         return f"ERROR: the data file is too big (limit {MAX_SPEC_BYTES // 1000} KB)"

@@ -124,6 +124,7 @@ class DanicaApp(App):
         self.ws = self.audit = self.checkpoints = self.policy = self.agent = None
         self.session_id = ""
         self.project: dict | None = None
+        self.open_root: Path | None = None           # Open Mode: the START folder (None = not in Open Mode)
         self.plan_next = False                       # set by a bare /plan: the NEXT request gets a plan
         self.plan_auto = CONFIG.get("planning", {}).get("auto", "ask")   # "ask" | "off"
         self.artifacts: list = []                    # files the LAST request made (for /open, /save)
@@ -217,17 +218,22 @@ class DanicaApp(App):
         self.monitor.start()
         return True
 
-    def swap_session(self, project: dict | None, note: str | None = None, boot: bool = False) -> None:
+    def swap_session(self, project: dict | None, note: str | None = None, boot: bool = False,
+                 open_root: Path | None = None) -> None:
         """Build a new session (worker thread: it may open dialogs) and show it.
-        `note` may contain {id}; the default depends on the mode."""
+        open_root: start Open Mode in this folder (the caller already showed the warning)."""
         new_id = datetime.now().strftime("%Y%m%d-%H%M%S")
-        parts = build_session(new_id, self.ui, self.bridge, project)
+        parts = build_session(new_id, self.ui, self.bridge, project, open_root=open_root)
         default = f"New session {new_id}."
-        if project:
+        if open_root is not None:
+            default = (f"OPEN MODE: full disk access (protected areas stay blocked)\n"
+                   f"  start folder: {parts[0].root}\n{default} /chat, /project or /new leave Open Mode.")
+        elif project:
             default = (f"Project mode: {project['name']}\n  folder: {parts[0].root}\n"
-                       f"{default} The previous session stays available via /sessions and /resume.")
+                   f"{default} The previous session stays available via /sessions and /resume.")
         text = "" if boot else (note.format(id=new_id) if note else default)
-        self.adopt_session(parts, new_id, project, text, start_mode="project" if project else "chat")
+        self.adopt_session(parts, new_id, project, text,
+                       start_mode="open" if open_root is not None else "project" if project else "chat")
 
     def adopt_session(self, parts, session_id: str, project: dict | None, note: str,
                       start_mode: str | None = None) -> None:
@@ -235,6 +241,7 @@ class DanicaApp(App):
         ws, audit, checkpoints, policy, agent = parts
         self.ws, self.audit, self.checkpoints, self.policy, self.agent = ws, audit, checkpoints, policy, agent
         self.session_id, self.project = session_id, project
+        self.open_root = ws.root if ws.open_mode else None     # also right after /resume of an Open Mode session
         self.artifacts = []
         # The TUI draws subagents itself, so the supervisor must not open a console window
         if ws.subagent_supervisor is not None:
@@ -248,7 +255,8 @@ class DanicaApp(App):
         transcript = self.query_one("#transcript", VerticalScroll)
         transcript.remove_children()
         transcript.mount(Static(welcome_panel(self.project["name"] if self.project else None,
-                                              short_path(self.ws.root)), classes="welcome"))
+                                      short_path(self.ws.root),
+                                      open_mode=self.open_root is not None), classes="welcome"))
         if history:                                   # a resumed session: replay the last exchanges
             from danica.compaction import is_summary
             entries = []
@@ -638,6 +646,9 @@ class DanicaApp(App):
         level = agent.tracker.level(agent.messages)
         color = {"ok": "white", "prune": "yellow", "compact": "orange", "stop": "red"}.get(level, "white")
         t = Text()
+        if self.open_root is not None:                # first, so a narrow terminal can never cut it off
+            t.append(" \u26a0 OPEN MODE ", style="bold white on red")
+            t.append(" ")
         t.append(f"ctx {agent.tracker.bar(agent.messages)}", style=color)
         t.append(" | " + ("think" if agent.thinking else "fast"))
         if self.policy is not None and self.policy.full_access:
@@ -650,8 +661,8 @@ class DanicaApp(App):
             t.append(f" | {agent.proposals.count()} proposed note(s)")
         if self.ws is not None and self.ws.web and self.ws.web.tainted:
             t.append(" | TAINTED", style="bold red")
-        if self.ws is not None:
-            t.append(" | Workspace: " + short_path(self.ws.root), style="#C6C0BE")
+        label = "Start folder: " if self.open_root is not None else "Workspace: "
+        t.append(" | " + label + short_path(self.ws.root), style="#C6C0BE")
         return t
 
     def refresh_status(self) -> None:

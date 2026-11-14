@@ -30,7 +30,7 @@ def _read_text(path) -> str:
 
 def _protected(ws: Workspace, p) -> str | None:
     """Error messages if p is a credential file the model must not touch."""
-    reason = is_sensitive_path(p.relative_to(ws.root))
+    reason = is_sensitive_path(ws.rel(p))
     if reason:
         return (f"ERROR: '{ws.display(p)}' is blocked: it looks like a {reason} that may "
                 f"hold secrets. Do not try to read it another way. Tell the user what "
@@ -55,7 +55,7 @@ def _secret_check(text: str) -> str | None:
 
 def _write_guard(ws: Workspace, p) -> str | None:
     """Error message if p is inside a folder whose files run on their own."""
-    if any(part.lower() in GUARDED_DIRS for part in p.relative_to(ws.root).parts):
+    if any(part.lower() in GUARDED_DIRS for part in ws.rel(p).parts):
         return (f"ERROR: '{ws.display(p)}' is blocked: files there run automatically "
                 f"(git hooks). Tell the user what change you wanted instead.")
     return None

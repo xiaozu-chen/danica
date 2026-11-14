@@ -29,7 +29,7 @@ def mermaid(ws: Workspace, file: str) -> str:
         return "ERROR: the file must end in .mmd (write the Mermaid text with write_file first)"
     if not p.is_file():
         return f"ERROR: '{file}' is not a file. Write the Mermaid text with write_file first."
-    if is_sensitive_path(p.relative_to(ws.root)):
+    if is_sensitive_path(ws.rel(p)):
         return "ERROR: that file is blocked: it looks like a credentials file"
     if p.stat().st_size > MAX_MERMAID_CHARS * 4:
         return f"ERROR: the file is too big (limit {MAX_MERMAID_CHARS:,} characters)"

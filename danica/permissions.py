@@ -12,8 +12,10 @@ that deletes things when run). Real containment comes from the sandbox levels
 
 import re
 from enum import Enum
+from pathlib import Path
 from typing import Callable
 
+from danica.openmode import outputs_dir, shell_protected_hit
 from danica.tools.registry import TOOLS
 from danica.web import host_of
 
@@ -82,6 +84,13 @@ OUTSIDE_PATTERNS = [
     (r"""(^|[\s\\/'"])\.env(\.\w+)?\b|\.pem\b|\bid_(rsa|ed25519|dsa|ecdsa)\b|\.ssh\b|\.aws\b|\.npmrc|\.pypirc|\.netrc|\.git-credentials""",
      "mentions a credential file"),
 ]
+
+# In Open Mode a path outside the workspace is ordinary, so these four stop counting as "outside".
+# (The credential-file pattern stays, and shell_protected_hit() adds the protected-area check.)
+OPEN_MODE_ORDINARY = {
+    "mentions an absolute drive path", "mentions the parent directory (..)",
+    "mentions the home directory", "reads environment variables / system paths",
+}
 
 # Text that makes a command too tricky to remember (hidden sub-commands)
 COMPLEX_MARKERS = ("$(", "`")
@@ -152,6 +161,12 @@ def is_project_safe(command: str) -> bool:
             return False
     return True
 
+def _norm_dir(path: Path) -> str:
+    """One spelling of a folder for the 'allow for session' key (Windows is case-insensitive)."""
+    import os
+    return os.path.normcase(str(path))
+
+
 def _programs(command: str) -> frozenset[str]:
     """First word of every segment in a chained command: 'a; b | c' -> {a, b, c}."""
     if any(m in command for m in COMPLEX_MARKERS):
@@ -166,8 +181,27 @@ def _programs(command: str) -> frozenset[str]:
     return frozenset(names)
 
 
-def classify(tool: str, args: dict) -> tuple[Tier, str, frozenset[str]]:
-    """Return (tier, reason, session_keys). session_keys is what 'allow for session' remembers."""
+def is_read_only(command: str) -> bool:
+    """True if EVERY part of the command only looks at things (cat, ls, git status-style reads).
+    Used by Open Mode, where these run without asking."""
+    if not command.strip() or any(m in command for m in PROJECT_UNSAFE):
+        return False
+    for segment in re.split(r"[;|&\n]+", command):
+        words = segment.strip().split()
+        if words and (_program(words[0]) not in READ_ONLY_COMMANDS or "/" in _program(words[0])
+                      or "\\" in _program(words[0])):
+            return False
+    return True
+
+
+# Tools that WRITE a file, and the argument that names it (Open Mode asks when it is outside the start folder)
+WRITE_PATH_ARGS = {"write_file": "path", "edit_file": "path", "chart": "file", "dashboard": "file",
+                   "diagram": "file", "mermaid": "file", "document": "source", "deck": "source"}
+
+
+def classify(tool: str, args: dict, open_root: Path | None = None) -> tuple[Tier, str, frozenset[str]]:
+    """Return (tier, reason, session_keys). session_keys is what 'allow for session' remembers.
+    open_root: the Open Mode start folder (None = not in Open Mode)."""
     if tool not in TOOLS:
         # Hallucinated tool name: run_tool will just report "unknown tool", so it's harmless.
         return Tier.READ, "unknown tool", frozenset()
@@ -183,7 +217,13 @@ def classify(tool: str, args: dict) -> tuple[Tier, str, frozenset[str]]:
     for pattern, reason in DESTRUCTIVE_PATTERNS:
         if re.search(pattern, command, re.IGNORECASE):
             return Tier.DESTRUCTIVE, reason, frozenset()
+    if open_root is not None:
+        hit = shell_protected_hit(command, open_root)
+        if hit:
+            return Tier.OUTSIDE, f"mentions a protected area: {hit[0]} ({hit[1]})", frozenset()
     for pattern, reason in OUTSIDE_PATTERNS:
+        if open_root is not None and reason in OPEN_MODE_ORDINARY:
+            continue
         if re.search(pattern, command, re.IGNORECASE):
             return Tier.OUTSIDE, reason, frozenset()
     return Tier.EXECUTE, "runs a program", _programs(command)
@@ -203,26 +243,48 @@ class PermissionPolicy:
         self.session_allowed: set[str] = set()
         self.last_how = ""                  # how the latest check was decided (for the audit log)
         self.project_mode = False            # True inside a trusted project folder (set by the CLI)
+        self.open_root: Path | None = None   # Open Mode: the START folder (None = not in Open Mode)
 
     def _taint_applies(self, tool: str, args: dict, known_hosts) -> bool:
         """While untrusted content is in context: which calls need a fresh yes?"""
         if tool == "run_shell":
             return True
         if tool in ("write_file", "edit_file"):
-            return self.project_mode      # a page must not choose what lands in a REAL folder
+            return self.project_mode or self.open_root is not None   # a page must not choose what lands in a REAL folder
         if tool == "web_fetch":
             host = host_of(str(args.get("url", "")))
             return bool(host) and host not in known_hosts   # a new site might be a page's idea
         return False
 
+    def _open_write_outside(self, tool: str, args: dict) -> Path | None:
+        """Open Mode: the file a write tool is about to write, if it is OUTSIDE the start folder."""
+        arg = WRITE_PATH_ARGS.get(tool)
+        if self.open_root is None or arg is None:
+            return None
+        try:
+            target = (self.open_root / str(args.get(arg) or "")).resolve()
+        except (OSError, ValueError, RuntimeError):
+            return None
+        if target.is_relative_to(self.open_root) or target.is_relative_to(outputs_dir()):
+            return None        # inside the start folder, or in the anchor's outputs folder: no ask
+        return target
+
     def check(self, tool: str, args: dict, tainted_by=(), known_hosts=frozenset()) -> tuple[bool, str]:
         """Return (allowed, message_for_model_if_denied). Sets self.last_how.
         tainted_by: what put untrusted web content in the context (empty = clean)."""
-        tier, reason, keys = classify(tool, args)
+        tier, reason, keys = classify(tool, args, self.open_root)
 
         if self.full_access:
             self.last_how = "full-access"
             return True, ""
+
+        # Open Mode: reading anywhere is free, but WRITING outside the start folder asks first
+        # ("allow for session" remembers that one folder, nothing wider).
+        outside = self._open_write_outside(tool, args)
+        if outside is not None:
+            tier = Tier.OUTSIDE
+            reason = f"writes outside the start folder: {outside}"
+            keys = frozenset({"openwrite:" + _norm_dir(outside.parent)})
 
         if tainted_by and self._taint_applies(tool, args, known_hosts):
             note = f"untrusted web content is in this conversation (from: {tainted_by[-1][:80]})"
@@ -237,7 +299,7 @@ class PermissionPolicy:
                     what = "this site has not appeared in the conversation yet"
                 tier, reason = Tier.TAINTED, f"{what}; {note}"
             keys = frozenset()      # earlier "allow for session" approvals do not count now
-        elif tier in (Tier.READ, Tier.WRITE):
+        elif tier in (Tier.READ, Tier.WRITE) and outside is None:
             self.last_how = "free"
             return True, ""
 
@@ -246,6 +308,12 @@ class PermissionPolicy:
         if (self.project_mode and tool == "run_shell" and tier == Tier.EXECUTE
                 and is_project_safe(str(args.get("command", "")))):
             self.last_how = "project-free"
+            return True, ""
+
+        # Open Mode: look-only shell commands run free; everything else asks (below)
+        if (self.open_root is not None and tool == "run_shell" and tier == Tier.EXECUTE
+                and is_read_only(str(args.get("command", "")))):
+            self.last_how = "open-readonly"
             return True, ""
 
         # Already approved for this session? (every program in the chain must be)
@@ -258,7 +326,8 @@ class PermissionPolicy:
             return False, "ERROR: this action needs the user's permission and none is available."
 
         # Only plain EXECUTE can be remembered; destructive/outside/tainted always ask.
-        can_remember = tier == Tier.EXECUTE and bool(keys)
+        can_remember = bool(keys) and (tier == Tier.EXECUTE or (
+            tier == Tier.OUTSIDE and all(k.startswith("openwrite:") for k in keys)))
         summary = str(args.get("command")) if tool == "run_shell" else f"{tool} {args}"
         decision = self.ask(tool, summary[:300], tier, reason, can_remember)
 

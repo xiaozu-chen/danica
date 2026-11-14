@@ -71,7 +71,7 @@ def collect(ws: Workspace, checkpoints, snap: str | None, touched: list[str], sh
             continue                                        # chart data: the picture is the artifact
         try:
             path = ws.resolve(name)
-            if not path.is_file() or is_sensitive_path(path.relative_to(ws.root)):
+            if not path.is_file() or is_sensitive_path(ws.rel(path)):
                 continue
             size = path.stat().st_size
         except (PathJailError, OSError, ValueError):

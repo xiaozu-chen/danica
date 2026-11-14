@@ -204,6 +204,8 @@ class SubagentSupervisor:
                     "max_turns": self.max_turns,
                     "permission": {
                         "project_mode": self.policy.project_mode,
+                        # Open Mode is inherited, never widened: same start folder, same protected areas
+                        "open_root": str(self.policy.open_root) if self.policy.open_root else "",
                         "full_access": self.policy.full_access,
                         "session_allowed": sorted(self.policy.session_allowed),
                     },
@@ -382,6 +384,10 @@ def run_worker_connection(host: str, port: int, token: str, console: bool = Fals
             raise SubagentError("invalid inherited permission policy")
         policy = PermissionPolicy()
         policy.project_mode = bool(permission.get("project_mode"))
+        open_root = permission.get("open_root") or ""
+        if not isinstance(open_root, str):
+            raise SubagentError("invalid inherited Open Mode folder")
+        policy.open_root = Path(open_root) if open_root else None
         policy.full_access = bool(permission.get("full_access"))
         allowed = permission.get("session_allowed", [])
         if not isinstance(allowed, list) or not all(isinstance(item, str) for item in allowed):
@@ -389,7 +395,7 @@ def run_worker_connection(host: str, port: int, token: str, console: bool = Fals
         policy.session_allowed = set(allowed)
         audit_path = Path(payload["audit_path"]) if payload.get("audit_path") else None
         audit = AuditLog(audit_path, session=str(payload.get("session_id", ""))) if audit_path else None
-        ws = Workspace(Path(payload["workspace"]))
+        ws = Workspace(Path(payload["workspace"]), open_mode=policy.open_root is not None)
         from danica.web import state_for
         web_state = state_for(ws)
         sources = payload.get("taint_sources", [])
@@ -419,6 +425,9 @@ def run_worker_connection(host: str, port: int, token: str, console: bool = Fals
 
         agent = Agent(ws, max_steps=min(int(payload.get("max_turns", 1)), 8),
                       policy=policy, audit=audit, on_event=report)
+        if policy.open_root is not None:          # the child knows the same Open Mode rules
+            from danica.openmode import open_mode_note
+            agent.set_mode_note(open_mode_note(policy.open_root, snapshots_off=False))
         if console:
             print(f"Danica subagent {payload.get('child_id', '')}\n"
                   f"Task: {str(payload.get('task', ''))[:300]}\n" + "-" * 60, flush=True)
