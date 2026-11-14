@@ -700,3 +700,5 @@ def _dialogs(app, args):
         can_remember=True,
     )
     app.ui.log("info", f"permission -> {answer}")   # "once", "session" or "deny"
+
+from danica.tui import commands_view  # noqa: E402,F401

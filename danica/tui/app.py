@@ -24,7 +24,7 @@ import argparse
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Horizontal, VerticalScroll, Vertical
 from textual.widgets import Static
 from rich.console import Console
 from rich.markup import escape
@@ -40,10 +40,14 @@ from danica.tui.commands import command_names, dispatch
 from danica.tui.engine import Engine
 from danica.tui.widgets import (ACCENT, ArtifactsList, AssistantMessage, BusyLine, Citations,
                                 CommandPopup, Notice, PromptInput, Say, StatusBar, ThinkingBlock, ToolCall,
-                                UserMessage, image_widget, welcome_panel, SubagentPane)
+                                UserMessage, welcome_panel, SubagentPane)
 from danica.tui.modals import ConfirmScreen
 from danica.server import ServerError, ServerMonitor, probe
 from danica.tui.connection import DisconnectedScreen, SetupScreen
+from danica.tui.viewer_widgets import ArtifactPane, PresentLink
+from danica.htmlview import ViewerError, build_viewer
+from danica.workspace import PathJailError
+from danica.seal import is_sealed_html
 
 IDLE_PLACEHOLDER = f"Ask Danica…"
 BUSY_PLACEHOLDER = "Working…  Esc stops the task"
@@ -93,7 +97,7 @@ class _PlanCancelled(Exception):
 
 
 class DanicaApp(App):
-    CSS_PATH = "app.tcss"
+    CSS_PATH = ["app.tcss", "viewer.tcss"]
     TITLE = "Danica"
 
     # Input itself binds ctrl+c (copy) and ctrl+d (delete), so ours are priority bindings.
@@ -103,6 +107,7 @@ class DanicaApp(App):
         Binding("ctrl+d", "eof", "Quit", priority=True, show=False),
         Binding("ctrl+o", "toggle_tools", "Expand tool output", show=False),
         Binding("ctrl+g", "toggle_agents", "Show/hide subagent pane", show=False),
+        Binding("ctrl+e", "toggle_viewer", "Show/hide file viewer", show=False)
     ]
 
 
@@ -148,7 +153,9 @@ class DanicaApp(App):
         # Split screen: chat on the left, subagent pane on the right (hidden until one runs)
         with Horizontal(id="main"):
             yield VerticalScroll(id="transcript")
-            yield SubagentPane(id="agents-pane")
+            with Vertical(id="side"):
+                yield SubagentPane(id="agents-pane")
+                yield ArtifactPane(id="viewer-pane")
         yield BusyLine(id="busy")
         yield CommandPopup(id="popup")
         with Horizontal(id="prompt-box"):
@@ -163,6 +170,8 @@ class DanicaApp(App):
             transcript.anchor()
         self.query_one(CommandPopup).hide()
         self.query_one("#agents-pane", SubagentPane).display = False
+        self.query_one("#viewer-pane", ArtifactPane).display = False
+        self.sync_side()
         self.query_one(PromptInput).focus()
         self.set_working(True, "starting")
         self.engine.start()
@@ -410,11 +419,36 @@ class DanicaApp(App):
         pane = self.query_one("#agents-pane", SubagentPane)
         if msg.kind == "start":
             pane.display = True                        # the chat shrinks to the left half
+            self.sync_side()
         pane.handle(msg.child_id, msg.kind, msg.data)
 
     def action_toggle_agents(self) -> None:
         pane = self.query_one("#agents-pane", SubagentPane)
         pane.display = not pane.display
+        self.sync_side()
+
+    def action_toggle_viewer(self) -> None:
+        """Ctrl+E: show or hide the file viewer."""
+        pane = self.query_one("#viewer-pane", ArtifactPane)
+        pane.display = not pane.display
+        self.sync_side()
+
+    def sync_side(self) -> None:
+        """Show the right-hand column only while one of its panes is visible."""
+        side = self.query_one("#side", Vertical)
+        side.display = any(child.display for child in side.children)
+
+    def view_artifact(self, rel: str, path, text: str, cut: bool, left_out: int) -> None:
+        """UI thread. /open <n>: show a text file in the split-screen viewer."""
+        pane = self.query_one("#viewer-pane", ArtifactPane)
+        pane.show_file(rel, path, text, cut, left_out)
+        pane.display = True
+        self.sync_side()
+
+    def close_viewer(self) -> None:
+        """/close: hide the viewer."""
+        self.query_one("#viewer-pane", ArtifactPane).display = False
+        self.sync_side()
 
     def on_agent_event(self, ev: AgentEvent) -> None:
         kind, data = ev.kind, ev.data
@@ -490,12 +524,28 @@ class DanicaApp(App):
             self._assistant = None
 
     def show_image(self, rel: str) -> None:
+        """<present file="..."/>. Pictures are never drawn inline: a picture becomes ONE clickable link
+        to an interactive HTML viewer (htmlview.py), a sealed Danica slideshow links to itself. If the
+        viewer can't be built, the link opens the picture file itself."""
         try:
+            if rel.lower().endswith(".html"):                      # an HTML slideshow Danica made
+                path = self.ws.resolve(rel)
+                if not path.is_file() or not is_sealed_html(path):
+                    raise ImageError("only slideshows made by Danica can be linked")
+                label = self.ws.display(path)
+                self.presented.add(label)
+                self.mount_block(PresentLink(label, path, "slideshow"))
+                return
             path = check_image(self.ws, rel)
             label = self.ws.display(path)
             self.presented.add(label)
-            self.mount_block(image_widget(path, label))
-        except ImageError as exc:
+            what = "chart" if path.with_suffix(".json").is_file() else "picture"
+            try:
+                self.mount_block(PresentLink(label, build_viewer(path), what))
+            except ViewerError as exc:                              # no viewer: link the picture itself
+                self.add_notice("warning", f"  No interactive view ({exc}); linking the picture file")
+                self.mount_block(PresentLink(label, path, what))
+        except (ImageError, PathJailError) as exc:
             self.add_notice("warning", f"  Could not show {rel}: {exc}")
 
     def on_server_event(self, msg: ServerEvent) -> None:
@@ -507,7 +557,7 @@ class DanicaApp(App):
             if isinstance(self.screen, DisconnectedScreen):
                 self.screen.dismiss(msg.data)             # -> _reconnected
         elif msg.kind == "ctx_changed":                   # restarted quickly with another -c
-            self.engine.submit(self._reconcile_context, msg.data[1])
+                self.engine.submit(self._reconcile_context, msg.data[1])
 
     def _reconnected(self, n_ctx: int | None) -> None:
         if n_ctx is not None:
@@ -661,7 +711,9 @@ class DanicaApp(App):
             t.append(f" | {agent.proposals.count()} proposed note(s)")
         if self.ws is not None and self.ws.web and self.ws.web.tainted:
             t.append(" | TAINTED", style="bold red")
-        label = "Start folder: " if self.open_root is not None else "Workspace: "
+        if self.ws is not None:
+            label = "Start folder: " if self.open_root is not None else "Workspace: "
+        t.append(" | " + label + short_path(self.ws.root), style="#C6C0BE")
         t.append(" | " + label + short_path(self.ws.root), style="#C6C0BE")
         return t
 

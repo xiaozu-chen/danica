@@ -28,14 +28,6 @@ from textual.widgets import Markdown, OptionList, RichLog, Static, TextArea
 from danica.config import APP_DIR
 from danica.partial_json import partial_fields
 
-# textual-image asks the terminal what it can draw (Sixel / Kitty graphics, cell size) at IMPORT
-# time, and that question cannot be answered once Textual owns stdin. So import it here, at module
-# load, before the app starts. Imported lazily (inside image_widget) the probe fails and it silently
-# falls back to half-cell rendering, which is what made the charts blurry.
-try:
-    from textual_image.widget import Image as _InlineImage
-except Exception:                       # optional dependency
-    _InlineImage = None
 from danica.ui import TAG_COLORS, TAG_WIDTH
 
 ACCENT = "#ffffff"
@@ -402,19 +394,6 @@ class ArtifactsList(Static):
         if found.deleted:
             t.append(f"\n  ({found.deleted} file(s) deleted)", style="dim")
         super().__init__(t, classes="artifacts")
-
-
-def image_widget(path: Path, label: str):
-    """Inline picture via the optional `textual-image` package, else a one-line placeholder."""
-    try:
-        if _InlineImage is None:
-            raise ImportError("textual-image is not installed")
-        widget = _InlineImage(path)
-        widget.add_class("inline-image")
-        return widget
-    except Exception:
-        return Static(Text(f"▣ image: {label}   (pip install textual-image to see it inline)", style="dim"),
-                      classes="say")
 
 
 # def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.3.2") -> Panel:

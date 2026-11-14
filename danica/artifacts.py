@@ -21,6 +21,13 @@ MAX_LISTED = 12
 OPEN_TYPES = {".md", ".txt", ".png", ".jpg", ".jpeg"}
 DOC_TYPES = {".pdf", ".docx", ".pptx", ".html"}   # opened only when Danica made them (for .html: its signature must verify)
 SKIP_SUFFIXES = {".pyc", ".pyo", ".tmp"}
+# Never shown or copied as text, whatever their bytes look like (binary formats and pictures)
+NON_TEXT_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".pdf", ".docx", ".pptx", ".xlsx",
+                     ".zip", ".gz", ".7z", ".exe", ".dll", ".pyd", ".so", ".db", ".sqlite", ".mp3", ".mp4"}
+VIEW_MAX_BYTES = 400_000        # the split-screen viewer reads at most this much of a file
+VIEW_MAX_LINES = 1500           # ...and shows at most this many lines
+VIEW_MAX_COLS = 300             # a longer line is cut (a base64 image inside an .html would flood the pane)
+COPY_MAX_BYTES = 1_000_000      # /copy refuses files bigger than this
 
 
 class ArtifactError(Exception):
@@ -142,3 +149,60 @@ def pick(arg: str, items: list[Artifact]) -> Artifact:
     if not arg.isdigit() or not 1 <= int(arg) <= len(items):
         raise ArtifactError(f"pick a number from 1 to {len(items)}")
     return items[int(arg) - 1]
+
+
+# ------------------------------------------------------------------ text view and clipboard
+
+def read_text(path: Path, limit: int = VIEW_MAX_BYTES) -> tuple[str, bool]:
+    """(text, was_cut) for a text artifact, or ArtifactError if it is not text. Used by the split-
+    screen viewer and /copy. Only reads the start of a big file. Pictures and office files are
+    refused by their suffix; anything else is refused when its first bytes contain a NUL."""
+    path = Path(path)
+    if path.suffix.lower() in NON_TEXT_SUFFIXES:
+        raise ArtifactError(f"{path.name} is not a text file")
+    try:
+        size = path.stat().st_size
+        with open(path, "rb") as f:
+            raw = f.read(limit + 1)
+    except OSError as e:
+        raise ArtifactError(f"could not read it: {e}")
+    if b"\0" in raw[:8192]:
+        raise ArtifactError(f"{path.name} is not a text file")
+    cut = len(raw) > limit or size > limit
+    return raw[:limit].decode("utf-8-sig", errors="replace"), cut
+
+
+def tidy_for_view(text: str) -> tuple[str, int]:
+    """Text ready for the viewer: tabs expanded, over-long lines cut, at most VIEW_MAX_LINES lines.
+    Returns (text, number of lines left out)."""
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    left_out = max(0, len(lines) - VIEW_MAX_LINES)
+    out = []
+    for line in lines[:VIEW_MAX_LINES]:
+        line = line.expandtabs(4)
+        out.append(line if len(line) <= VIEW_MAX_COLS else line[:VIEW_MAX_COLS] + " …")
+    return "\n".join(out), left_out
+
+
+def _clipboard(text: str) -> None:
+    """Put text on the Windows clipboard. Tests replace this. Goes through PowerShell's
+    Set-Clipboard with the text on STDIN (never in the command line: no quoting, no length limit)."""
+    script = "[Console]::InputEncoding=[Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())"
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                   input=text.encode("utf-8"), check=True, timeout=20, creationflags=flags,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def copy_contents(a: Artifact) -> int:
+    """Copy a text artifact's contents to the clipboard. Returns the number of characters."""
+    if not a.path.is_file():
+        raise ArtifactError("that file no longer exists")
+    text, cut = read_text(a.path, COPY_MAX_BYTES)
+    if cut:
+        raise ArtifactError(f"{a.rel} is bigger than {COPY_MAX_BYTES // 1000} KB: use /save instead")
+    try:
+        _clipboard(text)
+    except (OSError, subprocess.SubprocessError) as e:
+        raise ArtifactError(f"could not reach the clipboard ({type(e).__name__}). Use /save instead")
+    return len(text)

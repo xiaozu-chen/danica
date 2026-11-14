@@ -29,14 +29,6 @@ AssistantMessage {
     background: transparent;
 }
 
-.inline-image {
-    width: auto;
-    height: auto;
-    max-width: 80;
-    max-height: 24;
-    margin: 1 0 0 0;
-}
-
 /* ---- prompt box ---- */
 #busy {
     height: 1;

@@ -44,6 +44,10 @@ MAX_BLOCKED_HITS = 3        # level 4: blocked calls attempted this many times -
 HOT_TURNS = 3               # warmer sampling for this many model turns after a level-2 reminder
 HOT_TEMPERATURE = 0.8
 REMIND_COOLDOWN = 6         # calls that must pass before another reminder (no nagging every step)
+# Same FILE written again and again with slightly different content each time. Every such write looks
+# "new" (a new call signature), so without a per-file count it would reset the guard forever.
+PATH_REMIND_AT = {"write": 5, "edit": 9}    # writes to one path before the "are you done?" reminder
+PATH_BLOCK_AT = {"write": 8, "edit": 14}    # ...and before further writes to that path are refused
 
 # Tools whose successful, NEW call counts as real progress (it changes files/artifacts)
 PROGRESS_TOOLS = frozenset({"write_file", "edit_file", "chart", "document", "diagram", "deck",
@@ -121,6 +125,8 @@ class LoopGuard:
     seen_progress: set[str] = field(default_factory=set)        # progress calls done this request
     blocked_hits: int = 0
     hot_turns: int = 0
+    path_writes: dict[str, int] = field(default_factory=dict)   # (kind, path) -> successful writes this request
+    blocked_paths: dict[str, str] = field(default_factory=dict) # (kind, path) -> label of a path that stopped taking writes
     total: int = 0              # calls recorded this request
     last_remind: int = -999     # value of `total` when the last reminder was sent
 
@@ -130,6 +136,17 @@ class LoopGuard:
         """(error text, stop message). The error text is non-empty when the call must NOT run.
         The stop message is non-empty when the model has hit blocked calls too many times."""
         sig = self._sig(call)
+        pkey = self._path_key(call)
+        if pkey in self.blocked_paths:                    # the same file rewritten too many times
+            self.blocked_hits += 1
+            label = self.blocked_paths[pkey]
+            if self.blocked_hits >= MAX_BLOCKED_HITS:
+                return ("BLOCKED: loop guard", f"[stopped: Danica kept rewriting {label}. "
+                        "Tell it what to do next, or say 'continue' after you changed something.]")
+            return (f"BLOCKED: {label} was already written {PATH_BLOCK_AT[pkey.split(':', 1)[0]]} times in this "
+                    "request, so this write was NOT done. The file is probably fine as it is. If the task "
+                    "is finished, write your final summary now with no tool call. Otherwise do something "
+                    "different (use the file, check a different one, or ask the user).", "")
         if sig not in self.blocked:
             return "", ""
         self.blocked_hits += 1
@@ -151,6 +168,22 @@ class LoopGuard:
         failed = result.startswith("ERROR")
 
         # Real progress: a NEW, successful change to a file/artifact -> fresh start
+        pkey = self._path_key(call)
+        path_reminder = ""
+        if name in PROGRESS_TOOLS and not failed and pkey:
+            n = self.path_writes[pkey] = self.path_writes.get(pkey, 0) + 1
+            kind = pkey.split(":", 1)[0]
+            label = describe(name, call["arguments"])
+            if n >= PATH_BLOCK_AT[kind]:
+                self.blocked_paths[pkey] = pkey.split(":", 1)[1]
+            elif n >= PATH_REMIND_AT[kind]:
+                path_reminder = self._remind(f"{pkey.split(':', 1)[1]} has been written {n} times in this request "
+                                             "(the content changes a little each time)", "path:" + pkey, str(n))
+            if n > PATH_REMIND_AT[kind] - 1:              # a file rewritten this often is NOT progress
+                self.total += 1
+                self.history.append(_Record(sig, name, _hash(_norm_output(result)), len(result), label))
+                del self.history[:-WINDOW]
+                return Verdict(reminder=path_reminder)
         if name in PROGRESS_TOOLS and not failed and sig not in self.seen_progress:
             self.seen_progress.add(sig)
             self.history.clear()
@@ -212,6 +245,23 @@ class LoopGuard:
     @staticmethod
     def _sig(call: dict) -> str:
         return call["name"] + ":" + _canonical_args(call.get("arguments") or "{}")
+
+    @staticmethod
+    def _path_key(call: dict) -> str:
+        """Returns "write:charts/scores.json" for write_file, "edit:..." for edit_file, "" for anything else.
+        Chart/diagram/deck tools are not counted: they only read the data file, and re-drawing a
+        chart a few times while tweaking it is normal."""
+        name = call["name"]
+        if name not in ("write_file", "edit_file"):       # the chart/deck/... tools only READ that file
+            return ""
+        try:
+            data = json.loads(call.get("arguments") or "{}")
+        except ValueError:
+            return ""
+        path = data.get("path") if isinstance(data, dict) else None
+        if not isinstance(path, str) or not path.strip():
+            return ""
+        return ("edit:" if name == "edit_file" else "write:") + path.strip().replace("\\", "/").lower()
 
     def _cycle_period(self) -> int:
         """Smallest p >= 2 such that the last p calls AND their outputs repeated CYCLE_REPS times in

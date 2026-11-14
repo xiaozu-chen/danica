@@ -56,6 +56,6 @@ def chart(ws: Workspace, file: str) -> str:
 
     out.write_bytes(png)
     shown = ws.display(out)
-    return (f'OK: saved {shown} ({max(1, len(png) // 1024)} KB). To show it in chat, write '
-            f'<present file="{shown}"/> on its own line in your answer. To put it in a document, '
+    return (f'OK: saved {shown} ({max(1, len(png) // 1024)} KB). It is finished: do NOT call this tool again for this file. To show it in chat, write '
+            f'<present file="{shown}"/> on its own line in your reply, then add one short sentence and stop. To put it in a document, '
             f'write ![caption]({shown}) in the Markdown file instead.')
