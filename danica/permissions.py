@@ -53,6 +53,10 @@ TOOL_TIERS = {
     "knowledge_search": Tier.READ,
     "knowledge_synthesize": Tier.READ,
     "web_cache_search": Tier.READ,
+    "quiz": Tier.WRITE,            # these three make a file next to their JSON data, like chart
+    "flashcards": Tier.WRITE,
+    "flowchart": Tier.WRITE,
+    "ask_user": Tier.READ,         # only shows the user a dialog
 }
 
 # (regex, reason) pairs for commands that can destroy things or pull in code.
@@ -196,7 +200,8 @@ def is_read_only(command: str) -> bool:
 
 # Tools that WRITE a file, and the argument that names it (Open Mode asks when it is outside the start folder)
 WRITE_PATH_ARGS = {"write_file": "path", "edit_file": "path", "chart": "file", "dashboard": "file",
-                   "diagram": "file", "mermaid": "file", "document": "source", "deck": "source"}
+                   "diagram": "file", "mermaid": "file", "document": "source", "deck": "source",
+                   "quiz": "file", "flashcards": "file", "flowchart": "file"}
 
 
 def classify(tool: str, args: dict, open_root: Path | None = None) -> tuple[Tier, str, frozenset[str]]:
@@ -339,4 +344,4 @@ class PermissionPolicy:
             self.last_how = "asked-once"
             return True, ""
         self.last_how = "denied-by-user"
-        return False, DENIED_MESSAGE
+        return False, DENIED_MESSAGE

@@ -1,0 +1,1589 @@
+diff --git a/danica/app_core.py b/danica/app_core.py
+index 226d1e7..703e541 100644
+--- a/danica/app_core.py
++++ b/danica/app_core.py
+@@ -108,6 +108,20 @@ def apply_instructions(project: dict, agent, audit, ui: UI) -> None:
+     ui.log("ok", f"  Loaded DANICA.md ({len(text)} characters.)")
+ 
+ 
++def make_asker(ui):
++    """How the ask_user tool reaches the user: a dialog on the TUI. None when this UI has no dialogs
++    (the tool then tells the model to carry on with sensible defaults). Blocks the worker thread
++    until the user answers; returns [{"question", "answers", "other"}, ...] or None if skipped."""
++    show = getattr(ui, "ask_screen", None)
++    if show is None:
++        return None
++
++    def ask(questions: list[dict]):
++        from danica.tui.ask_screen import AskScreen
++        return show(AskScreen(questions))
++    return ask
++
++
+ def build_session(session_id: str, ui: UI, on_event, project: dict | None = None,
+                   headless: bool = False, workspace_root: Path | None = None,
+                   open_root: Path | None = None):
+@@ -151,6 +165,7 @@ def build_session(session_id: str, ui: UI, on_event, project: dict | None = None
+     policy.open_root = ws.root if open_root is not None else None      # switches Open Mode rules on
+     supervisor = SubagentSupervisor(ws, policy, audit, session_id)
+     ws.subagent_supervisor = supervisor
++    ws.ask_user = None if headless else make_asker(ui)       # the ask_user tool's way to reach the user
+     extensions = extension_manager(audit, headless)
+     ws.extension_manager = extensions
+     for error in extensions.errors:
+@@ -338,4 +353,4 @@ def shutdown(ws, log: Callable[[str, str], None] | None = None) -> None:
+         try:
+             _EXTENSION_MANAGER.close()
+         except ExtensionError as exc:
+-            log("error", f"stopping extensions: {exc}")
+\ No newline at end of file
++            log("error", f"stopping extensions: {exc}")
+\ No newline at end of file
+diff --git a/danica/charts.py b/danica/charts.py
+index 4e37d4a..96d91e9 100644
+--- a/danica/charts.py
++++ b/danica/charts.py
+@@ -8,7 +8,9 @@ before it is drawn (matplotlib would read "$...$" as math, so "$" is escaped).
+ Spec formats (validate() explains mistakes in plain words):
+     bar / line / area:  {"type", "title", "x_label", "y_label", "labels": [...],
+                          "series": [{"name", "values": [numbers]}]}      (area is stacked)
+-    pie:                the same with exactly ONE series, no negative values
++    pie / donut:        the same with exactly ONE series, no negative values
++    hbar:               horizontal bars (same format as bar; good for long labels and rankings)
++    stacked:            stacked bars (same format as bar; each label's bar is split by series)
+     scatter:            {"series": [{"name", "points": [[x, y], ...]}]}
+     table:              {"columns": [...], "rows": [[...], ...]}
+ """
+@@ -16,7 +18,7 @@ Spec formats (validate() explains mistakes in plain words):
+ import io
+ import unicodedata
+ 
+-TYPES = ("bar", "line", "area", "pie", "scatter", "table")
++TYPES = ("bar", "line", "area", "pie", "donut", "hbar", "stacked", "scatter", "table")
+ MAX_LABELS, MAX_SERIES, MAX_POINTS, MAX_PIE = 100, 8, 2000, 12
+ MAX_COLUMNS, MAX_ROWS = 8, 30
+ MAX_TEXT, MAX_TITLE = 60, 120
+@@ -112,15 +114,15 @@ def validate(data) -> dict:
+                              f'"12%", true/false or null)')
+         out.append({"name": _text(s.get("name") or f"Series {i}"), "values": [float(v) for v in values]})
+ 
+-    if kind == "pie":
++    if kind in ("pie", "donut"):
+         if len(out) != 1:
+-            raise ChartError("a pie chart takes exactly one series")
++            raise ChartError(f"a {kind} chart takes exactly one series")
+         if len(labels) > MAX_PIE:
+-            raise ChartError(f"a pie chart can have at most {MAX_PIE} slices")
++            raise ChartError(f"a {kind} chart can have at most {MAX_PIE} slices")
+         if any(v < 0 for v in out[0]["values"]):
+-            raise ChartError("a pie chart cannot have negative values")
++            raise ChartError(f"a {kind} chart cannot have negative values")
+         if sum(out[0]["values"]) <= 0:
+-            raise ChartError("the pie values add up to zero")
++            raise ChartError(f"the {kind} values add up to zero")
+ 
+     spec["labels"] = [_text(l, 30) for l in labels]
+     spec["series"] = out
+@@ -148,10 +150,13 @@ def _draw(ax, spec: dict, fs: float = 1.0) -> None:
+     def colour(i: int) -> str:
+         return PALETTE[i % len(PALETTE)]
+ 
+-    if kind == "pie":
++    if kind in ("pie", "donut"):
+         values = series[0]["values"]
+         ax.pie(values, labels=spec["labels"], autopct="%1.1f%%", startangle=90,
+-               colors=[colour(i) for i in range(len(values))], textprops={"fontsize": 10 * fs})
++               colors=[colour(i) for i in range(len(values))], textprops={"fontsize": 10 * fs},
++               # a donut is a pie with a hole: wedge width < 1 leaves the middle empty
++               wedgeprops={"width": 0.45, "edgecolor": "white"} if kind == "donut" else None,
++               pctdistance=0.78 if kind == "donut" else 0.6)
+         ax.axis("equal")
+     elif kind == "scatter":
+         for i, s in enumerate(series):
+@@ -165,6 +170,19 @@ def _draw(ax, spec: dict, fs: float = 1.0) -> None:
+             for i, s in enumerate(series):
+                 offset = (i - (n - 1) / 2) * width              # side by side, centred on each label
+                 ax.bar([v + offset for v in x], s["values"], width, label=s["name"], color=colour(i))
++        elif kind == "hbar":                                     # horizontal: labels on the y axis, first label on top
++            height = 0.8 / n
++            for i, s in enumerate(series):
++                offset = (i - (n - 1) / 2) * height
++                ax.barh([v + offset for v in x], s["values"], height, label=s["name"], color=colour(i))
++            ax.set_yticks(x)
++            ax.set_yticklabels(spec["labels"], fontsize=10 * fs)
++            ax.invert_yaxis()
++        elif kind == "stacked":                                  # each series sits on top of the previous ones
++            bottom = [0.0] * len(x)
++            for i, s in enumerate(series):
++                ax.bar(x, s["values"], 0.6, bottom=bottom, label=s["name"], color=colour(i))
++                bottom = [b + v for b, v in zip(bottom, s["values"])]
+         elif kind == "line":
+             for i, s in enumerate(series):
+                 ax.plot(x, s["values"], label=s["name"], color=colour(i), linewidth=2,
+@@ -172,18 +190,19 @@ def _draw(ax, spec: dict, fs: float = 1.0) -> None:
+         else:                                                    # area: stacked
+             ax.stackplot(x, *[s["values"] for s in series], labels=[s["name"] for s in series],
+                          colors=[colour(i) for i in range(n)], alpha=0.85)
+-        step = max(1, len(labels) // 20)                         # never draw more than ~20 tick labels
+-        ticks = x[::step]
+-        rotate = len(labels) > 8 or max(len(l) for l in labels) > 8
+-        ax.set_xticks(ticks)
+-        ax.set_xticklabels([labels[i] for i in ticks], rotation=30 if rotate else 0,
+-                           ha="right" if rotate else "center", fontsize=10 * fs)
+-
+-    if kind != "pie":
++        if kind != "hbar":
++            step = max(1, len(labels) // 20)                     # never draw more than ~20 tick labels
++            ticks = x[::step]
++            rotate = len(labels) > 8 or max(len(l) for l in labels) > 8
++            ax.set_xticks(ticks)
++            ax.set_xticklabels([labels[i] for i in ticks], rotation=30 if rotate else 0,
++                               ha="right" if rotate else "center", fontsize=10 * fs)
++
++    if kind not in ("pie", "donut"):
+         ax.set_xlabel(spec["x_label"], fontsize=10 * fs)
+         ax.set_ylabel(spec["y_label"], fontsize=10 * fs)
+         ax.tick_params(labelsize=10 * fs)
+-        ax.grid(axis="y", alpha=0.3)
++        ax.grid(axis="x" if kind == "hbar" else "y", alpha=0.3)
+         for side in ("top", "right"):
+             ax.spines[side].set_visible(False)
+         if n > 1:
+@@ -239,4 +258,4 @@ def render(spec: dict) -> bytes:
+     except Exception as e:
+         raise ChartError(f"could not draw the chart ({type(e).__name__})")
+     finally:
+-        plt.close("all")                  # never leak figures between requests
+\ No newline at end of file
++        plt.close("all")                  # never leak figures between requests
+\ No newline at end of file
+diff --git a/danica/export.py b/danica/export.py
+index e31359b..7f66d3c 100644
+--- a/danica/export.py
++++ b/danica/export.py
+@@ -17,6 +17,7 @@ import unicodedata
+ from datetime import datetime
+ from pathlib import Path
+ 
++from danica.titles import read_title
+ from danica.compaction import harvest, is_summary
+ from danica.config import APP_DIR
+ from danica.projects import SKIP_DIRS
+@@ -144,7 +145,8 @@ def build_readme(session_id: str, project: dict | None, records: list[dict], sta
+     compactions = sum(1 for r in records if r.get("event") == "compaction")
+     mode = f"project {project['name']} ({project['path']})" if project else "normal chat"
+ 
+-    lines = [f"# Danica session {session_id}", "",
++    lines = [f"# {read_title(session_id) or 'Danica session'}", "",
++             f"- Session: {session_id}",
+              f"- Exported: {datetime.now():%Y-%m-%d %H:%M}",
+              f"- Mode: {mode}",
+              f"- Your requests: {len(requests)}; compactions: {compactions}", "",
+@@ -206,4 +208,4 @@ def export_session(session_dir: Path, ws, project: dict | None, out_root: Path =
+     (out / "README.md").write_text(
+         build_readme(session_dir.name, project, records, state, copied, skipped,
+                      bool(summaries), todo.is_file()), encoding="utf-8")
+-    return out
+\ No newline at end of file
++    return out
+\ No newline at end of file
+diff --git a/danica/flowgen.py b/danica/flowgen.py
+new file mode 100644
+index 0000000..0a4a57e
+--- /dev/null
++++ b/danica/flowgen.py
+@@ -0,0 +1,247 @@
++"""
++flowgen.py - Flow charts drawn from shapes placed on a GRID.
++
++The model does not draw and does not guess coordinates. It says WHICH shape goes in WHICH grid cell,
++what it is labelled, and what connects to what. This file turns that into exact positions and
++routed connector lines, so a small model gets a tidy chart every time (no auto-layout surprises).
++
++Data format (validate() explains mistakes in plain words):
++    {"type": "flow", "title": "Login",
++     "nodes": [{"id": "start", "label": "Start",         "shape": "oval",    "col": 0, "row": 0},
++               {"id": "ok",    "label": "Password OK?",  "shape": "diamond", "col": 0, "row": 1},
++               {"id": "in",    "label": "Show profile",  "shape": "box",     "col": 0, "row": 2, "color": "green"},
++               {"id": "no",    "label": "Show error",    "shape": "box",     "col": 1, "row": 1, "color": "red"}],
++     "edges": [{"from": "start", "to": "ok"},
++               {"from": "ok", "to": "in", "label": "yes"},
++               {"from": "ok", "to": "no", "label": "no"}]}
++    col counts from 0 on the left, row from 0 at the top. Leave a free cell between boxes that a
++    connector has to go around. One node per cell.
++    shapes: box (default), rounded, oval (start/end), diamond (decision), parallelogram (input/output),
++            circle (connector)
++    colors (optional): blue (default), green, orange, red, pink, sky, yellow, grey
++
++layout(spec) gives the geometry (used by the PNG drawing here AND by the interactive viewer in
++htmlview.py, so both always show the same chart). render(spec) gives PNG bytes.
++"""
++
++from __future__ import annotations
++
++import io
++import re
++import textwrap
++
++from danica.charts import _plt, _text
++
++SHAPES = ("box", "rounded", "oval", "diamond", "parallelogram", "circle")
++COLORS = {"blue": "#d6e9f8", "green": "#d4f0e3", "orange": "#fbe6c2", "red": "#f8d6cc",
++          "pink": "#f4dcea", "sky": "#dcf0fb", "yellow": "#fbf5c8", "grey": "#e5e7eb"}
++MAX_NODES, MAX_EDGES, MAX_COLS, MAX_ROWS = 40, 80, 12, 12
++MAX_LABEL, MAX_EDGE_LABEL, MAX_TITLE = 60, 30, 120
++ID_RX = re.compile(r"[A-Za-z0-9_-]{1,30}")
++
++CW, CH = 210, 120                      # one grid cell, in drawing units (1 unit = 1 pixel in the PNG)
++SIZES = {"box": (150, 70), "rounded": (150, 70), "oval": (150, 70), "parallelogram": (164, 70),
++         "diamond": (180, 104), "circle": (84, 84)}
++WRAP = {"diamond": 11, "circle": 8, "parallelogram": 14, "oval": 16}      # characters per line, by shape
++MARGIN, TITLE_H = 40, 40
++
++
++class FlowError(Exception):
++    """A problem with the data. The message is safe to show the model."""
++
++
++# --------------------------------------------------------------- validation
++
++def validate(data) -> dict:
++    """Check a flow chart spec and return a cleaned copy. Raises FlowError with a fix-it message."""
++    if not isinstance(data, dict):
++        raise FlowError('the file must hold one JSON object: {"type": "flow", "nodes": [...], "edges": [...]}')
++    nodes, edges = data.get("nodes"), data.get("edges", [])
++    if not isinstance(nodes, list) or not 1 <= len(nodes) <= MAX_NODES:
++        raise FlowError(f'"nodes" must be a list of 1 to {MAX_NODES} shapes')
++    if not isinstance(edges, list) or len(edges) > MAX_EDGES:
++        raise FlowError(f'"edges" must be a list of at most {MAX_EDGES} connections')
++    out_nodes, ids, cells = [], set(), {}
++    for n, node in enumerate(nodes, start=1):
++        if not isinstance(node, dict):
++            raise FlowError(f"node {n} must be an object like " + '{"id": "a", "label": "Start", "col": 0, "row": 0}')
++        nid = node.get("id")
++        if not isinstance(nid, str) or not ID_RX.fullmatch(nid):
++            raise FlowError(f'node {n} needs an "id": 1 to 30 letters, digits, - or _ (like "start")')
++        if nid in ids:
++            raise FlowError(f'two nodes have the id "{nid}"')
++        ids.add(nid)
++        shape = node.get("shape", "box")
++        if shape not in SHAPES:
++            raise FlowError(f'node "{nid}": "shape" must be one of ' + ", ".join(SHAPES))
++        color = node.get("color", "blue")
++        if color not in COLORS:
++            raise FlowError(f'node "{nid}": "color" must be one of ' + ", ".join(COLORS))
++        col, row = node.get("col"), node.get("row")
++        for name, v, top in (("col", col, MAX_COLS), ("row", row, MAX_ROWS)):
++            if isinstance(v, bool) or not isinstance(v, int) or not 0 <= v < top:
++                raise FlowError(f'node "{nid}": "{name}" must be a whole number from 0 to {top - 1}')
++        if (col, row) in cells:
++            raise FlowError(f'nodes "{cells[(col, row)]}" and "{nid}" are in the same cell (col {col}, row {row}): '
++                            "give each shape its own cell")
++        cells[(col, row)] = nid
++        label = _text(node.get("label", nid), MAX_LABEL)
++        out_nodes.append({"id": nid, "label": label or nid, "shape": shape, "color": color, "col": col, "row": row})
++    out_edges = []
++    for n, edge in enumerate(edges, start=1):
++        if not isinstance(edge, dict) or "from" not in edge or "to" not in edge:
++            raise FlowError(f'connection {n} must be an object like {{"from": "a", "to": "b", "label": "yes"}}')
++        a, b = edge["from"], edge["to"]
++        for end in (a, b):
++            if end not in ids:
++                raise FlowError(f'connection {n} uses the id "{end}", but no node has that id')
++        if a == b:
++            raise FlowError(f'connection {n} goes from "{a}" to itself')
++        out_edges.append({"from": a, "to": b, "label": _text(edge.get("label", ""), MAX_EDGE_LABEL)})
++    return {"type": "flow", "title": _text(data.get("title", ""), MAX_TITLE), "nodes": out_nodes, "edges": out_edges}
++
++
++# --------------------------------------------------------------- layout (shared by PNG and viewer)
++
++def _box(node: dict) -> tuple[float, float, float, float]:
++    return (node["x"] - node["w"] / 2, node["y"] - node["h"] / 2, node["x"] + node["w"] / 2, node["y"] + node["h"] / 2)
++
++
++def _hits(p: tuple, q: tuple, rect: tuple, pad: float = 6) -> bool:
++    """Does the axis-aligned segment p-q cross the (padded) rectangle?"""
++    x0, y0, x1, y1 = rect[0] - pad, rect[1] - pad, rect[2] + pad, rect[3] + pad
++    sx0, sx1 = sorted((p[0], q[0]))
++    sy0, sy1 = sorted((p[1], q[1]))
++    return sx1 > x0 and sx0 < x1 and sy1 > y0 and sy0 < y1
++
++
++def _anchor(node: dict, side: str) -> tuple[float, float]:
++    return {"L": (node["x"] - node["w"] / 2, node["y"]), "R": (node["x"] + node["w"] / 2, node["y"]),
++            "U": (node["x"], node["y"] - node["h"] / 2), "D": (node["x"], node["y"] + node["h"] / 2)}[side]
++
++
++def _candidates(a: dict, b: dict) -> list[list[tuple]]:
++    """Possible axis-aligned routes from a to b, best first."""
++    dx, dy = b["x"] - a["x"], b["y"] - a["y"]
++    h = "R" if dx > 0 else "L"                       # side of a that faces b horizontally
++    v = "D" if dy > 0 else "U"
++    hb = "L" if dx > 0 else "R"                      # the side of b that faces back to a
++    vb = "U" if dy > 0 else "D"
++    routes = []
++    if dx == 0:
++        routes.append([_anchor(a, v), _anchor(b, vb)])
++    elif dy == 0:
++        routes.append([_anchor(a, h), _anchor(b, hb)])
++    else:
++        routes.append([_anchor(a, h), (b["x"], a["y"]), _anchor(b, vb)])           # sideways, then into top/bottom
++        routes.append([_anchor(a, v), (a["x"], b["y"]), _anchor(b, hb)])           # down/up, then into the side
++        ymid = (a["row"] + (1 if dy > 0 else 0)) * CH
++        routes.append([_anchor(a, v), (a["x"], ymid), (b["x"], ymid), _anchor(b, vb)])
++        xmid = (a["col"] + (1 if dx > 0 else 0)) * CW
++        routes.append([_anchor(a, h), (xmid, a["y"]), (xmid, b["y"]), _anchor(b, hb)])
++    # going round something that sits between two aligned shapes
++    if dy == 0:
++        for s in ("U", "D"):
++            up = -CH / 2 if s == "U" else CH / 2
++            routes.append([_anchor(a, s), (a["x"], a["y"] + up), (b["x"], b["y"] + up), _anchor(b, s)])
++    if dx == 0:
++        for s in ("R", "L"):
++            out = CW / 2 if s == "R" else -CW / 2
++            routes.append([_anchor(a, s), (a["x"] + out, a["y"]), (b["x"] + out, b["y"]), _anchor(b, s)])
++    routes.append([_anchor(a, h if abs(dx) >= abs(dy) else v), _anchor(b, hb if abs(dx) >= abs(dy) else vb)])
++    return routes
++
++
++def layout(spec: dict) -> dict:
++    """Positions and routed connectors for a validated spec, in drawing units."""
++    cols = max(n["col"] for n in spec["nodes"]) + 1
++    rows = max(n["row"] for n in spec["nodes"]) + 1
++    top = MARGIN + (TITLE_H if spec["title"] else 0)
++    nodes = {}
++    for n in spec["nodes"]:
++        w, h = SIZES[n["shape"]]
++        width = WRAP.get(n["shape"], 16)
++        lines = textwrap.wrap(n["label"], width=width, break_long_words=True) or [n["label"]]
++        if len(lines) > 4:
++            lines = lines[:4]
++            lines[-1] = lines[-1][:max(1, width - 1)] + "…"
++        nodes[n["id"]] = {"id": n["id"], "label": n["label"], "lines": lines, "shape": n["shape"],
++                          "fill": COLORS[n["color"]], "col": n["col"], "row": n["row"], "w": w, "h": h,
++                          "x": MARGIN + (n["col"] + 0.5) * CW, "y": top + (n["row"] + 0.5) * CH}
++    out_edges = []
++    for e in spec["edges"]:
++        a, b = nodes[e["from"]], nodes[e["to"]]
++        obstacles = [_box(n) for k, n in nodes.items() if k not in (e["from"], e["to"])]
++        chosen = None
++        for route in _candidates(a, b):
++            if not any(_hits(p, q, r) for p, q in zip(route, route[1:]) for r in obstacles):
++                chosen = route
++                break
++        chosen = chosen or _candidates(a, b)[-1]
++        # the label sits on the longest segment
++        seg = max(zip(chosen, chosen[1:]), key=lambda s: abs(s[0][0] - s[1][0]) + abs(s[0][1] - s[1][1]))
++        out_edges.append({"from": e["from"], "to": e["to"], "label": e["label"],
++                          "points": [[round(x, 1), round(y, 1)] for x, y in chosen],
++                          "lx": round((seg[0][0] + seg[1][0]) / 2, 1), "ly": round((seg[0][1] + seg[1][1]) / 2, 1)})
++    return {"width": MARGIN * 2 + cols * CW, "height": top + rows * CH + MARGIN - 10,
++            "title": spec["title"], "title_y": MARGIN, "nodes": list(nodes.values()), "edges": out_edges}
++
++
++# --------------------------------------------------------------- drawing (PNG)
++
++def _patch(n: dict):
++    """The matplotlib shape for one node (y grows downward: the axes are inverted)."""
++    from matplotlib import patches
++    x, y, w, h = n["x"], n["y"], n["w"], n["h"]
++    style = dict(facecolor=n["fill"], edgecolor="#374151", linewidth=1.6, zorder=3)
++    if n["shape"] == "diamond":
++        return patches.Polygon([(x, y - h / 2), (x + w / 2, y), (x, y + h / 2), (x - w / 2, y)], closed=True, **style)
++    if n["shape"] == "parallelogram":
++        k = 18
++        return patches.Polygon([(x - w / 2 + k, y - h / 2), (x + w / 2, y - h / 2), (x + w / 2 - k, y + h / 2),
++                                (x - w / 2, y + h / 2)], closed=True, **style)
++    if n["shape"] == "oval":
++        return patches.Ellipse((x, y), w, h, **style)
++    if n["shape"] == "circle":
++        return patches.Circle((x, y), w / 2, **style)
++    if n["shape"] == "rounded":
++        return patches.FancyBboxPatch((x - w / 2, y - h / 2), w, h, boxstyle="round,pad=0,rounding_size=16", **style)
++    return patches.Rectangle((x - w / 2, y - h / 2), w, h, **style)
++
++
++def render(spec: dict) -> bytes:
++    """A validated flow chart spec as PNG bytes."""
++    plt = _plt()
++    try:
++        lay = layout(spec)
++        scale = min(1.0, 1500 / lay["width"], 1200 / lay["height"])           # keep the picture a sensible size
++        fig, ax = plt.subplots(figsize=(lay["width"] * scale / 100, lay["height"] * scale / 100), dpi=100)
++        ax.set_xlim(0, lay["width"])
++        ax.set_ylim(lay["height"], 0)                                          # row 0 at the top
++        ax.axis("off")
++        fs = 11 * max(scale, 0.7)
++        if lay["title"]:
++            ax.text(lay["width"] / 2, lay["title_y"], lay["title"], ha="center", va="center",
++                    fontsize=14 * max(scale, 0.8), fontweight="bold")
++        for e in lay["edges"]:
++            pts = e["points"]
++            for p, q in zip(pts[:-2], pts[1:-1]):                              # all but the last segment: plain lines
++                ax.plot([p[0], q[0]], [p[1], q[1]], color="#374151", linewidth=1.6, zorder=1, solid_capstyle="round")
++            ax.annotate("", xy=pts[-1], xytext=pts[-2], zorder=2,
++                        arrowprops=dict(arrowstyle="-|>", color="#374151", linewidth=1.6, shrinkA=0, shrinkB=0,
++                                        mutation_scale=16))
++            if e["label"]:
++                ax.text(e["lx"], e["ly"], e["label"], ha="center", va="center", fontsize=fs * 0.9, zorder=5,
++                        bbox=dict(boxstyle="round,pad=0.2", facecolor="white", edgecolor="none"))
++        for n in lay["nodes"]:
++            ax.add_patch(_patch(n))
++            ax.text(n["x"], n["y"], "\n".join(n["lines"]), ha="center", va="center", fontsize=fs, zorder=4)
++        buf = io.BytesIO()
++        fig.savefig(buf, format="png", facecolor="white")
++        return buf.getvalue()
++    except FlowError:
++        raise
++    except Exception as e:
++        raise FlowError(f"could not draw the flow chart ({type(e).__name__})")
++    finally:
++        plt.close("all")
+diff --git a/danica/htmlview.py b/danica/htmlview.py
+index e0338f8..a40b51f 100644
+--- a/danica/htmlview.py
++++ b/danica/htmlview.py
+@@ -30,6 +30,7 @@ from html import escape
+ from pathlib import Path
+ 
+ from danica.charts import ChartError, TYPES, validate
++from danica.flowgen import FlowError, layout as flow_layout, validate as flow_validate
+ from danica.docgen import MARKER
+ from danica.seal import is_sealed_html, seal_html
+ 
+@@ -65,6 +66,12 @@ svg{width:100%;max-width:1100px;height:auto;display:block;margin:0 auto}
+ svg text{fill:var(--fg);font:12px system-ui,sans-serif}
+ svg .mute{fill:var(--mute)}
+ svg .grid{stroke:var(--line);stroke-width:1}
++svg .shape{stroke:#374151;stroke-width:1.6}
++svg .ntext{fill:#1d2330;font:13px system-ui,sans-serif}
++svg .edge{fill:none;stroke:var(--mute);stroke-width:1.8}
++svg .arrowhead{fill:var(--mute)}
++svg .elabel{font-size:12px}
++svg .ebg{fill:var(--bg)}
+ svg .axis{stroke:var(--mute);stroke-width:1}
+ svg .hit{cursor:default}
+ svg .hit:hover{opacity:.75;stroke:var(--fg);stroke-width:1.5}
+@@ -104,8 +111,8 @@ function addTab(name,label){var btn=E("button",$("nav"),label);var sec=$("sec-"+
+ /* ---------- chart ---------- */
+ function cats(){return spec.labels||[]}
+ function vis(){return spec.series.map(function(s,i){return{s:s,i:i}}).filter(function(o){return !hidden[o.i]})}
+-function legend(box){box.textContent="";var items=spec.type==="pie"?cats().map(function(l,i){return{n:l,i:i}}):spec.series.map(function(s,i){return{n:s.name,i:i}});
+- if(items.length<2&&spec.type!=="pie")return;
++function legend(box){box.textContent="";var pieish=spec.type==="pie"||spec.type==="donut";var items=pieish?cats().map(function(l,i){return{n:l,i:i}}):spec.series.map(function(s,i){return{n:s.name,i:i}});
++ if(items.length<2&&!pieish)return;
+  items.forEach(function(o){var b=E("button",box);b.className=hidden[o.i]?"off":"";var sw=E("span",b,"","sw");sw.style.background=PAL[o.i%PAL.length];E("span",b,clean(o.n));b.addEventListener("click",function(){hidden[o.i]=!hidden[o.i];drawChart()})})}
+ function axes(svg,y,xlabel,ylabel){
+  y.ticks.forEach(function(t){var py=M.t+PH-(t-y.lo)/(y.hi-y.lo)*PH;S("line",{x1:M.l,x2:M.l+PW,y1:py,y2:py,"class":"grid"},svg);S("text",{x:M.l-8,y:py+4,"text-anchor":"end","class":"mute"},svg,num(t))});
+@@ -117,22 +124,35 @@ function drawChart(){
+  var box=$("legend"),svg=$("chart");legend(box);svg.textContent="";
+  S("text",{x:W/2,y:26,"text-anchor":"middle","class":"title"},svg,clean(spec.title||""));
+  var type=spec.type,v=vis(),i,j;
+- if(type==="pie"){var vals=spec.series[0].values,tot=0;vals.forEach(function(x,k){if(!hidden[k])tot+=x});
++ if(type==="pie"||type==="donut"){var vals=spec.series[0].values,tot=0;vals.forEach(function(x,k){if(!hidden[k])tot+=x});
+   var cx=W/2,cy=Hh/2+14,r=190,a=-Math.PI/2;
+   vals.forEach(function(x,k){if(hidden[k]||tot<=0||x<=0)return;var b=a+x/tot*2*Math.PI,large=b-a>Math.PI?1:0,full=x/tot>0.9999;
+-   var d=full?"M"+(cx-r)+","+cy+"a"+r+","+r+" 0 1,0 "+2*r+",0a"+r+","+r+" 0 1,0 "+(-2*r)+",0":"M"+cx+","+cy+"L"+(cx+r*Math.cos(a))+","+(cy+r*Math.sin(a))+"A"+r+","+r+" 0 "+large+",1 "+(cx+r*Math.cos(b))+","+(cy+r*Math.sin(b))+"Z";
+-   var p=S("path",{d:d,fill:PAL[k%PAL.length],stroke:"var(--bg)","stroke-width":2},svg);hover(p,[clean(cats()[k]),num(x)+" ("+(x/tot*100).toFixed(1)+"%)"]);a=b});return}
++   var ri=type==="donut"?r*.55:0,d;
++   if(full){d="M"+(cx-r)+","+cy+"a"+r+","+r+" 0 1,0 "+2*r+",0a"+r+","+r+" 0 1,0 "+(-2*r)+",0"+(ri?"M"+(cx-ri)+","+cy+"a"+ri+","+ri+" 0 1,0 "+2*ri+",0a"+ri+","+ri+" 0 1,0 "+(-2*ri)+",0":"")}
++   else if(ri){d="M"+(cx+r*Math.cos(a))+","+(cy+r*Math.sin(a))+"A"+r+","+r+" 0 "+large+",1 "+(cx+r*Math.cos(b))+","+(cy+r*Math.sin(b))+"L"+(cx+ri*Math.cos(b))+","+(cy+ri*Math.sin(b))+"A"+ri+","+ri+" 0 "+large+",0 "+(cx+ri*Math.cos(a))+","+(cy+ri*Math.sin(a))+"Z"}
++   else{d="M"+cx+","+cy+"L"+(cx+r*Math.cos(a))+","+(cy+r*Math.sin(a))+"A"+r+","+r+" 0 "+large+",1 "+(cx+r*Math.cos(b))+","+(cy+r*Math.sin(b))+"Z"}
++   var p=S("path",{d:d,fill:PAL[k%PAL.length],"fill-rule":"evenodd",stroke:"var(--bg)","stroke-width":2},svg);hover(p,[clean(cats()[k]),num(x)+" ("+(x/tot*100).toFixed(1)+"%)"]);a=b});return}
+  if(type==="scatter"){var xs=[],ys=[];v.forEach(function(o){o.s.points.forEach(function(p){xs.push(p[0]);ys.push(p[1])})});if(!xs.length)return;
+   var xn=nice(Math.min.apply(null,xs),Math.max.apply(null,xs)),yn=nice(Math.min.apply(null,ys),Math.max.apply(null,ys));axes(svg,yn,spec.x_label,spec.y_label);
+   xn.ticks.forEach(function(t){var px=M.l+(t-xn.lo)/(xn.hi-xn.lo)*PW;S("text",{x:px,y:M.t+PH+18,"text-anchor":"middle","class":"mute"},svg,num(t))});
+   v.forEach(function(o){o.s.points.forEach(function(p){var c=S("circle",{cx:M.l+(p[0]-xn.lo)/(xn.hi-xn.lo)*PW,cy:M.t+PH-(p[1]-yn.lo)/(yn.hi-yn.lo)*PH,r:5,fill:PAL[o.i%PAL.length],"fill-opacity":.8},svg);hover(c,[clean(o.s.name),"x: "+num(p[0]),"y: "+num(p[1])])})});return}
+- /* bar, line, area share categorical x */
+- var lo=0,hi=0,stack=type==="area",n=cats().length,cum=[];
++ if(type==="hbar"){var lo2=0,hi2=0,n2=cats().length;v.forEach(function(o){o.s.values.forEach(function(x){hi2=Math.max(hi2,x);lo2=Math.min(lo2,x)})});
++  var xn3=nice(lo2,hi2),mx=0;cats().forEach(function(l){mx=Math.max(mx,clean(l).slice(0,18).length)});var L=Math.min(190,24+7*mx),PW2=W-L-M.r;
++  function X(x){return L+(x-xn3.lo)/(xn3.hi-xn3.lo)*PW2}
++  xn3.ticks.forEach(function(t){S("line",{x1:X(t),x2:X(t),y1:M.t,y2:M.t+PH,"class":"grid"},svg);S("text",{x:X(t),y:M.t+PH+18,"text-anchor":"middle","class":"mute"},svg,num(t))});
++  S("line",{x1:L,x2:L,y1:M.t,y2:M.t+PH,"class":"axis"},svg);S("line",{x1:L,x2:L+PW2,y1:M.t+PH,y2:M.t+PH,"class":"axis"},svg);
++  var bandY=PH/Math.max(1,n2),gh=bandY*.8,bh=gh/Math.max(1,v.length);
++  cats().forEach(function(l,j){S("text",{x:L-8,y:M.t+bandY*(j+.5)+4,"text-anchor":"end","class":"mute"},svg,clean(l).slice(0,18))});
++  v.forEach(function(o,k){o.s.values.forEach(function(x,j2){var x0=X(0),x1=X(x);var rc=S("rect",{x:Math.min(x0,x1),y:M.t+bandY*j2+(bandY-gh)/2+k*bh,width:Math.max(1,Math.abs(x1-x0)),height:Math.max(1,bh-2),fill:PAL[o.i%PAL.length]},svg);hover(rc,[clean(cats()[j2]),clean(o.s.name)+": "+num(x)])})});
++  if(spec.x_label)S("text",{x:L+PW2/2,y:Hh-10,"text-anchor":"middle"},svg,clean(spec.x_label));return}
++ /* bar, stacked, line, area share categorical x */
++ var lo=0,hi=0,stack=type==="area"||type==="stacked",n=cats().length,cum=[];
+  for(j=0;j<n;j++){var pos=0;v.forEach(function(o){var x=o.s.values[j]||0;if(stack){pos+=x;hi=Math.max(hi,pos)}else{hi=Math.max(hi,x);lo=Math.min(lo,x)}})}
+  if(type==="line"){lo=Infinity;hi=-Infinity;v.forEach(function(o){o.s.values.forEach(function(x){lo=Math.min(lo,x);hi=Math.max(hi,x)})});if(!isFinite(lo)){lo=0;hi=1}}
+  var yn2=nice(lo,hi);axes(svg,yn2,spec.x_label,spec.y_label);var band=xcats(svg);
+  function Y(x){return M.t+PH-(x-yn2.lo)/(yn2.hi-yn2.lo)*PH}
+  if(type==="bar"){var gw=band*.8,bw=gw/Math.max(1,v.length);v.forEach(function(o,k){o.s.values.forEach(function(x,j2){var y0=Y(0),y1=Y(x);var rc=S("rect",{x:M.l+band*j2+(band-gw)/2+k*bw,y:Math.min(y0,y1),width:Math.max(1,bw-2),height:Math.max(1,Math.abs(y0-y1)),fill:PAL[o.i%PAL.length]},svg);hover(rc,[clean(cats()[j2]),clean(o.s.name)+": "+num(x)])})});return}
++ if(type==="stacked"){var gw2=band*.6,acc=[];for(j=0;j<n;j++)acc.push(0);v.forEach(function(o){o.s.values.forEach(function(x,j2){var y0=Y(acc[j2]),y1=Y(acc[j2]+x);var rc=S("rect",{x:M.l+band*j2+(band-gw2)/2,y:Math.min(y0,y1),width:gw2,height:Math.max(1,Math.abs(y0-y1)),fill:PAL[o.i%PAL.length]},svg);hover(rc,[clean(cats()[j2]),clean(o.s.name)+": "+num(x)]);acc[j2]+=x})});return}
+  if(type==="line"){v.forEach(function(o){var pts=o.s.values.map(function(x,j2){return(M.l+band*(j2+.5))+","+Y(x)});S("polyline",{points:pts.join(" "),fill:"none",stroke:PAL[o.i%PAL.length],"stroke-width":2.5},svg);
+   o.s.values.forEach(function(x,j2){var c=S("circle",{cx:M.l+band*(j2+.5),cy:Y(x),r:4.5,fill:PAL[o.i%PAL.length]},svg);hover(c,[clean(cats()[j2]),clean(o.s.name)+": "+num(x)])})});return}
+  /* area (stacked) */
+@@ -141,6 +161,21 @@ function drawChart(){
+   top.forEach(function(t,j2){d+="L"+(M.l+band*(j2+.5))+","+Y(t)});for(j=n-1;j>=0;j--)d+="L"+(M.l+band*(j+.5))+","+Y(base[j]);d+="Z";
+   var p=S("path",{d:d,fill:PAL[o.i%PAL.length],"fill-opacity":.75},svg);
+   top.forEach(function(t,j2){var c=S("circle",{cx:M.l+band*(j2+.5),cy:Y(t),r:5,fill:"transparent"},svg);hover(c,[clean(cats()[j2]),clean(o.s.name)+": "+num(o.s.values[j2]||0)])});base=top})}
++/* ---------- flow chart (the Python side placed everything; this only draws it) ---------- */
++function drawFlow(){var lay=spec.layout,svg=$("chart");svg.textContent="";svg.setAttribute("viewBox","0 0 "+lay.width+" "+lay.height);
++ var defs=S("defs",{},svg),mk=S("marker",{id:"ar",viewBox:"0 0 10 10",refX:9,refY:5,markerWidth:8,markerHeight:8,orient:"auto"},defs);S("path",{d:"M0,0 L10,5 L0,10 z","class":"arrowhead"},mk);
++ if(lay.title)S("text",{x:lay.width/2,y:lay.title_y+5,"text-anchor":"middle","class":"title"},svg,clean(lay.title));
++ lay.edges.forEach(function(e){var pts=e.points.map(function(p){return p[0]+","+p[1]}).join(" ");var pl=S("polyline",{points:pts,"class":"edge","marker-end":"url(#ar)"},svg);hover(pl,[e.from+" → "+e.to].concat(e.label?[clean(e.label)]:[]))});
++ lay.edges.forEach(function(e){if(!e.label)return;var t=clean(e.label),w=t.length*7+10;S("rect",{x:e.lx-w/2,y:e.ly-9,width:w,height:18,rx:4,"class":"ebg"},svg);S("text",{x:e.lx,y:e.ly+4,"text-anchor":"middle","class":"elabel"},svg,t)});
++ lay.nodes.forEach(function(n){var x=n.x,y=n.y,w=n.w,h=n.h,sh,a={fill:n.fill,"class":"shape"};
++  if(n.shape==="diamond"){a.points=[[x,y-h/2],[x+w/2,y],[x,y+h/2],[x-w/2,y]].join(" ");sh=S("polygon",a,svg)}
++  else if(n.shape==="parallelogram"){a.points=[[x-w/2+18,y-h/2],[x+w/2,y-h/2],[x+w/2-18,y+h/2],[x-w/2,y+h/2]].join(" ");sh=S("polygon",a,svg)}
++  else if(n.shape==="oval"){a.cx=x;a.cy=y;a.rx=w/2;a.ry=h/2;sh=S("ellipse",a,svg)}
++  else if(n.shape==="circle"){a.cx=x;a.cy=y;a.r=w/2;sh=S("circle",a,svg)}
++  else{a.x=x-w/2;a.y=y-h/2;a.width=w;a.height=h;a.rx=n.shape==="rounded"?16:2;sh=S("rect",a,svg)}
++  hover(sh,[clean(n.label),"id: "+n.id]);
++  var t=S("text",{"text-anchor":"middle","class":"ntext"},svg),y0=y-(n.lines.length-1)*8;
++  n.lines.forEach(function(l,k){S("tspan",{x:x,y:y0+k*16+5},t,clean(l))});t.setAttribute("pointer-events","none")})}
+ /* ---------- data table (click a header to sort) ---------- */
+ function table(host,cols,rows){host.textContent="";var t=E("table",host),hd=E("tr",E("thead",t)),body=E("tbody",t),dir={};
+  function fill(rs){body.textContent="";rs.forEach(function(r){var tr=E("tr",body);r.forEach(function(c){var td=E("td",tr,typeof c==="number"?num(c):clean(c));if(typeof c==="number")td.className="n"})})}
+@@ -164,8 +199,9 @@ stage.addEventListener("dblclick",reset);
+ $("zin").addEventListener("click",function(){center(1.25)});$("zout").addEventListener("click",function(){center(.8)});$("zfit").addEventListener("click",reset);
+ document.addEventListener("keydown",function(e){if(!tabs.image||tabs.image.sec.className!=="on")return;if(e.key==="+"||e.key==="=")center(1.25);else if(e.key==="-")center(.8);else if(e.key==="0")reset()});
+ /* ---------- start ---------- */
+-if(spec){addTab("chart","Chart");
++if(spec){addTab("chart",spec.type==="flow"?"Diagram":"Chart");
+  if(spec.type==="table"){$("legend").style.display="none";$("chart").style.display="none";table($("chart-table"),spec.columns,spec.rows.map(function(r){return r.slice()}))}
++ else if(spec.type==="flow"){$("legend").style.display="none";drawFlow()}
+  else{drawChart();var d=dataRows();table($("data-table"),d.cols,d.rows);addTab("data","Data")}}
+ addTab("image","Image");show(spec?"chart":"image");
+ if(!spec)$("nav").style.display="none";
+@@ -185,10 +221,13 @@ def _load_spec(png: Path):
+         if not side.is_file() or side.stat().st_size > MAX_SPEC:
+             return None
+         data = json.loads(side.read_text(encoding="utf-8-sig"))
++        if isinstance(data, dict) and (data.get("type") == "flow" or ("nodes" in data and "type" not in data)):
++            spec = flow_validate(data)              # a flow chart: the geometry is worked out here, the page only draws it
++            return {"type": "flow", "title": spec["title"], "layout": flow_layout(spec)}
+         if not isinstance(data, dict) or data.get("type") not in TYPES:
+             return None
+         return validate(data)                       # the same checks the chart tool ran
+-    except (OSError, ValueError, ChartError):
++    except (OSError, ValueError, ChartError, FlowError):
+         return None
+ 
+ 
+diff --git a/danica/interactive.py b/danica/interactive.py
+new file mode 100644
+index 0000000..b966637
+--- /dev/null
++++ b/danica/interactive.py
+@@ -0,0 +1,369 @@
++"""
++interactive.py - Interactive learning pages Danica can make: a QUIZ (Q&A with a working Submit
++button) and FLASH CARDS. Each is ONE self-contained, sealed .html file the user opens from a link.
++
++The model never writes HTML or JavaScript. It writes DATA (a small JSON file), this module checks
++it, and the page's code is the fixed script below, so a quiz can run nothing the model chose.
++
++SUBMIT, honestly: an HTML page opened from a link cannot message Danica. So Submit works LOCALLY:
++the page grades the answers against the answer key (or, for a survey, just records them), shows the
++score and a per-question explanation, and offers "Copy results" and "Download results (.json)" so
++the user can paste or attach them in chat ("here are my quiz results, explain what I got wrong").
++
++Quiz data (validate_quiz explains mistakes in plain words):
++    {"title": "...", "mode": "graded" | "survey",          (mode is optional: graded when answers are given)
++     "questions": [
++        {"q": "...", "type": "choice", "options": ["a", "b", "c"], "answer": 1, "explanation": "..."},
++        {"q": "...", "type": "multi",  "options": [...], "answer": [0, 2]},
++        {"q": "...", "type": "truefalse", "answer": true},
++        {"q": "...", "type": "text",   "answer": "Paris"}      (or a list of accepted spellings)
++     ]}
++    "answer" for choice/multi may be an index (0 = first option) or the option's text.
++Flash card data:
++    {"title": "...", "cards": [{"front": "...", "back": "...", "hint": "optional"}]}
++
++SAFETY (same rules as slideshow.py and htmlview.py): the page is sealed, and its
++Content-Security-Policy allows only this file's own style and script (by hash) and no network.
++Everything the model wrote goes into the page as text (textContent), never as HTML.
++"""
++
++from __future__ import annotations
++
++import base64
++import hashlib
++import json
++import os
++import re
++import unicodedata
++from html import escape
++from pathlib import Path
++
++from danica.docgen import MARKER
++from danica.seal import is_sealed_html, seal_html
++
++MAX_SPEC_BYTES = 200_000
++MAX_QUESTIONS, MAX_OPTIONS, MAX_CARDS = 30, 6, 100
++MAX_Q, MAX_OPT, MAX_EXPL, MAX_TITLE, MAX_CARD = 300, 150, 400, 100, 400
++QUESTION_TYPES = ("choice", "multi", "truefalse", "text")
++
++
++class InteractiveError(Exception):
++    """A problem with the data. The message is safe to show the model."""
++
++
++def _t(value, limit: int) -> str:
++    """Text for the page: one line, invisible characters removed, cut to length."""
++    s = " ".join(str(value).split())
++    return "".join(ch for ch in s if unicodedata.category(ch) not in ("Cc", "Cf", "Co", "Cn", "Cs"))[:limit]
++
++
++# ------------------------------------------------------------------ validation
++
++def _index(answer, options: list[str], where: str) -> int:
++    """One answer given as an index or as the option's text -> the index."""
++    if isinstance(answer, bool):
++        raise InteractiveError(f"{where}: the answer must be an option number (0 = first) or the option text")
++    if isinstance(answer, int):
++        if 0 <= answer < len(options):
++            return answer
++        raise InteractiveError(f"{where}: answer {answer} is outside the {len(options)} options (0 = first)")
++    if isinstance(answer, str):
++        wanted = " ".join(answer.split()).lower()
++        for i, option in enumerate(options):
++            if option.lower() == wanted:
++                return i
++    raise InteractiveError(f"{where}: the answer must be an option number (0 = first) or exactly one of the options")
++
++
++def validate_quiz(data) -> dict:
++    """Check a quiz spec and return a cleaned copy. Raises InteractiveError with a fix-it message."""
++    if not isinstance(data, dict):
++        raise InteractiveError('the file must hold one JSON object: {"title": "...", "questions": [...]}')
++    questions = data.get("questions")
++    if not isinstance(questions, list) or not 1 <= len(questions) <= MAX_QUESTIONS:
++        raise InteractiveError(f'"questions" must be a list of 1 to {MAX_QUESTIONS} questions')
++    out, with_answer = [], 0
++    for n, q in enumerate(questions, start=1):
++        where = f"question {n}"
++        if not isinstance(q, dict) or not str(q.get("q", "")).strip():
++            raise InteractiveError(f'{where} must be an object with a "q" (the question text)')
++        kind = q.get("type") or ("truefalse" if isinstance(q.get("answer"), bool) else
++                                 "multi" if isinstance(q.get("answer"), list) and q.get("options") else
++                                 "choice" if q.get("options") else "text")
++        if kind not in QUESTION_TYPES:
++            raise InteractiveError(f'{where}: "type" must be one of ' + ", ".join(QUESTION_TYPES))
++        item = {"q": _t(q["q"], MAX_Q), "type": kind, "explanation": _t(q.get("explanation", ""), MAX_EXPL)}
++        raw = q.get("answer")
++        if kind in ("choice", "multi"):
++            options = q.get("options")
++            if not isinstance(options, list) or not 2 <= len(options) <= MAX_OPTIONS or any(
++                    isinstance(o, (dict, list)) or not str(o).strip() for o in options):
++                raise InteractiveError(f'{where} needs "options": 2 to {MAX_OPTIONS} non-empty texts')
++            item["options"] = [_t(o, MAX_OPT) for o in options]
++            if len({o.lower() for o in item["options"]}) != len(item["options"]):
++                raise InteractiveError(f"{where}: two options are the same")
++            if raw is not None:
++                if kind == "choice":
++                    item["answer"] = _index(raw, item["options"], where)
++                else:
++                    picks = raw if isinstance(raw, list) else [raw]
++                    if not picks:
++                        raise InteractiveError(f"{where}: a multi question needs at least one correct option")
++                    item["answer"] = sorted({_index(a, item["options"], where) for a in picks})
++        elif kind == "truefalse":
++            item["options"] = ["True", "False"]
++            if raw is not None:
++                if isinstance(raw, str) and raw.strip().lower() in ("true", "false"):
++                    raw = raw.strip().lower() == "true"
++                if not isinstance(raw, bool):
++                    raise InteractiveError(f"{where}: a truefalse answer must be true or false")
++                item["answer"] = 0 if raw else 1
++        else:                                                   # text
++            if raw is not None:
++                accepted = raw if isinstance(raw, list) else [raw]
++                accepted = [_t(a, MAX_OPT) for a in accepted if not isinstance(a, (dict, list)) and str(a).strip()]
++                if not accepted:
++                    raise InteractiveError(f'{where}: a text answer must be a text (or a list of accepted texts)')
++                item["answer"] = accepted
++        if "answer" in item:
++            with_answer += 1
++        out.append(item)
++
++    mode = data.get("mode")
++    if mode not in (None, "graded", "survey"):
++        raise InteractiveError('"mode" must be "graded" or "survey"')
++    mode = mode or ("graded" if with_answer else "survey")
++    if mode == "graded" and with_answer != len(out):
++        raise InteractiveError('a graded quiz needs an "answer" on every question (use "mode": "survey" for no grading)')
++    return {"kind": "quiz", "title": _t(data.get("title", "Quiz"), MAX_TITLE) or "Quiz", "mode": mode, "questions": out}
++
++
++def validate_cards(data) -> dict:
++    """Check a flash card spec and return a cleaned copy."""
++    if not isinstance(data, dict):
++        raise InteractiveError('the file must hold one JSON object: {"title": "...", "cards": [...]}')
++    cards = data.get("cards")
++    if not isinstance(cards, list) or not 1 <= len(cards) <= MAX_CARDS:
++        raise InteractiveError(f'"cards" must be a list of 1 to {MAX_CARDS} cards')
++    out = []
++    for n, c in enumerate(cards, start=1):
++        if not isinstance(c, dict) or not str(c.get("front", "")).strip() or not str(c.get("back", "")).strip():
++            raise InteractiveError(f'card {n} must be an object with a "front" and a "back"')
++        out.append({"front": _t(c["front"], MAX_CARD), "back": _t(c["back"], MAX_CARD),
++                    "hint": _t(c.get("hint", ""), MAX_OPT)})
++    return {"kind": "flashcards", "title": _t(data.get("title", "Flash cards"), MAX_TITLE) or "Flash cards", "cards": out}
++
++
++# ------------------------------------------------------------------ the pages
++
++CSS = r"""
++:root{--bg:#fff;--fg:#1d2330;--mute:#6b7280;--line:#d7dbe3;--card:#f5f6f9;--accent:#0072B2;--ok:#0a7d4b;--bad:#c2410c}
++@media (prefers-color-scheme:dark){:root{--bg:#14161c;--fg:#e6e8ee;--mute:#9aa1b0;--line:#323746;--card:#1c2029;--accent:#56B4E9;--ok:#4ade80;--bad:#fb923c}}
++*{box-sizing:border-box}
++html,body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,Segoe UI,sans-serif}
++main{max-width:760px;margin:0 auto;padding:20px 16px 60px}
++h1{font-size:22px;margin:0 0 4px}
++.sub{color:var(--mute);margin:0 0 18px}
++.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:0 0 14px}
++.card h3{font-size:16px;margin:0 0 10px}
++label.opt{display:flex;gap:8px;align-items:flex-start;padding:6px 8px;border-radius:6px;border:1px solid transparent;cursor:pointer}
++label.opt:hover{border-color:var(--line)}
++label.opt.ok{border-color:var(--ok);background:rgba(10,125,75,.12)}
++label.opt.bad{border-color:var(--bad);background:rgba(194,65,12,.12)}
++input[type=text]{width:100%;font:inherit;padding:8px 10px;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px}
++button{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 16px;cursor:pointer}
++button:hover:not(:disabled){border-color:var(--accent)}
++button:disabled{opacity:.5;cursor:default}
++button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
++.row{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
++.fb{margin-top:8px;font-size:14px}
++.fb.ok{color:var(--ok)}.fb.bad{color:var(--bad)}
++.fb .why{color:var(--mute);margin-top:2px}
++#warn{color:var(--bad);min-height:1.4em}
++#result{display:none}
++#result h2{margin:0 0 6px}
++.big{font-size:34px;font-weight:700}
++.bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin:6px 0 12px}
++.bar i{display:block;height:100%;background:var(--accent);width:0}
++#stage{perspective:900px;margin:12px 0}
++#flip{min-height:240px;display:flex;align-items:center;justify-content:center;text-align:center;font-size:22px;padding:24px;background:var(--card);border:1px solid var(--line);border-radius:14px;cursor:pointer;user-select:none}
++#flip.back{border-color:var(--accent)}
++#flip small{display:block;color:var(--mute);font-size:12px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px}
++#hint{color:var(--mute);min-height:1.4em;text-align:center}
++kbd{border:1px solid var(--line);border-radius:4px;padding:0 5px;font-size:12px;background:var(--card)}
++"""
++
++QUIZ_JS = r"""
++(function(){"use strict";
++var Q=JSON.parse(document.getElementById("spec").textContent),$=function(i){return document.getElementById(i)};
++function E(tag,parent,text,cls){var n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;if(parent)parent.appendChild(n);return n}
++function norm(s){return String(s).toLowerCase().replace(/\s+/g," ").replace(/^[\s.,;:!?'"]+|[\s.,;:!?'"]+$/g,"")}
++var graded=Q.mode==="graded",form=$("form"),sub=$("submit"),warn=$("warn"),done=false,nudged=false,cards=[];
++$("title").textContent=Q.title;
++$("sub").textContent=Q.questions.length+" question"+(Q.questions.length===1?"":"s")+(graded?" · graded":" · survey (no grading)");
++Q.questions.forEach(function(q,i){var c=E("section",form,"","card");E("h3",c,(i+1)+". "+q.q);var inputs=[];
++ if(q.type==="text"){var t=E("input",c);t.type="text";t.autocomplete="off";t.placeholder="Your answer";inputs.push(t)}
++ else q.options.forEach(function(o,k){var lab=E("label",c,"","opt"),inp=E("input",lab);inp.type=q.type==="multi"?"checkbox":"radio";inp.name="q"+i;inp.value=k;inputs.push(inp);E("span",lab,o)});
++ cards.push({card:c,inputs:inputs,fb:E("div",c,"","fb"),q:q})});
++function given(c){if(c.q.type==="text")return c.inputs[0].value.trim();var g=[];c.inputs.forEach(function(inp,k){if(inp.checked)g.push(k)});return g}
++function empty(c){var g=given(c);return c.q.type==="text"?g==="":g.length===0}
++function isRight(c,g){var a=c.q.answer;if(c.q.type==="text")return a.some(function(x){return norm(x)===norm(g)});
++ if(c.q.type==="multi")return g.length===a.length&&g.every(function(v,k){return v===a[k]});return g.length===1&&g[0]===a}
++function show(c,k){return c.q.type==="text"?String(k):k.map(function(i){return c.q.options[i]}).join(", ")}
++function answerText(c){var a=c.q.answer;return c.q.type==="text"?a[0]:c.q.type==="multi"?a.map(function(i){return c.q.options[i]}).join(", "):c.q.options[a]}
++function lock(on){cards.forEach(function(c){c.inputs.forEach(function(i){i.disabled=on})})}
++var results=null;
++sub.addEventListener("click",function(){
++ var blank=cards.filter(empty).length;
++ if(blank&&!nudged){nudged=true;warn.textContent=blank+" question"+(blank===1?" is":"s are")+" not answered. Click Submit again to submit anyway.";return}
++ warn.textContent="";done=true;lock(true);sub.disabled=true;var score=0,rows=[];
++ cards.forEach(function(c,i){var g=given(c),has=!empty(c),ok=graded&&has&&isRight(c,g);if(ok)score++;
++  var row={question:c.q.q,your_answer:has?show(c,g):"(no answer)"};
++  if(graded){row.correct_answer=answerText(c);row.correct=ok}rows.push(row);
++  if(graded){c.fb.className="fb "+(ok?"ok":"bad");c.fb.textContent="";E("div",c.fb,ok?"Correct":"Not quite. Answer: "+answerText(c));
++   if(c.q.explanation)E("div",c.fb,c.q.explanation,"why");
++   if(c.q.type!=="text")c.inputs.forEach(function(inp,k){var right=c.q.type==="multi"?c.q.answer.indexOf(k)>=0:c.q.answer===k;
++    if(right)inp.parentNode.className="opt ok";else if(inp.checked)inp.parentNode.className="opt bad"})}
++  else if(c.q.explanation){c.fb.textContent=c.q.explanation}});
++ results={quiz:Q.title,mode:Q.mode,answered:cards.filter(function(c){return !empty(c)}).length,total:cards.length,answers:rows};
++ if(graded)results.score=score;
++ var r=$("result");r.style.display="block";
++ $("score").textContent=graded?score+" / "+cards.length:"Thanks!";
++ $("pct").textContent=graded?Math.round(score/cards.length*100)+"% correct":results.answered+" of "+cards.length+" answered";
++ $("fill").style.width=(graded?score/cards.length*100:results.answered/cards.length*100)+"%";
++ r.scrollIntoView({behavior:"smooth",block:"start"})});
++function copyText(text){if(navigator.clipboard&&window.isSecureContext){return navigator.clipboard.writeText(text).then(function(){return true},function(){return legacy(text)})}return Promise.resolve(legacy(text))}
++function legacy(text){var t=document.createElement("textarea");t.value=text;t.setAttribute("readonly","");t.className="offscreen";document.body.appendChild(t);t.select();var ok=false;try{ok=document.execCommand("copy")}catch(e){}document.body.removeChild(t);return ok}
++$("copy").addEventListener("click",function(){if(!results)return;copyText(JSON.stringify(results,null,2)).then(function(ok){$("copied").textContent=ok?"Copied. Paste it into the chat.":"Could not copy: use Download instead."})});
++$("dl").addEventListener("click",function(){if(!results)return;var b=new Blob([JSON.stringify(results,null,2)],{type:"application/json"}),a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="quiz-results.json";document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(function(){URL.revokeObjectURL(a.href)},1000)});
++$("again").addEventListener("click",function(){done=false;nudged=false;results=null;lock(false);sub.disabled=false;$("result").style.display="none";$("copied").textContent="";
++ cards.forEach(function(c){c.inputs.forEach(function(i){i.checked=false;if(i.type==="text")i.value="";if(i.parentNode.className.indexOf("opt")===0)i.parentNode.className="opt"});c.fb.textContent="";c.fb.className="fb"});window.scrollTo(0,0)});
++})();
++"""
++
++CARDS_JS = r"""
++(function(){"use strict";
++var D=JSON.parse(document.getElementById("spec").textContent),$=function(i){return document.getElementById(i)};
++$("title").textContent=D.title;
++var all=D.cards.map(function(c,i){return{i:i,front:c.front,back:c.back,hint:c.hint}}),deck=all.slice(),pos=0,back=false,known={},missed={},hintShown=false;
++function shuffle(a){for(var i=a.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1)),t=a[i];a[i]=a[j];a[j]=t}return a}
++function count(o){return Object.keys(o).length}
++function render(){var f=$("flip");f.textContent="";
++ if(pos>=deck.length){finish();return}
++ $("end").style.display="none";$("stage").style.display="block";$("ctl").style.display="flex";
++ var c=deck[pos];f.className=back?"back":"";var s=document.createElement("small");s.textContent=back?"Answer":"Question";f.appendChild(s);f.appendChild(document.createTextNode(back?c.back:c.front));
++ $("hint").textContent=(!back&&hintShown&&c.hint)?"Hint: "+c.hint:"";$("hintbtn").style.display=(!back&&c.hint)?"inline-block":"none";
++ $("count").textContent="Card "+(pos+1)+" of "+deck.length+" · known "+count(known)+" · to review "+count(missed);
++ $("fill").style.width=(pos/deck.length*100)+"%"}
++function flip(){if(pos<deck.length){back=!back;hintShown=false;render()}}
++function mark(ok){if(pos>=deck.length)return;var c=deck[pos];if(ok){known[c.i]=1;delete missed[c.i]}else{missed[c.i]=1;delete known[c.i]}pos++;back=false;hintShown=false;render()}
++function move(d){var n=pos+d;if(n>=0&&n<deck.length){pos=n;back=false;hintShown=false;render()}}
++function finish(){$("stage").style.display="none";$("ctl").style.display="none";$("hint").textContent="";$("fill").style.width="100%";var e=$("end");e.style.display="block";
++ $("endscore").textContent=count(known)+" / "+all.length+" known";$("redo").style.display=count(missed)?"inline-block":"none";
++ $("count").textContent="Finished · known "+count(known)+" · to review "+count(missed)}
++function results(){return{deck:D.title,total:all.length,known:all.filter(function(c){return known[c.i]}).map(function(c){return c.front}),to_review:all.filter(function(c){return missed[c.i]}).map(function(c){return c.front}),not_seen:all.filter(function(c){return !known[c.i]&&!missed[c.i]}).map(function(c){return c.front})}}
++$("flip").addEventListener("click",flip);$("flipbtn").addEventListener("click",flip);
++$("hintbtn").addEventListener("click",function(){hintShown=true;render()});
++$("again").addEventListener("click",function(){mark(false)});$("got").addEventListener("click",function(){mark(true)});
++$("prev").addEventListener("click",function(){move(-1)});$("next").addEventListener("click",function(){move(1)});
++$("shuf").addEventListener("click",function(){deck=shuffle(deck.slice());pos=0;back=false;render()});
++$("redo").addEventListener("click",function(){deck=all.filter(function(c){return missed[c.i]});missed={};pos=0;back=false;render()});
++$("restart").addEventListener("click",function(){deck=all.slice();known={};missed={};pos=0;back=false;render()});
++function legacy(text){var t=document.createElement("textarea");t.value=text;t.setAttribute("readonly","");t.className="offscreen";document.body.appendChild(t);t.select();var ok=false;try{ok=document.execCommand("copy")}catch(e){}document.body.removeChild(t);return ok}
++$("copy").addEventListener("click",function(){var text=JSON.stringify(results(),null,2),done=function(ok){$("copied").textContent=ok?"Copied. Paste it into the chat.":"Could not copy: use Download instead."};
++ if(navigator.clipboard&&window.isSecureContext)navigator.clipboard.writeText(text).then(function(){done(true)},function(){done(legacy(text))});else done(legacy(text))});
++$("dl").addEventListener("click",function(){var b=new Blob([JSON.stringify(results(),null,2)],{type:"application/json"}),a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="flashcards-results.json";document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(function(){URL.revokeObjectURL(a.href)},1000)});
++document.addEventListener("keydown",function(e){if(e.key===" "||e.key==="Enter"){e.preventDefault();flip()}else if(e.key==="ArrowRight")move(1);else if(e.key==="ArrowLeft")move(-1);else if(e.key==="1"||e.key==="x")mark(false);else if(e.key==="2"||e.key==="c")mark(true)});
++render();
++})();
++"""
++
++# An off-screen class for the hidden textarea the copy fallback uses
++CSS += ".offscreen{position:fixed;left:-9999px;top:0}\n"
++
++QUIZ_BODY = (
++    '<main><h1 id="title"></h1><p class="sub" id="sub"></p><div id="form"></div>'
++    '<p id="warn"></p><div class="row"><button class="primary" id="submit">Submit</button></div>'
++    '<section class="card" id="result"><h2>Results</h2><div class="big" id="score"></div>'
++    '<div id="pct"></div><div class="bar"><i id="fill"></i></div>'
++    '<div class="row"><button id="copy">Copy results</button><button id="dl">Download results (.json)</button>'
++    '<button id="again">Try again</button></div><div id="copied" class="sub"></div></section></main>')
++
++CARDS_BODY = (
++    '<main><h1 id="title"></h1><p class="sub" id="count"></p><div class="bar"><i id="fill"></i></div>'
++    '<div id="stage"><div id="flip" tabindex="0"></div></div><div id="hint"></div>'
++    '<div class="row" id="ctl"><button id="prev">← Back</button><button id="flipbtn">Flip <kbd>Space</kbd></button>'
++    '<button id="hintbtn">Hint</button><button id="again">Again <kbd>1</kbd></button>'
++    '<button class="primary" id="got">Got it <kbd>2</kbd></button><button id="next">Skip →</button>'
++    '<button id="shuf">Shuffle</button></div>'
++    '<section class="card" id="end" style="display:none"><h2>Done</h2><div class="big" id="endscore"></div>'
++    '<div class="row"><button id="redo">Review the ones I missed</button><button id="restart">Start over</button>'
++    '<button id="copy">Copy results</button><button id="dl">Download results (.json)</button></div>'
++    '<div id="copied" class="sub"></div></section></main>')
++
++
++def _hash(text: str) -> str:
++    return "'sha256-" + base64.b64encode(hashlib.sha256(text.encode("utf-8")).digest()).decode("ascii") + "'"
++
++
++def _page(spec: dict, body: str, js: str) -> str:
++    """The sealed page for a validated spec."""
++    data = json.dumps(spec, ensure_ascii=False).replace("<", "\\u003c").replace("&", "\\u0026")
++    title = escape(spec["title"])
++    # style="..." attributes are blocked by the style hash, so the one hidden section uses a class
++    body = body.replace('style="display:none"', 'hidden')
++    csp = ("default-src 'none'; base-uri 'none'; form-action 'none'; "
++           f"style-src {_hash(CSS)}; script-src {_hash(js)}")
++    page = (
++        "<!DOCTYPE html>\n"
++        '<html lang="en"><head><meta charset="utf-8">\n'
++        f'<meta http-equiv="Content-Security-Policy" content="{csp}">\n'
++        '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
++        f'<meta name="generator" content="{MARKER}">\n'
++        f'<meta name="danica-kind" content="{spec["kind"]}">\n'
++        '<meta name="danica-seal" content="">\n'
++        f"<title>{title}</title>\n<style>{CSS}</style>\n</head><body>\n"
++        f"{body}\n"
++        f'<script type="application/json" id="spec">{data}</script>\n'
++        f"<script>{js}</script>\n</body></html>\n")
++    return seal_html(page)
++
++
++def build_page(spec: dict) -> str:
++    """HTML text for a quiz or flash card spec returned by validate_quiz / validate_cards."""
++    if spec["kind"] == "quiz":
++        return _page(spec, QUIZ_BODY, QUIZ_JS)
++    return _page(spec, CARDS_BODY, CARDS_JS)
++
++
++def write_page(spec: dict, out: Path) -> Path:
++    """Write the sealed page to `out`. A file of that name is only replaced if Danica made it."""
++    out = Path(out)
++    if out.exists() and not is_sealed_html(out):
++        raise InteractiveError(f"{out.name} already exists and was not made by Danica, so it was left alone")
++    html = build_page(spec)
++    if len(html.encode("utf-8")) > 2_000_000:
++        raise InteractiveError("the page would be too large")
++    tmp = out.with_name(out.name + ".tmp")
++    try:
++        tmp.write_text(html, encoding="utf-8")
++        os.replace(tmp, out)
++    except OSError as exc:
++        raise InteractiveError(f"could not write the page ({type(exc).__name__})")
++    finally:
++        if tmp.exists():
++            tmp.unlink()
++    return out
++
++
++_KIND = re.compile(r'<meta name="danica-kind" content="(quiz|flashcards)">')
++
++
++def page_kind(path: Path) -> str:
++    """"quiz", "flashcards" or "" for a file. Reads only the head of the file."""
++    try:
++        with open(path, "r", encoding="utf-8", errors="replace") as f:
++            m = _KIND.search(f.read(2048))
++        return m.group(1) if m else ""
++    except OSError:
++        return ""
+diff --git a/danica/permissions.py b/danica/permissions.py
+index f8dca66..3a83b0d 100644
+--- a/danica/permissions.py
++++ b/danica/permissions.py
+@@ -53,6 +53,10 @@ TOOL_TIERS = {
+     "knowledge_search": Tier.READ,
+     "knowledge_synthesize": Tier.READ,
+     "web_cache_search": Tier.READ,
++    "quiz": Tier.WRITE,            # these three make a file next to their JSON data, like chart
++    "flashcards": Tier.WRITE,
++    "flowchart": Tier.WRITE,
++    "ask_user": Tier.READ,         # only shows the user a dialog
+ }
+ 
+ # (regex, reason) pairs for commands that can destroy things or pull in code.
+@@ -196,7 +200,8 @@ def is_read_only(command: str) -> bool:
+ 
+ # Tools that WRITE a file, and the argument that names it (Open Mode asks when it is outside the start folder)
+ WRITE_PATH_ARGS = {"write_file": "path", "edit_file": "path", "chart": "file", "dashboard": "file",
+-                   "diagram": "file", "mermaid": "file", "document": "source", "deck": "source"}
++                   "diagram": "file", "mermaid": "file", "document": "source", "deck": "source",
++                   "quiz": "file", "flashcards": "file", "flowchart": "file"}
+ 
+ 
+ def classify(tool: str, args: dict, open_root: Path | None = None) -> tuple[Tier, str, frozenset[str]]:
+@@ -339,4 +344,4 @@ class PermissionPolicy:
+             self.last_how = "asked-once"
+             return True, ""
+         self.last_how = "denied-by-user"
+-        return False, DENIED_MESSAGE
+\ No newline at end of file
++        return False, DENIED_MESSAGE
+\ No newline at end of file
+diff --git a/danica/sessions.py b/danica/sessions.py
+index 559f0c7..220f100 100644
+--- a/danica/sessions.py
++++ b/danica/sessions.py
+@@ -14,6 +14,7 @@ import re
+ from datetime import datetime
+ from pathlib import Path
+ 
++from danica.titles import read_title
+ from danica.compaction import harvest
+ from danica.config import APP_DIR
+ 
+@@ -125,6 +126,7 @@ def list_sessions(sessions_dir: Path = SESSIONS_DIR, limit: int = MAX_LIST) -> l
+             "requests": len(requests),
+             "compactions": sum(1 for r in records if r.get("event") == "compaction"),
+             "preview": requests[0][:70],
++            "title": read_title(folder),          # the generated title ("" until the first answer is done)
+         })
+         if len(found) >= limit:
+             break
+@@ -162,4 +164,4 @@ def resolve_session(sessions_dir: Path, arg: str, current: str = "") -> str:
+ 
+     if target == current:
+         raise ValueError("that is the current session")
+-    return target
+\ No newline at end of file
++    return target
+\ No newline at end of file
+diff --git a/danica/titles.py b/danica/titles.py
+new file mode 100644
+index 0000000..6e2d651
+--- /dev/null
++++ b/danica/titles.py
+@@ -0,0 +1,140 @@
++"""
++titles.py - A short title for each session, written by a hidden background "worker".
++
++WHEN   At the end of the FIRST finished response of a session (and only if the session has no title
++       yet). It runs in a background thread, so the answer is never delayed.
++HOW    It asks the SAME llama-server (same port) for a 3-6 word title. The request is the real
++       conversation so far (same system prompt, same tools) plus ONE extra instruction, with a tiny
++       reply limit and no thinking. Reusing the exact same start of the prompt matters: llama-server
++       keeps a cache of the prompt it already processed, so the title request costs a few tokens
++       instead of re-reading everything, and the next normal request still finds its cache intact.
++STORED In <session folder>/title.txt, one line. It never enters the conversation history, so the
++       model never sees it, and it costs no context.
++USED   /sessions, the welcome panel's recent activity, the status bar, the terminal window title,
++       /export and /resume.
++If the server fails or returns rubbish, a plain fallback is made from the first request instead.
++"""
++
++from __future__ import annotations
++
++import json
++import re
++import threading
++from pathlib import Path
++
++import httpx
++
++from danica.config import APP_DIR, CONFIG
++
++SESSIONS = APP_DIR / "sessions"
++MAX_TITLE = 60
++TITLE_TOKENS = 28                    # reply limit: a title is a few words
++TIMEOUT = httpx.Timeout(connect=5.0, read=45.0, write=10.0, pool=5.0)
++
++INSTRUCTION = ("[harness request, not from the user] Write a title for this conversation: 3 to 6 words, no "
++               "quotes, no trailing punctuation, no markdown. Reply with the title only.")
++
++_running: set[str] = set()           # sessions whose title is being made right now
++_lock = threading.Lock()
++
++
++# ------------------------------------------------------------------ storage
++
++def _file(session) -> Path:
++    """title.txt for a session id or a session folder."""
++    folder = Path(session)
++    return (folder if folder.is_absolute() else SESSIONS / str(session)) / "title.txt"
++
++
++def read_title(session) -> str:
++    """The saved title ("" if none yet). Never raises."""
++    try:
++        return _file(session).read_text(encoding="utf-8").strip()[:MAX_TITLE]
++    except OSError:
++        return ""
++
++
++def write_title(session, title: str) -> None:
++    path = _file(session)
++    path.parent.mkdir(parents=True, exist_ok=True)
++    tmp = path.with_name("title.txt.tmp")
++    tmp.write_text(title.strip()[:MAX_TITLE] + "\n", encoding="utf-8")
++    tmp.replace(path)                # atomic: a half-written title is never read
++
++
++# ------------------------------------------------------------------ cleaning
++
++def clean_title(raw: str) -> str:
++    """The model's reply as a tidy one-line title ("" if it is not usable)."""
++    text = re.sub(r"<think>.*?</think>", "", raw or "", flags=re.S | re.I)         # a reasoning block, if any
++    text = re.sub(r"<[^>]{0,80}>", "", text)                                       # stray tags / tool-call markup
++    text = text.strip().splitlines()[0] if text.strip() else ""
++    text = re.sub(r"^(title|session title)\s*[:\-]\s*", "", text, flags=re.I)
++    text = text.strip(" \t\"'`*#_.:;,-")
++    text = " ".join(text.split())
++    if not text or len(text.split()) > 12 or "harness" in text.lower():
++        return ""
++    return text[:MAX_TITLE]
++
++
++def fallback_title(first_request: str) -> str:
++    """A title with no model: the first few words of the user's first request."""
++    words = re.sub(r"[^\w\s'-]", " ", first_request or "").split()
++    return " ".join(words[:6])[:MAX_TITLE] or "New session"
++
++
++# ------------------------------------------------------------------ the worker
++
++def request_title(agent) -> str:
++    """Ask the model for a title. Blocking (a second or two). Returns "" on any failure."""
++    from danica.tools.registry import tool_schemas
++    base = CONFIG["server"]["base_url"]
++    messages = list(agent._messages_for_model()) + [{"role": "user", "content": INSTRUCTION}]
++    payload = {
++        "messages": messages,
++        "stream": False,
++        "temperature": 0.2,
++        "max_tokens": TITLE_TOKENS,
++        "chat_template_kwargs": {"enable_thinking": False},
++        "tools": tool_schemas(),                 # same tools = same prompt start = the server's cache is reused
++        "tool_choice": "none",                   # (ignored by servers that don't know it: we only read the text)
++    }
++    try:
++        with httpx.Client(timeout=TIMEOUT, trust_env=False) as client:   # local server: never via a proxy
++            reply = client.post(f"{base}/v1/chat/completions", json=payload)
++            reply.raise_for_status()
++            content = reply.json()["choices"][0]["message"].get("content") or ""
++    except (httpx.HTTPError, ValueError, KeyError, IndexError):
++        return ""
++    return clean_title(content)
++
++
++def first_request_text(agent) -> str:
++    """The user's first request in this session (for the fallback title)."""
++    for m in agent.messages:
++        if m.get("role") == "user" and isinstance(m.get("content"), str) and not m["content"].startswith("["):
++            return m["content"]
++    return ""
++
++
++def start(agent, session_id: str, on_done) -> bool:
++    """Make a title in the background if the session has none. on_done(title) is called from the
++    worker thread. Returns True if a worker was started."""
++    with _lock:
++        if session_id in _running or read_title(session_id):
++            return False
++        _running.add(session_id)
++
++    def work():
++        try:
++            title = request_title(agent) or fallback_title(first_request_text(agent))
++            write_title(session_id, title)
++            on_done(title)
++        except Exception:                        # a title must never break anything
++            pass
++        finally:
++            with _lock:
++                _running.discard(session_id)
++
++    threading.Thread(target=work, name="danica-title", daemon=True).start()
++    return True
+diff --git a/danica/tools/__init__.py b/danica/tools/__init__.py
+index cb09ff2..010637f 100644
+--- a/danica/tools/__init__.py
++++ b/danica/tools/__init__.py
+@@ -3,5 +3,5 @@ Importing this package imports files.py, whose @tool decorators
+ fill the registry. Later tool modules get imported here too.
+ """
+ 
+-from danica.tools import chart, dashboard, deck, diagram, document, fetch, files, knowledge, knowledge_synthesis, knowledge_write, mermaid, recall, search, shell, skills, subagents, todo, webcache_tool, websearch  # noqa: F401  (imported for their @tool side effects)
+-from danica.tools.registry import run_tool, tool_schemas  # noqa: F401
+\ No newline at end of file
++from danica.tools import chart, dashboard, deck, diagram, document, fetch, files, interactive_tools, knowledge, knowledge_synthesis, knowledge_write, mermaid, recall, search, shell, skills, subagents, todo, webcache_tool, websearch  # noqa: F401  (imported for their @tool side effects)
++from danica.tools.registry import run_tool, tool_schemas  # noqa: F401
+\ No newline at end of file
+diff --git a/danica/tools/interactive_tools.py b/danica/tools/interactive_tools.py
+new file mode 100644
+index 0000000..d5110f9
+--- /dev/null
++++ b/danica/tools/interactive_tools.py
+@@ -0,0 +1,198 @@
++"""
++interactive_tools.py - Four tools:
++
++  quiz        a Q&A page with a working Submit button (graded or survey)     -> quizzes/x.html
++  flashcards  a flip-card study page                                         -> cards/x.html
++  flowchart   a flow chart from shapes placed on a grid                      -> flows/x.png (+ interactive viewer)
++  ask_user    ask the USER clarifying questions in a dialog (missing context, optional features, preferences)
++
++Like the chart tool, the model writes DATA with write_file (a small JSON file); these tools check it
++and build the output with fixed code. The model never writes HTML or JavaScript.
++The success text starts with "OUTPUT: saved ..." (the same wording the other file-making tools use).
++"""
++
++import json
++
++from danica.flowgen import FlowError, render as render_flow, validate as validate_flow
++from danica.interactive import (InteractiveError, MAX_SPEC_BYTES, validate_cards, validate_quiz, write_page)
++from danica.secret_scan import is_sensitive_path
++from danica.tools.files import _write_guard
++from danica.tools.registry import tool
++from danica.workspace import Workspace
++
++
++def _load(ws: Workspace, file: str):
++    """(path, data) for a JSON spec file, or (None, "ERROR: ...")."""
++    p = ws.resolve(file)
++    if p.suffix.lower() != ".json":
++        return None, "ERROR: the data file must end in .json (write it with write_file first)"
++    if not p.is_file():
++        return None, f"ERROR: '{file}' is not a file. Write the JSON data file with write_file first."
++    if is_sensitive_path(ws.rel(p)):
++        return None, "ERROR: that file is blocked: it looks like a credentials file"
++    if p.stat().st_size > MAX_SPEC_BYTES:
++        return None, f"ERROR: the data file is too big (limit {MAX_SPEC_BYTES // 1000} KB)"
++    try:
++        return p, json.loads(p.read_text(encoding="utf-8-sig"))
++    except (ValueError, UnicodeError, RecursionError) as e:
++        return None, f"ERROR: the data file is not valid JSON ({type(e).__name__}: {str(e)[:100]})"
++
++
++def _done(shown: str, size: int, what: str) -> str:
++    return (f'OUTPUT: saved {shown} ({max(1, size // 1024)} KB). It is finished: do NOT call this tool again for this '
++            f'file. To show it in chat, write <present file="{shown}"/> on its own line in your reply, then add one '
++            f'short sentence about {what} and stop.')
++
++
++# ------------------------------------------------------------------ quiz
++
++@tool(
++    "quiz",
++    "Make an interactive quiz page (questions, a Submit button, a score with explanations, and Copy/Download "
++    "results) from a JSON file you wrote with write_file (for example quizzes/capitals.json). The page is saved "
++    "next to it (quizzes/capitals.html). Data: "
++    '{"title": "...", "questions": [{"q": "Capital of France?", "type": "choice", "options": ["Paris", "Rome"], '
++    '"answer": 0, "explanation": "..."}, {"q": "Pick primes", "type": "multi", "options": [...], "answer": [0, 2]}, '
++    '{"q": "The sun is a star", "type": "truefalse", "answer": true}, '
++    '{"q": "Capital of Japan?", "type": "text", "answer": ["Tokyo"]}]}. '
++    '"answer" is the option number (0 = first) or the option text. 1 to 30 questions, 2 to 6 options each. '
++    'For a SURVEY (no right answers, just collect the user\'s answers) leave out "answer" and add "mode": "survey". '
++    "Never write HTML or JavaScript yourself.",
++    {"file": {"type": "string", "description": "Path of the JSON data file, for example quizzes/capitals.json"}},
++)
++def quiz(ws: Workspace, file: str) -> str:
++    p, data = _load(ws, file)
++    if p is None:
++        return data
++    out = p.with_suffix(".html")
++    guarded = _write_guard(ws, out)
++    if guarded:
++        return guarded
++    try:
++        spec = validate_quiz(data)
++        write_page(spec, out)
++    except InteractiveError as e:
++        return f"ERROR: {e}"
++    return _done(ws.display(out), out.stat().st_size, "the quiz")
++
++
++# ------------------------------------------------------------------ flash cards
++
++@tool(
++    "flashcards",
++    "Make an interactive flash card page (flip, got it / again, shuffle, review missed) from a JSON file you wrote "
++    "with write_file (for example cards/spanish.json). The page is saved next to it (cards/spanish.html). Data: "
++    '{"title": "Spanish basics", "cards": [{"front": "hola", "back": "hello", "hint": "optional"}]}. '
++    "1 to 100 cards. Never write HTML or JavaScript yourself.",
++    {"file": {"type": "string", "description": "Path of the JSON data file, for example cards/spanish.json"}},
++)
++def flashcards(ws: Workspace, file: str) -> str:
++    p, data = _load(ws, file)
++    if p is None:
++        return data
++    out = p.with_suffix(".html")
++    guarded = _write_guard(ws, out)
++    if guarded:
++        return guarded
++    try:
++        write_page(validate_cards(data), out)
++    except InteractiveError as e:
++        return f"ERROR: {e}"
++    return _done(ws.display(out), out.stat().st_size, "the flash cards")
++
++
++# ------------------------------------------------------------------ flow chart
++
++@tool(
++    "flowchart",
++    "Draw a flow chart from shapes placed on a GRID. Write a JSON file with write_file (for example "
++    "flows/login.json); the picture is saved next to it (flows/login.png) and opens as an interactive diagram. Data: "
++    '{"type": "flow", "title": "Login", "nodes": [{"id": "start", "label": "Start", "shape": "oval", "col": 0, "row": 0}, '
++    '{"id": "ok", "label": "Password OK?", "shape": "diamond", "col": 0, "row": 1}, '
++    '{"id": "in", "label": "Show profile", "shape": "box", "col": 0, "row": 2, "color": "green"}, '
++    '{"id": "no", "label": "Show error", "shape": "box", "col": 1, "row": 1, "color": "red"}], '
++    '"edges": [{"from": "start", "to": "ok"}, {"from": "ok", "to": "in", "label": "yes"}, '
++    '{"from": "ok", "to": "no", "label": "no"}]}. '
++    "col counts from 0 on the left, row from 0 at the top; every node needs its own cell (max 12 x 12, 40 nodes); "
++    "leave an empty cell where a connector has to go around a shape. "
++    "Shapes: box, rounded, oval (start/end), diamond (decision), parallelogram (input/output), circle (connector). "
++    "Colors (optional): blue, green, orange, red, pink, sky, yellow, grey. Never write drawing code yourself.",
++    {"file": {"type": "string", "description": "Path of the JSON data file, for example flows/login.json"}},
++)
++def flowchart(ws: Workspace, file: str) -> str:
++    p, data = _load(ws, file)
++    if p is None:
++        return data
++    out = p.with_suffix(".png")
++    guarded = _write_guard(ws, out)
++    if guarded:
++        return guarded
++    try:
++        png = render_flow(validate_flow(data))
++    except FlowError as e:
++        return f"ERROR: {e}"
++    out.write_bytes(png)
++    return _done(ws.display(out), len(png), "the flow chart")
++
++
++# ------------------------------------------------------------------ ask the user
++
++MAX_QUESTIONS, MIN_OPTIONS, MAX_OPTIONS = 4, 2, 4
++
++
++def _clean_questions(raw):
++    """(questions, error). Each question becomes {"question", "options": [{"label", "description"}], "multi"}."""
++    if not isinstance(raw, list) or not 1 <= len(raw) <= MAX_QUESTIONS:
++        return None, f'"questions" must be a list of 1 to {MAX_QUESTIONS} questions'
++    out = []
++    for n, q in enumerate(raw, start=1):
++        if not isinstance(q, dict) or not str(q.get("question", "")).strip():
++            return None, f'question {n} needs a "question" text'
++        options = q.get("options")
++        if not isinstance(options, list) or not MIN_OPTIONS <= len(options) <= MAX_OPTIONS:
++            return None, f'question {n} needs "options": {MIN_OPTIONS} to {MAX_OPTIONS} short choices (the user can also type their own answer)'
++        clean = []
++        for o in options:
++            label, desc = (o.get("label"), o.get("description", "")) if isinstance(o, dict) else (o, "")
++            if isinstance(label, (dict, list)) or not str(label or "").strip():
++                return None, f"question {n} has an empty option"
++            clean.append({"label": " ".join(str(label).split())[:80], "description": " ".join(str(desc or "").split())[:120]})
++        out.append({"question": " ".join(str(q["question"]).split())[:220], "options": clean, "multi": bool(q.get("multi"))})
++    return out, ""
++
++
++@tool(
++    "ask_user",
++    "Ask the USER 1 to 4 short clarifying questions in a dialog and wait for the answers. Use it when (a) the request "
++    "lacks context you cannot find with your tools (which file, who is the audience, what data), (b) an optional extra "
++    "feature is worth offering, or (c) the result depends on a preference (style, format, length). Give each question "
++    "2 to 4 options (the user can also type their own answer). Do not ask what a tool can find out, do not ask the "
++    "same thing twice, and do not ask for permission to do what the user already asked. Ask once, then continue with "
++    'the answers. Example: {"questions": [{"question": "Which chart style?", "options": ["Bar", "Line"]}, '
++    '{"question": "Extras?", "options": ["Add a legend", "Add data labels"], "multi": true}]}.',
++    {"questions": {"type": "array", "description": "1 to 4 questions",
++                   "items": {"type": "object",
++                             "properties": {"question": {"type": "string"},
++                                            "options": {"type": "array", "items": {"type": "string"}},
++                                            "multi": {"type": "boolean", "description": "true = the user may pick several options"}},
++                             "required": ["question", "options"]}}},
++)
++def ask_user(ws: Workspace, questions) -> str:
++    cleaned, problem = _clean_questions(questions)
++    if cleaned is None:
++        return f"ERROR: {problem}"
++    ask = getattr(ws, "ask_user", None)
++    if ask is None:                            # a subagent, or a session with no screen to ask on
++        return ("ERROR: the user cannot be asked right now. Choose sensible defaults, say what you assumed "
++                "in your answer, and continue.")
++    answers = ask(cleaned)
++    if not answers:
++        return ("OUTPUT: the user skipped the questions. Choose sensible defaults, say in one line what you "
++                "assumed, and continue. Do not ask again.")
++    lines = []
++    for i, a in enumerate(answers, start=1):
++        picked = "; ".join(a.get("answers") or [])
++        if a.get("other"):
++            picked = (picked + "; " if picked else "") + f'(in their own words) {a["other"]}'
++        lines.append(f'{i}. {a.get("question", "")} -> {picked or "(no answer: use your best judgement)"}')
++    return "OUTPUT: the user answered:\n" + "\n".join(lines) + "\nUse these answers and continue with the task. Do not ask the same questions again."
+diff --git a/danica/tui/app.py b/danica/tui/app.py
+index eae613d..8778be4 100644
+--- a/danica/tui/app.py
++++ b/danica/tui/app.py
+@@ -48,6 +48,8 @@ from danica.tui.viewer_widgets import ArtifactPane, PresentLink
+ from danica.htmlview import ViewerError, build_viewer
+ from danica.workspace import PathJailError
+ from danica.seal import is_sealed_html
++from danica import titles
++from danica.interactive import page_kind
+ 
+ IDLE_PLACEHOLDER = f"Ask Danica…"
+ BUSY_PLACEHOLDER = "Working…  Esc stops the task"
+@@ -130,6 +132,7 @@ class DanicaApp(App):
+         self.session_id = ""
+         self.project: dict | None = None
+         self.open_root: Path | None = None           # Open Mode: the START folder (None = not in Open Mode)
++        self.session_title = ""                       # generated by titles.py after the first answer
+         self.plan_next = False                       # set by a bare /plan: the NEXT request gets a plan
+         self.plan_auto = CONFIG.get("planning", {}).get("auto", "ask")   # "ask" | "off"
+         self.artifacts: list = []                    # files the LAST request made (for /open, /save)
+@@ -251,6 +254,7 @@ class DanicaApp(App):
+         self.ws, self.audit, self.checkpoints, self.policy, self.agent = ws, audit, checkpoints, policy, agent
+         self.session_id, self.project = session_id, project
+         self.open_root = ws.root if ws.open_mode else None     # also right after /resume of an Open Mode session
++        self._call(self.set_session_title, titles.read_title(session_id))   # a resumed session keeps its title
+         self.artifacts = []
+         # The TUI draws subagents itself, so the supervisor must not open a console window
+         if ws.subagent_supervisor is not None:
+@@ -400,6 +404,8 @@ class DanicaApp(App):
+             if decision == "cancel":
+                 raise _PlanCancelled()
+             result = agent.run(text, plan=plan)
++            if result:                            # first finished answer: name the session in the background
++                titles.start(agent, self.session_id, lambda t: self._call(self.set_session_title, t))
+             try:
+                 found = collect(ws, agent.checkpoints, agent.request_snap, agent.touched, set(self.presented))
+             except Exception:
+@@ -534,7 +540,8 @@ class DanicaApp(App):
+                     raise ImageError("only slideshows made by Danica can be linked")
+                 label = self.ws.display(path)
+                 self.presented.add(label)
+-                self.mount_block(PresentLink(label, path, "slideshow"))
++                what = {"quiz": "quiz", "flashcards": "flash cards"}.get(page_kind(path), "slideshow")
++                self.mount_block(PresentLink(label, path, what))
+                 return
+             path = check_image(self.ws, rel)
+             label = self.ws.display(path)
+@@ -699,6 +706,8 @@ class DanicaApp(App):
+         if self.open_root is not None:                # first, so a narrow terminal can never cut it off
+             t.append(" \u26a0 OPEN MODE ", style="bold white on red")
+             t.append(" ")
++        if self.session_title:
++            t.append(f"\u270e {self.session_title[:40]}  ", style="bold #ff9e64")
+         t.append(f"ctx {agent.tracker.bar(agent.messages)}", style=color)
+         t.append(" | " + ("think" if agent.thinking else "fast"))
+         if self.policy is not None and self.policy.full_access:
+@@ -715,6 +724,16 @@ class DanicaApp(App):
+         t.append(" | " + label + short_path(self.ws.root), style="#C6C0BE")
+         return t
+ 
++    def set_session_title(self, title: str) -> None:
++        """UI thread. Show the session title in the status bar and as the terminal window title."""
++        self.session_title = title
++        self.title = f"Danica - {title}" if title else "Danica"
++        try:
++            self._driver.write(f"\x1b]0;{self.title}\x07")      # the terminal's window title (Windows Terminal etc.)
++        except Exception:
++            pass                                               # a title must never break the app
++        self.refresh_status()
++
+     def refresh_status(self) -> None:
+         try:
+             self.query_one(StatusBar).update(self.status_text())
+@@ -772,4 +791,4 @@ if __name__ == "__main__":
+     # except EOFError:
+     #     Console.print("[bold red on #555555] CRITICAL [/] Hard Stop")
+     # except Exception as e:
+-    #     Console.print(f"[bold #000000 on red] ERROR [/] {escape(str(e))}")
+\ No newline at end of file
++    #     Console.print(f"[bold #000000 on red] ERROR [/] {escape(str(e))}")
+\ No newline at end of file
+diff --git a/danica/tui/ask_screen.py b/danica/tui/ask_screen.py
+new file mode 100644
+index 0000000..ae52e2c
+--- /dev/null
++++ b/danica/tui/ask_screen.py
+@@ -0,0 +1,92 @@
++"""
++ask_screen.py - The dialog behind the ask_user tool: Danica asks 1 to 4 short questions, each with
++a few options (pick one, or several for a "multi" question) and a box to type your own answer.
++
++Result (what the waiting worker thread gets back):
++    None                     you pressed Esc / Skip
++    [{"question": str, "answers": [str, ...], "other": str}, ...]   one entry per question
++"""
++
++from __future__ import annotations
++
++from rich.text import Text
++from textual.app import ComposeResult
++from textual.binding import Binding
++from textual.containers import Horizontal, Vertical, VerticalScroll
++from textual.screen import ModalScreen
++from textual.widgets import Button, Input, RadioButton, RadioSet, SelectionList, Static
++from textual.widgets.selection_list import Selection
++
++
++class AskScreen(ModalScreen):
++    """questions = [{"question": str, "options": [{"label": str, "description": str}], "multi": bool}]"""
++
++    BINDINGS = [Binding("escape", "skip", "Skip")]
++
++    DEFAULT_CSS = """
++    AskScreen { align: center middle; background: black 60%; }
++    AskScreen .ask-box { width: 80%; min-width: 60; max-width: 110; height: auto; max-height: 92%;
++                         padding: 1 2; background: #313131; border: round #ffffff; }
++    AskScreen .ask-scroll { height: auto; max-height: 26; margin-bottom: 1; }
++    AskScreen .ask-q { text-style: bold; margin-top: 1; }
++    AskScreen .ask-q:first-child { margin-top: 0; }
++    AskScreen RadioSet, AskScreen SelectionList { height: auto; max-height: 9; background: #222222; border: none; padding: 0 1; }
++    AskScreen Input { margin-top: 0; }
++    AskScreen .ask-buttons { height: auto; }
++    AskScreen .ask-buttons Button { width: 1fr; min-width: 0; margin-right: 2; background: #3f3f3f; }
++    AskScreen .ask-buttons Button:last-of-type { margin-right: 0; }
++    """
++
++    def __init__(self, questions: list[dict]) -> None:
++        super().__init__()
++        self.questions = questions
++
++    @staticmethod
++    def _label(option: dict) -> str:
++        return option["label"] + (f"  -  {option['description']}" if option.get("description") else "")
++
++    def compose(self) -> ComposeResult:
++        many = len(self.questions) > 1
++        with Vertical(classes="ask-box"):
++            yield Static(Text("Danica has " + ("some questions" if many else "a question")
++                              + "  (a few words each is enough)", style="bold #ff9e64"), classes="dialog-title")
++            with VerticalScroll(classes="ask-scroll"):
++                for i, q in enumerate(self.questions):
++                    yield Static(Text(f"{i + 1}. {q['question']}" + ("   (pick any)" if q.get("multi") else "")), classes="ask-q")
++                    if q.get("multi"):
++                        yield SelectionList(*[Selection(self._label(o), k) for k, o in enumerate(q["options"])], id=f"sel{i}")
++                    else:
++                        yield RadioSet(*[RadioButton(self._label(o)) for o in q["options"]], id=f"rad{i}")
++                    yield Input(placeholder="...or type your own answer", id=f"oth{i}")
++            with Horizontal(classes="ask-buttons"):
++                yield Button("Send answers", id="send", variant="success")
++                yield Button("Skip  (Esc)", id="skip")
++
++    def on_mount(self) -> None:
++        first = self.query("RadioSet, SelectionList")
++        if first:
++            first.first().focus()
++
++    def answers(self) -> list[dict]:
++        """What the user chose, one entry per question (an unanswered question has no answers)."""
++        out = []
++        for i, q in enumerate(self.questions):
++            if q.get("multi"):
++                picked = [q["options"][k]["label"] for k in self.query_one(f"#sel{i}", SelectionList).selected]
++            else:
++                index = self.query_one(f"#rad{i}", RadioSet).pressed_index
++                picked = [q["options"][index]["label"]] if index is not None and index >= 0 else []
++            out.append({"question": q["question"], "answers": picked,
++                        "other": self.query_one(f"#oth{i}", Input).value.strip()[:300]})
++        return out
++
++    def on_button_pressed(self, event: Button.Pressed) -> None:
++        event.stop()
++        self.dismiss(self.answers() if event.button.id == "send" else None)
++
++    def on_input_submitted(self, event: Input.Submitted) -> None:
++        event.stop()                       # Enter in a text box sends everything
++        self.dismiss(self.answers())
++
++    def action_skip(self) -> None:
++        self.dismiss(None)
+diff --git a/danica/tui/commands.py b/danica/tui/commands.py
+index a27cb20..cf9e772 100644
+--- a/danica/tui/commands.py
++++ b/danica/tui/commands.py
+@@ -188,7 +188,7 @@ def _sessions(app, args):
+         tag = "  (current)" if info["id"] == app.session_id else ""
+         lines.append(f"{n:>2}. {info['id']}  {info['modified']:%d %b %H:%M}  "
+                      f"{info['requests']} request(s), {info['compactions']} compaction(s){tag}")
+-        lines.append(f"      {info['preview']}")
++        lines.append(f"      {info.get('title') or info['preview']}")
+     app.ui.say("\n".join(lines))
+ 
+ 
+@@ -701,4 +701,4 @@ def _dialogs(app, args):
+     )
+     app.ui.log("info", f"permission -> {answer}")   # "once", "session" or "deny"
+ 
+-from danica.tui import commands_view  # noqa: E402,F401
+\ No newline at end of file
++from danica.tui import commands_view  # noqa: E402,F401
+\ No newline at end of file
+diff --git a/danica/tui/widgets.py b/danica/tui/widgets.py
+index bc62ca7..2b3557c 100644
+--- a/danica/tui/widgets.py
++++ b/danica/tui/widgets.py
+@@ -465,7 +465,7 @@ def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.4.0
+         for info in infos:
+             text = Text()
+             text.append(info["id"], style="dim")
+-            text.append(f" {info['preview']}", style="bold")
++            text.append(f" {info.get('title') or info['preview']}", style="bold")
+             lines.append(text)
+         right.append(Text("\n").join(lines))
+ 
+@@ -753,4 +753,4 @@ class BusyLine(Static):
+ 
+ 
+ class StatusBar(Static):
+-    pass
+\ No newline at end of file
++    pass
+\ No newline at end of file

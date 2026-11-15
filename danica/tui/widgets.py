@@ -465,7 +465,7 @@ def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.4.0
         for info in infos:
             text = Text()
             text.append(info["id"], style="dim")
-            text.append(f" {info['preview']}", style="bold")
+            text.append(f" {info.get('title') or info['preview']}", style="bold")
             lines.append(text)
         right.append(Text("\n").join(lines))
 
@@ -753,4 +753,4 @@ class BusyLine(Static):
 
 
 class StatusBar(Static):
-    pass
+    pass

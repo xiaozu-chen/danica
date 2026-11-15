@@ -127,7 +127,7 @@ class TextualUI:
 
 class ServerEvent(Message):
     """The server monitor saw a change: kind is "offline", "online", or "ctx_changed"."""
-    def __init__(self, kind: str , data) -> None:
+    def __init__(self, kind: str, data) -> None:
         super().__init__()
         self.kind = kind
         self.data = data

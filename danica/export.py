@@ -17,6 +17,7 @@ import unicodedata
 from datetime import datetime
 from pathlib import Path
 
+from danica.titles import read_title
 from danica.compaction import harvest, is_summary
 from danica.config import APP_DIR
 from danica.projects import SKIP_DIRS
@@ -144,7 +145,8 @@ def build_readme(session_id: str, project: dict | None, records: list[dict], sta
     compactions = sum(1 for r in records if r.get("event") == "compaction")
     mode = f"project {project['name']} ({project['path']})" if project else "normal chat"
 
-    lines = [f"# Danica session {session_id}", "",
+    lines = [f"# {read_title(session_id) or 'Danica session'}", "",
+             f"- Session: {session_id}",
              f"- Exported: {datetime.now():%Y-%m-%d %H:%M}",
              f"- Mode: {mode}",
              f"- Your requests: {len(requests)}; compactions: {compactions}", "",
@@ -206,4 +208,4 @@ def export_session(session_dir: Path, ws, project: dict | None, out_root: Path =
     (out / "README.md").write_text(
         build_readme(session_dir.name, project, records, state, copied, skipped,
                      bool(summaries), todo.is_file()), encoding="utf-8")
-    return out
+    return out

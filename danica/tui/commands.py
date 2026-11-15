@@ -188,7 +188,7 @@ def _sessions(app, args):
         tag = "  (current)" if info["id"] == app.session_id else ""
         lines.append(f"{n:>2}. {info['id']}  {info['modified']:%d %b %H:%M}  "
                      f"{info['requests']} request(s), {info['compactions']} compaction(s){tag}")
-        lines.append(f"      {info['preview']}")
+        lines.append(f"      {info.get('title') or info['preview']}")
     app.ui.say("\n".join(lines))
 
 
@@ -701,4 +701,4 @@ def _dialogs(app, args):
     )
     app.ui.log("info", f"permission -> {answer}")   # "once", "session" or "deny"
 
-from danica.tui import commands_view  # noqa: E402,F401
+from danica.tui import commands_view  # noqa: E402,F401

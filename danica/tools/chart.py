@@ -19,9 +19,9 @@ from danica.workspace import Workspace
     "chart",
     "Draw a chart or table as a PNG image from a JSON data file you wrote with write_file "
     "(for example charts/sales.json). The image is saved next to it (charts/sales.png). "
-    'Data formats. bar, line, area (stacked) or pie: {"type": "bar", "title": "...", "x_label": "...", '
+    'Data formats. bar, hbar (horizontal bars), stacked (stacked bars), line, area (stacked) or pie / donut: {"type": "bar", "title": "...", "x_label": "...", '
     '"y_label": "...", "labels": ["Jan", "Feb"], "series": [{"name": "Sales", "values": [10, 20]}]} '
-    "(a pie has exactly one series). "
+    "(a pie or donut has exactly one series). "
     'scatter: {"type": "scatter", "series": [{"name": "A", "points": [[1, 2], [3, 4]]}]}. '
     'table: {"type": "table", "columns": ["Name", "Qty"], "rows": [["apple", 3]]}. '
     "Values must be plain numbers. Never write plotting code or HTML yourself.",

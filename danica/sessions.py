@@ -14,6 +14,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from danica.titles import read_title
 from danica.compaction import harvest
 from danica.config import APP_DIR
 
@@ -125,6 +126,7 @@ def list_sessions(sessions_dir: Path = SESSIONS_DIR, limit: int = MAX_LIST) -> l
             "requests": len(requests),
             "compactions": sum(1 for r in records if r.get("event") == "compaction"),
             "preview": requests[0][:70],
+            "title": read_title(folder),          # the generated title ("" until the first answer is done)
         })
         if len(found) >= limit:
             break
@@ -162,4 +164,4 @@ def resolve_session(sessions_dir: Path, arg: str, current: str = "") -> str:
 
     if target == current:
         raise ValueError("that is the current session")
-    return target
+    return target

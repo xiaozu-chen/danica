@@ -108,6 +108,20 @@ def apply_instructions(project: dict, agent, audit, ui: UI) -> None:
     ui.log("ok", f"  Loaded DANICA.md ({len(text)} characters.)")
 
 
+def make_asker(ui):
+    """How the ask_user tool reaches the user: a dialog on the TUI. None when this UI has no dialogs
+    (the tool then tells the model to carry on with sensible defaults). Blocks the worker thread
+    until the user answers; returns [{"question", "answers", "other"}, ...] or None if skipped."""
+    show = getattr(ui, "ask_screen", None)
+    if show is None:
+        return None
+
+    def ask(questions: list[dict]):
+        from danica.tui.ask_screen import AskScreen
+        return show(AskScreen(questions))
+    return ask
+
+
 def build_session(session_id: str, ui: UI, on_event, project: dict | None = None,
                   headless: bool = False, workspace_root: Path | None = None,
                   open_root: Path | None = None):
@@ -151,6 +165,7 @@ def build_session(session_id: str, ui: UI, on_event, project: dict | None = None
     policy.open_root = ws.root if open_root is not None else None      # switches Open Mode rules on
     supervisor = SubagentSupervisor(ws, policy, audit, session_id)
     ws.subagent_supervisor = supervisor
+    ws.ask_user = None if headless else make_asker(ui)       # the ask_user tool's way to reach the user
     extensions = extension_manager(audit, headless)
     ws.extension_manager = extensions
     for error in extensions.errors:
@@ -338,4 +353,4 @@ def shutdown(ws, log: Callable[[str, str], None] | None = None) -> None:
         try:
             _EXTENSION_MANAGER.close()
         except ExtensionError as exc:
-            log("error", f"stopping extensions: {exc}")
+            log("error", f"stopping extensions: {exc}")

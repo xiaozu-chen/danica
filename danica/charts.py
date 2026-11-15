@@ -8,7 +8,9 @@ before it is drawn (matplotlib would read "$...$" as math, so "$" is escaped).
 Spec formats (validate() explains mistakes in plain words):
     bar / line / area:  {"type", "title", "x_label", "y_label", "labels": [...],
                          "series": [{"name", "values": [numbers]}]}      (area is stacked)
-    pie:                the same with exactly ONE series, no negative values
+    pie / donut:        the same with exactly ONE series, no negative values
+    hbar:               horizontal bars (same format as bar; good for long labels and rankings)
+    stacked:            stacked bars (same format as bar; each label's bar is split by series)
     scatter:            {"series": [{"name", "points": [[x, y], ...]}]}
     table:              {"columns": [...], "rows": [[...], ...]}
 """
@@ -16,7 +18,7 @@ Spec formats (validate() explains mistakes in plain words):
 import io
 import unicodedata
 
-TYPES = ("bar", "line", "area", "pie", "scatter", "table")
+TYPES = ("bar", "line", "area", "pie", "donut", "hbar", "stacked", "scatter", "table")
 MAX_LABELS, MAX_SERIES, MAX_POINTS, MAX_PIE = 100, 8, 2000, 12
 MAX_COLUMNS, MAX_ROWS = 8, 30
 MAX_TEXT, MAX_TITLE = 60, 120
@@ -112,15 +114,15 @@ def validate(data) -> dict:
                              f'"12%", true/false or null)')
         out.append({"name": _text(s.get("name") or f"Series {i}"), "values": [float(v) for v in values]})
 
-    if kind == "pie":
+    if kind in ("pie", "donut"):
         if len(out) != 1:
-            raise ChartError("a pie chart takes exactly one series")
+            raise ChartError(f"a {kind} chart takes exactly one series")
         if len(labels) > MAX_PIE:
-            raise ChartError(f"a pie chart can have at most {MAX_PIE} slices")
+            raise ChartError(f"a {kind} chart can have at most {MAX_PIE} slices")
         if any(v < 0 for v in out[0]["values"]):
-            raise ChartError("a pie chart cannot have negative values")
+            raise ChartError(f"a {kind} chart cannot have negative values")
         if sum(out[0]["values"]) <= 0:
-            raise ChartError("the pie values add up to zero")
+            raise ChartError(f"the {kind} values add up to zero")
 
     spec["labels"] = [_text(l, 30) for l in labels]
     spec["series"] = out
@@ -148,10 +150,13 @@ def _draw(ax, spec: dict, fs: float = 1.0) -> None:
     def colour(i: int) -> str:
         return PALETTE[i % len(PALETTE)]
 
-    if kind == "pie":
+    if kind in ("pie", "donut"):
         values = series[0]["values"]
         ax.pie(values, labels=spec["labels"], autopct="%1.1f%%", startangle=90,
-               colors=[colour(i) for i in range(len(values))], textprops={"fontsize": 10 * fs})
+               colors=[colour(i) for i in range(len(values))], textprops={"fontsize": 10 * fs},
+               # a donut is a pie with a hole: wedge width < 1 leaves the middle empty
+               wedgeprops={"width": 0.45, "edgecolor": "white"} if kind == "donut" else None,
+               pctdistance=0.78 if kind == "donut" else 0.6)
         ax.axis("equal")
     elif kind == "scatter":
         for i, s in enumerate(series):
@@ -165,6 +170,19 @@ def _draw(ax, spec: dict, fs: float = 1.0) -> None:
             for i, s in enumerate(series):
                 offset = (i - (n - 1) / 2) * width              # side by side, centred on each label
                 ax.bar([v + offset for v in x], s["values"], width, label=s["name"], color=colour(i))
+        elif kind == "hbar":                                     # horizontal: labels on the y axis, first label on top
+            height = 0.8 / n
+            for i, s in enumerate(series):
+                offset = (i - (n - 1) / 2) * height
+                ax.barh([v + offset for v in x], s["values"], height, label=s["name"], color=colour(i))
+            ax.set_yticks(x)
+            ax.set_yticklabels(spec["labels"], fontsize=10 * fs)
+            ax.invert_yaxis()
+        elif kind == "stacked":                                  # each series sits on top of the previous ones
+            bottom = [0.0] * len(x)
+            for i, s in enumerate(series):
+                ax.bar(x, s["values"], 0.6, bottom=bottom, label=s["name"], color=colour(i))
+                bottom = [b + v for b, v in zip(bottom, s["values"])]
         elif kind == "line":
             for i, s in enumerate(series):
                 ax.plot(x, s["values"], label=s["name"], color=colour(i), linewidth=2,
@@ -172,18 +190,19 @@ def _draw(ax, spec: dict, fs: float = 1.0) -> None:
         else:                                                    # area: stacked
             ax.stackplot(x, *[s["values"] for s in series], labels=[s["name"] for s in series],
                          colors=[colour(i) for i in range(n)], alpha=0.85)
-        step = max(1, len(labels) // 20)                         # never draw more than ~20 tick labels
-        ticks = x[::step]
-        rotate = len(labels) > 8 or max(len(l) for l in labels) > 8
-        ax.set_xticks(ticks)
-        ax.set_xticklabels([labels[i] for i in ticks], rotation=30 if rotate else 0,
-                           ha="right" if rotate else "center", fontsize=10 * fs)
+        if kind != "hbar":
+            step = max(1, len(labels) // 20)                     # never draw more than ~20 tick labels
+            ticks = x[::step]
+            rotate = len(labels) > 8 or max(len(l) for l in labels) > 8
+            ax.set_xticks(ticks)
+            ax.set_xticklabels([labels[i] for i in ticks], rotation=30 if rotate else 0,
+                               ha="right" if rotate else "center", fontsize=10 * fs)
 
-    if kind != "pie":
+    if kind not in ("pie", "donut"):
         ax.set_xlabel(spec["x_label"], fontsize=10 * fs)
         ax.set_ylabel(spec["y_label"], fontsize=10 * fs)
         ax.tick_params(labelsize=10 * fs)
-        ax.grid(axis="y", alpha=0.3)
+        ax.grid(axis="x" if kind == "hbar" else "y", alpha=0.3)
         for side in ("top", "right"):
             ax.spines[side].set_visible(False)
         if n > 1:
@@ -239,4 +258,4 @@ def render(spec: dict) -> bytes:
     except Exception as e:
         raise ChartError(f"could not draw the chart ({type(e).__name__})")
     finally:
-        plt.close("all")                  # never leak figures between requests
+        plt.close("all")                  # never leak figures between requests

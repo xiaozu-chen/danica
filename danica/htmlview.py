@@ -30,6 +30,7 @@ from html import escape
 from pathlib import Path
 
 from danica.charts import ChartError, TYPES, validate
+from danica.flowgen import FlowError, layout as flow_layout, validate as flow_validate
 from danica.docgen import MARKER
 from danica.seal import is_sealed_html, seal_html
 
@@ -65,6 +66,12 @@ svg{width:100%;max-width:1100px;height:auto;display:block;margin:0 auto}
 svg text{fill:var(--fg);font:12px system-ui,sans-serif}
 svg .mute{fill:var(--mute)}
 svg .grid{stroke:var(--line);stroke-width:1}
+svg .shape{stroke:#374151;stroke-width:1.6}
+svg .ntext{fill:#1d2330;font:13px system-ui,sans-serif}
+svg .edge{fill:none;stroke:var(--mute);stroke-width:1.8}
+svg .arrowhead{fill:var(--mute)}
+svg .elabel{font-size:12px}
+svg .ebg{fill:var(--bg)}
 svg .axis{stroke:var(--mute);stroke-width:1}
 svg .hit{cursor:default}
 svg .hit:hover{opacity:.75;stroke:var(--fg);stroke-width:1.5}
@@ -104,8 +111,8 @@ function addTab(name,label){var btn=E("button",$("nav"),label);var sec=$("sec-"+
 /* ---------- chart ---------- */
 function cats(){return spec.labels||[]}
 function vis(){return spec.series.map(function(s,i){return{s:s,i:i}}).filter(function(o){return !hidden[o.i]})}
-function legend(box){box.textContent="";var items=spec.type==="pie"?cats().map(function(l,i){return{n:l,i:i}}):spec.series.map(function(s,i){return{n:s.name,i:i}});
- if(items.length<2&&spec.type!=="pie")return;
+function legend(box){box.textContent="";var pieish=spec.type==="pie"||spec.type==="donut";var items=pieish?cats().map(function(l,i){return{n:l,i:i}}):spec.series.map(function(s,i){return{n:s.name,i:i}});
+ if(items.length<2&&!pieish)return;
  items.forEach(function(o){var b=E("button",box);b.className=hidden[o.i]?"off":"";var sw=E("span",b,"","sw");sw.style.background=PAL[o.i%PAL.length];E("span",b,clean(o.n));b.addEventListener("click",function(){hidden[o.i]=!hidden[o.i];drawChart()})})}
 function axes(svg,y,xlabel,ylabel){
  y.ticks.forEach(function(t){var py=M.t+PH-(t-y.lo)/(y.hi-y.lo)*PH;S("line",{x1:M.l,x2:M.l+PW,y1:py,y2:py,"class":"grid"},svg);S("text",{x:M.l-8,y:py+4,"text-anchor":"end","class":"mute"},svg,num(t))});
@@ -117,22 +124,35 @@ function drawChart(){
  var box=$("legend"),svg=$("chart");legend(box);svg.textContent="";
  S("text",{x:W/2,y:26,"text-anchor":"middle","class":"title"},svg,clean(spec.title||""));
  var type=spec.type,v=vis(),i,j;
- if(type==="pie"){var vals=spec.series[0].values,tot=0;vals.forEach(function(x,k){if(!hidden[k])tot+=x});
+ if(type==="pie"||type==="donut"){var vals=spec.series[0].values,tot=0;vals.forEach(function(x,k){if(!hidden[k])tot+=x});
   var cx=W/2,cy=Hh/2+14,r=190,a=-Math.PI/2;
   vals.forEach(function(x,k){if(hidden[k]||tot<=0||x<=0)return;var b=a+x/tot*2*Math.PI,large=b-a>Math.PI?1:0,full=x/tot>0.9999;
-   var d=full?"M"+(cx-r)+","+cy+"a"+r+","+r+" 0 1,0 "+2*r+",0a"+r+","+r+" 0 1,0 "+(-2*r)+",0":"M"+cx+","+cy+"L"+(cx+r*Math.cos(a))+","+(cy+r*Math.sin(a))+"A"+r+","+r+" 0 "+large+",1 "+(cx+r*Math.cos(b))+","+(cy+r*Math.sin(b))+"Z";
-   var p=S("path",{d:d,fill:PAL[k%PAL.length],stroke:"var(--bg)","stroke-width":2},svg);hover(p,[clean(cats()[k]),num(x)+" ("+(x/tot*100).toFixed(1)+"%)"]);a=b});return}
+   var ri=type==="donut"?r*.55:0,d;
+   if(full){d="M"+(cx-r)+","+cy+"a"+r+","+r+" 0 1,0 "+2*r+",0a"+r+","+r+" 0 1,0 "+(-2*r)+",0"+(ri?"M"+(cx-ri)+","+cy+"a"+ri+","+ri+" 0 1,0 "+2*ri+",0a"+ri+","+ri+" 0 1,0 "+(-2*ri)+",0":"")}
+   else if(ri){d="M"+(cx+r*Math.cos(a))+","+(cy+r*Math.sin(a))+"A"+r+","+r+" 0 "+large+",1 "+(cx+r*Math.cos(b))+","+(cy+r*Math.sin(b))+"L"+(cx+ri*Math.cos(b))+","+(cy+ri*Math.sin(b))+"A"+ri+","+ri+" 0 "+large+",0 "+(cx+ri*Math.cos(a))+","+(cy+ri*Math.sin(a))+"Z"}
+   else{d="M"+cx+","+cy+"L"+(cx+r*Math.cos(a))+","+(cy+r*Math.sin(a))+"A"+r+","+r+" 0 "+large+",1 "+(cx+r*Math.cos(b))+","+(cy+r*Math.sin(b))+"Z"}
+   var p=S("path",{d:d,fill:PAL[k%PAL.length],"fill-rule":"evenodd",stroke:"var(--bg)","stroke-width":2},svg);hover(p,[clean(cats()[k]),num(x)+" ("+(x/tot*100).toFixed(1)+"%)"]);a=b});return}
  if(type==="scatter"){var xs=[],ys=[];v.forEach(function(o){o.s.points.forEach(function(p){xs.push(p[0]);ys.push(p[1])})});if(!xs.length)return;
   var xn=nice(Math.min.apply(null,xs),Math.max.apply(null,xs)),yn=nice(Math.min.apply(null,ys),Math.max.apply(null,ys));axes(svg,yn,spec.x_label,spec.y_label);
   xn.ticks.forEach(function(t){var px=M.l+(t-xn.lo)/(xn.hi-xn.lo)*PW;S("text",{x:px,y:M.t+PH+18,"text-anchor":"middle","class":"mute"},svg,num(t))});
   v.forEach(function(o){o.s.points.forEach(function(p){var c=S("circle",{cx:M.l+(p[0]-xn.lo)/(xn.hi-xn.lo)*PW,cy:M.t+PH-(p[1]-yn.lo)/(yn.hi-yn.lo)*PH,r:5,fill:PAL[o.i%PAL.length],"fill-opacity":.8},svg);hover(c,[clean(o.s.name),"x: "+num(p[0]),"y: "+num(p[1])])})});return}
- /* bar, line, area share categorical x */
- var lo=0,hi=0,stack=type==="area",n=cats().length,cum=[];
+ if(type==="hbar"){var lo2=0,hi2=0,n2=cats().length;v.forEach(function(o){o.s.values.forEach(function(x){hi2=Math.max(hi2,x);lo2=Math.min(lo2,x)})});
+  var xn3=nice(lo2,hi2),mx=0;cats().forEach(function(l){mx=Math.max(mx,clean(l).slice(0,18).length)});var L=Math.min(190,24+7*mx),PW2=W-L-M.r;
+  function X(x){return L+(x-xn3.lo)/(xn3.hi-xn3.lo)*PW2}
+  xn3.ticks.forEach(function(t){S("line",{x1:X(t),x2:X(t),y1:M.t,y2:M.t+PH,"class":"grid"},svg);S("text",{x:X(t),y:M.t+PH+18,"text-anchor":"middle","class":"mute"},svg,num(t))});
+  S("line",{x1:L,x2:L,y1:M.t,y2:M.t+PH,"class":"axis"},svg);S("line",{x1:L,x2:L+PW2,y1:M.t+PH,y2:M.t+PH,"class":"axis"},svg);
+  var bandY=PH/Math.max(1,n2),gh=bandY*.8,bh=gh/Math.max(1,v.length);
+  cats().forEach(function(l,j){S("text",{x:L-8,y:M.t+bandY*(j+.5)+4,"text-anchor":"end","class":"mute"},svg,clean(l).slice(0,18))});
+  v.forEach(function(o,k){o.s.values.forEach(function(x,j2){var x0=X(0),x1=X(x);var rc=S("rect",{x:Math.min(x0,x1),y:M.t+bandY*j2+(bandY-gh)/2+k*bh,width:Math.max(1,Math.abs(x1-x0)),height:Math.max(1,bh-2),fill:PAL[o.i%PAL.length]},svg);hover(rc,[clean(cats()[j2]),clean(o.s.name)+": "+num(x)])})});
+  if(spec.x_label)S("text",{x:L+PW2/2,y:Hh-10,"text-anchor":"middle"},svg,clean(spec.x_label));return}
+ /* bar, stacked, line, area share categorical x */
+ var lo=0,hi=0,stack=type==="area"||type==="stacked",n=cats().length,cum=[];
  for(j=0;j<n;j++){var pos=0;v.forEach(function(o){var x=o.s.values[j]||0;if(stack){pos+=x;hi=Math.max(hi,pos)}else{hi=Math.max(hi,x);lo=Math.min(lo,x)}})}
  if(type==="line"){lo=Infinity;hi=-Infinity;v.forEach(function(o){o.s.values.forEach(function(x){lo=Math.min(lo,x);hi=Math.max(hi,x)})});if(!isFinite(lo)){lo=0;hi=1}}
  var yn2=nice(lo,hi);axes(svg,yn2,spec.x_label,spec.y_label);var band=xcats(svg);
  function Y(x){return M.t+PH-(x-yn2.lo)/(yn2.hi-yn2.lo)*PH}
  if(type==="bar"){var gw=band*.8,bw=gw/Math.max(1,v.length);v.forEach(function(o,k){o.s.values.forEach(function(x,j2){var y0=Y(0),y1=Y(x);var rc=S("rect",{x:M.l+band*j2+(band-gw)/2+k*bw,y:Math.min(y0,y1),width:Math.max(1,bw-2),height:Math.max(1,Math.abs(y0-y1)),fill:PAL[o.i%PAL.length]},svg);hover(rc,[clean(cats()[j2]),clean(o.s.name)+": "+num(x)])})});return}
+ if(type==="stacked"){var gw2=band*.6,acc=[];for(j=0;j<n;j++)acc.push(0);v.forEach(function(o){o.s.values.forEach(function(x,j2){var y0=Y(acc[j2]),y1=Y(acc[j2]+x);var rc=S("rect",{x:M.l+band*j2+(band-gw2)/2,y:Math.min(y0,y1),width:gw2,height:Math.max(1,Math.abs(y0-y1)),fill:PAL[o.i%PAL.length]},svg);hover(rc,[clean(cats()[j2]),clean(o.s.name)+": "+num(x)]);acc[j2]+=x})});return}
  if(type==="line"){v.forEach(function(o){var pts=o.s.values.map(function(x,j2){return(M.l+band*(j2+.5))+","+Y(x)});S("polyline",{points:pts.join(" "),fill:"none",stroke:PAL[o.i%PAL.length],"stroke-width":2.5},svg);
   o.s.values.forEach(function(x,j2){var c=S("circle",{cx:M.l+band*(j2+.5),cy:Y(x),r:4.5,fill:PAL[o.i%PAL.length]},svg);hover(c,[clean(cats()[j2]),clean(o.s.name)+": "+num(x)])})});return}
  /* area (stacked) */
@@ -141,6 +161,21 @@ function drawChart(){
   top.forEach(function(t,j2){d+="L"+(M.l+band*(j2+.5))+","+Y(t)});for(j=n-1;j>=0;j--)d+="L"+(M.l+band*(j+.5))+","+Y(base[j]);d+="Z";
   var p=S("path",{d:d,fill:PAL[o.i%PAL.length],"fill-opacity":.75},svg);
   top.forEach(function(t,j2){var c=S("circle",{cx:M.l+band*(j2+.5),cy:Y(t),r:5,fill:"transparent"},svg);hover(c,[clean(cats()[j2]),clean(o.s.name)+": "+num(o.s.values[j2]||0)])});base=top})}
+/* ---------- flow chart (the Python side placed everything; this only draws it) ---------- */
+function drawFlow(){var lay=spec.layout,svg=$("chart");svg.textContent="";svg.setAttribute("viewBox","0 0 "+lay.width+" "+lay.height);
+ var defs=S("defs",{},svg),mk=S("marker",{id:"ar",viewBox:"0 0 10 10",refX:9,refY:5,markerWidth:8,markerHeight:8,orient:"auto"},defs);S("path",{d:"M0,0 L10,5 L0,10 z","class":"arrowhead"},mk);
+ if(lay.title)S("text",{x:lay.width/2,y:lay.title_y+5,"text-anchor":"middle","class":"title"},svg,clean(lay.title));
+ lay.edges.forEach(function(e){var pts=e.points.map(function(p){return p[0]+","+p[1]}).join(" ");var pl=S("polyline",{points:pts,"class":"edge","marker-end":"url(#ar)"},svg);hover(pl,[e.from+" → "+e.to].concat(e.label?[clean(e.label)]:[]))});
+ lay.edges.forEach(function(e){if(!e.label)return;var t=clean(e.label),w=t.length*7+10;S("rect",{x:e.lx-w/2,y:e.ly-9,width:w,height:18,rx:4,"class":"ebg"},svg);S("text",{x:e.lx,y:e.ly+4,"text-anchor":"middle","class":"elabel"},svg,t)});
+ lay.nodes.forEach(function(n){var x=n.x,y=n.y,w=n.w,h=n.h,sh,a={fill:n.fill,"class":"shape"};
+  if(n.shape==="diamond"){a.points=[[x,y-h/2],[x+w/2,y],[x,y+h/2],[x-w/2,y]].join(" ");sh=S("polygon",a,svg)}
+  else if(n.shape==="parallelogram"){a.points=[[x-w/2+18,y-h/2],[x+w/2,y-h/2],[x+w/2-18,y+h/2],[x-w/2,y+h/2]].join(" ");sh=S("polygon",a,svg)}
+  else if(n.shape==="oval"){a.cx=x;a.cy=y;a.rx=w/2;a.ry=h/2;sh=S("ellipse",a,svg)}
+  else if(n.shape==="circle"){a.cx=x;a.cy=y;a.r=w/2;sh=S("circle",a,svg)}
+  else{a.x=x-w/2;a.y=y-h/2;a.width=w;a.height=h;a.rx=n.shape==="rounded"?16:2;sh=S("rect",a,svg)}
+  hover(sh,[clean(n.label),"id: "+n.id]);
+  var t=S("text",{"text-anchor":"middle","class":"ntext"},svg),y0=y-(n.lines.length-1)*8;
+  n.lines.forEach(function(l,k){S("tspan",{x:x,y:y0+k*16+5},t,clean(l))});t.setAttribute("pointer-events","none")})}
 /* ---------- data table (click a header to sort) ---------- */
 function table(host,cols,rows){host.textContent="";var t=E("table",host),hd=E("tr",E("thead",t)),body=E("tbody",t),dir={};
  function fill(rs){body.textContent="";rs.forEach(function(r){var tr=E("tr",body);r.forEach(function(c){var td=E("td",tr,typeof c==="number"?num(c):clean(c));if(typeof c==="number")td.className="n"})})}
@@ -164,8 +199,9 @@ stage.addEventListener("dblclick",reset);
 $("zin").addEventListener("click",function(){center(1.25)});$("zout").addEventListener("click",function(){center(.8)});$("zfit").addEventListener("click",reset);
 document.addEventListener("keydown",function(e){if(!tabs.image||tabs.image.sec.className!=="on")return;if(e.key==="+"||e.key==="=")center(1.25);else if(e.key==="-")center(.8);else if(e.key==="0")reset()});
 /* ---------- start ---------- */
-if(spec){addTab("chart","Chart");
+if(spec){addTab("chart",spec.type==="flow"?"Diagram":"Chart");
  if(spec.type==="table"){$("legend").style.display="none";$("chart").style.display="none";table($("chart-table"),spec.columns,spec.rows.map(function(r){return r.slice()}))}
+ else if(spec.type==="flow"){$("legend").style.display="none";drawFlow()}
  else{drawChart();var d=dataRows();table($("data-table"),d.cols,d.rows);addTab("data","Data")}}
 addTab("image","Image");show(spec?"chart":"image");
 if(!spec)$("nav").style.display="none";
@@ -185,10 +221,13 @@ def _load_spec(png: Path):
         if not side.is_file() or side.stat().st_size > MAX_SPEC:
             return None
         data = json.loads(side.read_text(encoding="utf-8-sig"))
+        if isinstance(data, dict) and (data.get("type") == "flow" or ("nodes" in data and "type" not in data)):
+            spec = flow_validate(data)              # a flow chart: the geometry is worked out here, the page only draws it
+            return {"type": "flow", "title": spec["title"], "layout": flow_layout(spec)}
         if not isinstance(data, dict) or data.get("type") not in TYPES:
             return None
         return validate(data)                       # the same checks the chart tool ran
-    except (OSError, ValueError, ChartError):
+    except (OSError, ValueError, ChartError, FlowError):
         return None
 
 
