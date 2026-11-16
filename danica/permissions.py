@@ -56,7 +56,8 @@ TOOL_TIERS = {
     "quiz": Tier.WRITE,            # these three make a file next to their JSON data, like chart
     "flashcards": Tier.WRITE,
     "flowchart": Tier.WRITE,
-    "ask_user": Tier.READ,         # only shows the user a dialog
+    "ask_user": Tier.READ,
+    "view_image": Tier.READ,       # only looks at a workspace file (same jail as read_file)         # only shows the user a dialog
 }
 
 # (regex, reason) pairs for commands that can destroy things or pull in code.

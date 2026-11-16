@@ -1,0 +1,65 @@
+"""
+commands_vision.py - /attach, /detach and /vision.
+
+    /attach <picture>   send a picture with your NEXT message (drag a file into the terminal to paste its path)
+    /detach             forget the pictures you attached
+    /vision             does the server see pictures? (and how to turn it on)
+
+Imported at the bottom of commands.py, like commands_view.py.
+"""
+
+from pathlib import Path
+
+from danica import vision
+from danica.tui.commands import DESCRIPTIONS, command
+
+DESCRIPTIONS.update({
+    "/attach": "send a picture with your next message",
+    "/detach": "forget attached pictures",
+    "/vision": "does the model see pictures?",
+})
+
+HOW_TO = ("Start llama-server with the vision projector, for example:\n"
+          "  llama-server -m model.gguf --mmproj mmproj.gguf -c 65536 --jinja --port 8080\n"
+          "then run /vision again.")
+
+
+@command("/vision")
+def _vision(app, args):
+    """/vision   re-checks the server and says whether pictures can be sent."""
+    if vision.refresh():
+        app.ui.log("info", "vision is ON: Danica can look at pictures (/attach, and the view_image tool).")
+    else:
+        app.ui.log("warning", "vision is OFF: the server was started without a vision projector.\n" + HOW_TO)
+
+
+@command("/attach")
+def _attach(app, args):
+    """/attach <path>   path of a png / jpg / webp / gif; quotes are fine (drag-and-drop adds them)."""
+    raw = args.strip().strip('"').strip("'")
+    if not raw:
+        app.ui.log("info", "usage: /attach <picture path>   (then type your message)")
+        return
+    if not vision.available() and not vision.refresh():
+        app.ui.log("warning", "the server has no vision, so the picture would be ignored.\n" + HOW_TO)
+        return
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = app.ws.root / path                    # relative paths start at the workspace
+    try:
+        vision.check_file(path)
+        vision.load_data_uri(path)                  # a real test now, not a surprise on the next message
+    except vision.VisionError as e:
+        app.ui.log("error", str(e))
+        return
+    app.agent.next_images.append(str(path.resolve()))
+    app.ui.log("info", f"attached {path.name} ({len(app.agent.next_images)} waiting). "
+                       "Type your message; it goes with the next request.")
+
+
+@command("/detach")
+def _detach(app, args):
+    """/detach   drops the pictures waiting for the next message."""
+    n = len(app.agent.next_images)
+    app.agent.next_images = []
+    app.ui.log("info", f"removed {n} attached picture(s)." if n else "nothing was attached.")

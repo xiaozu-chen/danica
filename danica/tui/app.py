@@ -48,7 +48,7 @@ from danica.tui.viewer_widgets import ArtifactPane, PresentLink
 from danica.htmlview import ViewerError, build_viewer
 from danica.workspace import PathJailError
 from danica.seal import is_sealed_html
-from danica import titles
+from danica import titles, vision
 from danica.interactive import page_kind
 
 IDLE_PLACEHOLDER = f"Ask Danica…"
@@ -255,6 +255,7 @@ class DanicaApp(App):
         self.session_id, self.project = session_id, project
         self.open_root = ws.root if ws.open_mode else None     # also right after /resume of an Open Mode session
         self._call(self.set_session_title, titles.read_title(session_id))   # a resumed session keeps its title
+        vision.refresh()                                  # does this server have --mmproj? (/vision shows the answer)
         self.artifacts = []
         # The TUI draws subagents itself, so the supervisor must not open a console window
         if ws.subagent_supervisor is not None:

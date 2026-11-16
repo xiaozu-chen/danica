@@ -20,6 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable
 
+from danica import vision
 from danica.llm import stream_chat
 from danica.tools import run_tool, tool_schemas
 from danica.workspace import Workspace
@@ -181,6 +182,7 @@ class Agent:
         self.proposals = None   # the ProposalQueue (attached by the CLI); None = no auto-capture
         self.plans_dir = None     # where plan files go (set by the CLI); None = plans are kept in memory only
         self.last_plan: Plan | None = None
+        self.next_images: list[str] = []   # pictures the user /attach-ed for the NEXT request (see vision.py)
         self.charts_made: list[str] = []   # pictures the chart tool made during the CURRENT request
         self.request_snap: str | None = None   # the checkpoint taken before the current request (for the artifact list)
         self.touched: list[str] = []           # files the file tools and document tools wrote during it
@@ -385,7 +387,8 @@ class Agent:
                             "todo tool.]\n" + text),
             })
         # No extras: hand back the list itself (nothing to copy, nothing changed)
-        return self.messages + extra if extra else self.messages
+        # vision.prepare turns {"images": [paths]} into real pictures for THIS call only (the history keeps paths)
+        return vision.prepare(self.messages + extra if extra else self.messages, self.ws.root)
 
     def _model_turn(self) -> tuple[str, list[dict]]:
         """Call the model once; stream text to the UI; return (content, tool_calls)."""
@@ -861,7 +864,8 @@ class Agent:
             total, done = counts(read_todo(self.ws))
             if total == 0 or done == total:
                 self.ws.todo_path.unlink()
-        self._add({"role": "user", "content": user_text})
+        self._add({"role": "user", "content": user_text, **({"images": self.next_images} if self.next_images else {})})
+        self.next_images = []                  # /attach pictures belong to this one request
         # Sites the USER typed are trusted: fetching them never needs extra approval
         state_for(self.ws).trust_hosts_from(user_text)
         if plan is not None:
@@ -1019,6 +1023,10 @@ class Agent:
                         stop = stop or verdict.stop
                     self.on_event("tool_result", result)
                     self._add({"role": "tool", "tool_call_id": call["id"], "content": result})
+                # view_image queued pictures: attach them now, AFTER all tool results (a result can only be text)
+                for shown in vision.take_pending(self.ws):
+                    self._add({"role": "user", "images": [shown], "content": (
+                        f"[harness reminder, not from the user] The picture you asked to see ({shown}) is attached.")})
                 if stop:
                     self._log("loop_guard", level="stop")
                     return stop

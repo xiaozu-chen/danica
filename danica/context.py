@@ -9,6 +9,8 @@ the exact number again, so estimation errors never pile up.
 
 import json
 import math
+
+from danica import vision
 from rich.text import Text
 
 # Rough rule of thumb for code and English mixed: ~3.5 characters per token.
@@ -27,6 +29,7 @@ def estimate_tokens(messages: list[dict]) -> int:
     for m in messages:
         chars = len(json.dumps(m, ensure_ascii=False))
         total += math.ceil(chars / CHARS_PER_TOKEN) + MESSAGE_OVERHEAD
+        total += vision.extra_tokens([m])      # pictures cost context too (paths are tiny in the JSON)
     return total
 
 
