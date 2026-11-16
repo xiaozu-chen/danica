@@ -1,0 +1,43 @@
+diff --git a/danica/tools/search.py b/danica/tools/search.py
+index 018f192..54c6b6b 100644
+--- a/danica/tools/search.py
++++ b/danica/tools/search.py
+@@ -55,6 +55,7 @@ def glob_files(ws: Workspace, pattern: str, path: str = ".") -> str:
+     matches = []
+     deadline = time.monotonic() + SCAN_SECONDS
+     stopped = ""
++    looked = 0                       # stays 0 when the folder is empty (the loop body never runs)
+     for looked, hit in enumerate(itertools.islice(base.glob(pattern), SCAN_MAX_ENTRIES), start=1):
+         if time.monotonic() > deadline:
+             stopped = f"stopped after {SCAN_SECONDS}s"
+diff --git a/danica/vision.py b/danica/vision.py
+index 4568f21..563d76c 100644
+--- a/danica/vision.py
++++ b/danica/vision.py
+@@ -139,6 +139,7 @@ def prepare(messages: list[dict], root: Path | None = None) -> list[dict]:
+         text = str(m.get("content") or "")
+         parts: list[dict] = []
+         notes: list[str] = []
++        labels: list[str] = []
+         for k, rel in enumerate(imgs):
+             if k in shown_for[i]:
+                 try:
+@@ -147,6 +148,9 @@ def prepare(messages: list[dict], root: Path | None = None) -> list[dict]:
+                         path = root / rel
+                     uri, w, h = load_data_uri(path)
+                     parts.append({"type": "image_url", "image_url": {"url": uri}})
++                    # Say so in words: a small model otherwise goes looking for the file with its tools
++                    labels.append(f"[attached picture: {path.name}. It is shown below; you can already see it. "
++                                  "Do not search for it or call view_image for it.]")
+                     continue
+                 except VisionError as e:
+                     notes.append(f"[picture {rel} could not be loaded: {e}]")
+@@ -156,7 +160,7 @@ def prepare(messages: list[dict], root: Path | None = None) -> list[dict]:
+             else:
+                 notes.append(f"[picture {rel}: shown earlier, no longer attached]")
+         clean = {k: v for k, v in m.items() if k != "images"}
+-        clean["content"] = ([{"type": "text", "text": "\n".join([text] + notes).strip()}] + parts) if parts \
++        clean["content"] = ([{"type": "text", "text": "\n".join([text] + labels + notes).strip()}] + parts) if parts \
+             else "\n".join([text] + notes).strip()
+         out.append(clean)
+     return out

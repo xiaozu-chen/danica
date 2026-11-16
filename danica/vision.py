@@ -139,6 +139,7 @@ def prepare(messages: list[dict], root: Path | None = None) -> list[dict]:
         text = str(m.get("content") or "")
         parts: list[dict] = []
         notes: list[str] = []
+        labels: list[str] = []
         for k, rel in enumerate(imgs):
             if k in shown_for[i]:
                 try:
@@ -147,6 +148,9 @@ def prepare(messages: list[dict], root: Path | None = None) -> list[dict]:
                         path = root / rel
                     uri, w, h = load_data_uri(path)
                     parts.append({"type": "image_url", "image_url": {"url": uri}})
+                    # Say so in words: a small model otherwise goes looking for the file with its tools
+                    labels.append(f"[attached picture: {path.name}. It is shown below; you can already see it. "
+                                  "Do not search for it or call view_image for it.]")
                     continue
                 except VisionError as e:
                     notes.append(f"[picture {rel} could not be loaded: {e}]")
@@ -156,7 +160,7 @@ def prepare(messages: list[dict], root: Path | None = None) -> list[dict]:
             else:
                 notes.append(f"[picture {rel}: shown earlier, no longer attached]")
         clean = {k: v for k, v in m.items() if k != "images"}
-        clean["content"] = ([{"type": "text", "text": "\n".join([text] + notes).strip()}] + parts) if parts \
+        clean["content"] = ([{"type": "text", "text": "\n".join([text] + labels + notes).strip()}] + parts) if parts \
             else "\n".join([text] + notes).strip()
         out.append(clean)
     return out

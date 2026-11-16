@@ -55,6 +55,7 @@ def glob_files(ws: Workspace, pattern: str, path: str = ".") -> str:
     matches = []
     deadline = time.monotonic() + SCAN_SECONDS
     stopped = ""
+    looked = 0                       # stays 0 when the folder is empty (the loop body never runs)
     for looked, hit in enumerate(itertools.islice(base.glob(pattern), SCAN_MAX_ENTRIES), start=1):
         if time.monotonic() > deadline:
             stopped = f"stopped after {SCAN_SECONDS}s"
