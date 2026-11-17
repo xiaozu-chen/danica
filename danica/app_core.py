@@ -26,6 +26,7 @@ from danica.knowledge import KnowledgeError, KnowledgeIndex
 from danica.memory import MemoryStore
 from danica.memory_index import FACTS_DB, MemoryIndex
 from danica.openmode import anchor_dir, ensure_anchor, open_mode_note, start_folder_problem
+from danica.judge import judge_command
 from danica.permissions import PermissionPolicy
 from danica.projects import (approve_instructions, load_session_meta, lookup,
                              read_instructions, save_session_meta, scan)
@@ -163,6 +164,7 @@ def build_session(session_id: str, ui: UI, on_event, project: dict | None = None
     policy = PermissionPolicy(ask=None if headless else make_ask(ui))
     policy.project_mode = project is not None
     policy.open_root = ws.root if open_root is not None else None      # switches Open Mode rules on
+    policy.judge = None if headless else judge_command                 # the main model explains / judges shell commands (judge.py)
     supervisor = SubagentSupervisor(ws, policy, audit, session_id)
     ws.subagent_supervisor = supervisor
     ws.ask_user = None if headless else make_asker(ui)       # the ask_user tool's way to reach the user

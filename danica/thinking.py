@@ -9,6 +9,7 @@ from pathlib import Path
 
 import httpx
 
+from danica import classifier
 from danica.config import APP_DIR, CONFIG
 from danica.secret_scan import redact
 
@@ -55,50 +56,16 @@ class ThinkingClassifier:
         return bool(THINKING_RULES.search(text))
 
     def classify(self, text: str) -> ThinkingDecision:
+        """The MAIN model decides (classifier.py: same server, its own tool). The regex rules are the fallback
+        when the classifier is off, the server has too few slots, or it gives no usable answer."""
         fallback = self.rules(text)
-        if not self.config.get("classifier_enabled", False):
+        ready, _why = classifier.status()
+        if not ready:                                   # off / one slot: rules only, no warning on every request
             return ThinkingDecision(fallback, "rules")
-        url = str(self.config.get("classifier_url", "")).rstrip("/")
-        model = str(self.config.get("classifier_model", "")).strip()
-        if not url or not model:
-            return ThinkingDecision(fallback, "rules_fallback",
-                                    "classifier URL/model is not configured")
-        schema = {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "thinking_decision",
-                "schema": {
-                    "type": "object", "additionalProperties": False,
-                    "properties": {"thinking_mode": {"type": "boolean"}},
-                    "required": ["thinking_mode"],
-                },
-            },
-        }
-        try:
-            response = httpx.post(
-                f"{url}/v1/chat/completions",
-                json={
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": (
-                            'Classify whether the user message needs deliberate reasoning. '
-                            'Return exactly {"thinking_mode": true} or {"thinking_mode": false}.'
-                        )},
-                        {"role": "user", "content": text[:4000]},
-                    ],
-                    "temperature": 0,
-                    "max_tokens": 40,
-                    "response_format": schema,
-                },
-                timeout=httpx.Timeout(2.0, connect=0.5),
-                trust_env=False,
-            )
-            response.raise_for_status()
-            content = response.json()["choices"][0]["message"]["content"]
-            return ThinkingDecision(parse_thinking_response(content), "smollm2-135m")
-        except (httpx.HTTPError, ValueError, KeyError, TypeError, IndexError, json.JSONDecodeError) as exc:
-            return ThinkingDecision(fallback, "rules_fallback",
-                                    f"classifier unavailable or invalid ({type(exc).__name__})")
+        value, why = classifier.decide_thinking(text)
+        if value is None:
+            return ThinkingDecision(fallback, "rules_fallback", why)
+        return ThinkingDecision(value, "main-model")
 
 
 def log_thinking_decision(text: str, decision: ThinkingDecision, path: Path | None = None,

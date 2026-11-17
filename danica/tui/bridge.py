@@ -99,19 +99,49 @@ class TextualUI:
     def say(self, text: str, style: str | None = None) -> None:
         self._call(self.app.add_say, str(text), style)
 
+    def _inline(self) -> bool:
+        """Approvals as an inline menu above the prompt (approval_menu.py); [ui] inline_approvals = false = old dialogs."""
+        from danica.config import CONFIG
+        return bool(CONFIG.get("ui", {}).get("inline_approvals", True))
+
     def confirm(self, title: str, body: str = "", detail: str = "",
                 yes: str = "Yes", no: str = "No") -> bool:
+        if self._inline():
+            from danica.tui import approval_menu
+            answer = approval_menu.ask(self, {
+                "title": title, "reason": detail, "body": body, "default": 1, "cancel": False,     # starts on "No"
+                "options": [{"value": True, "label": yes, "keys": ("1", "y"), "shown_key": "y"},
+                            {"value": False, "label": no, "keys": ("2", "n"), "shown_key": "n"}]})
+            return answer is True
         from danica.tui.modals import ConfirmScreen
         return self._ask(ConfirmScreen(title, body, detail, yes, no)) is True
 
     def permission(self, tool: str, summary: str, tier: str, reason: str,
                    can_remember: bool) -> str:
+        if self._inline():
+            from danica.tui import approval_menu
+            options = [{"value": "once", "label": "Yes, once", "keys": ("1", "y")}]
+            if can_remember:
+                options.append({"value": "session", "label": "Yes, for this session", "keys": ("2", "s")})
+            options.append({"value": "deny", "label": "No", "keys": (str(len(options) + 1), "n")})
+            answer = approval_menu.ask(self, {
+                "title": f"Permission needed ({tier})", "reason": reason, "body": summary,
+                "options": options, "default": len(options) - 1, "cancel": "deny",             # starts on "No"
+                "danger": str(tier) == "destructive"})
+            return answer if answer in ("once", "session") else "deny"
         from danica.tui.modals import PermissionScreen
         answer = self._ask(PermissionScreen(tool, summary, tier, reason, can_remember))
         return answer if answer in ("once", "session") else "deny"
 
     def choose(self, title: str, body: str, options: list[tuple[str, str]],
                detail: str = "") -> str | None:
+        if self._inline():
+            from danica.tui import approval_menu
+            answer = approval_menu.ask(self, {
+                "title": title, "reason": detail, "body": body, "default": 0, "cancel": None,
+                "esc_label": "= cancel",
+                "options": [{"value": key, "label": label, "keys": (key,), "shown_key": key} for key, label in options]})
+            return answer if isinstance(answer, str) else None
         from danica.tui.modals import ChoiceScreen
         answer = self._ask(ChoiceScreen(title, body, options, detail))
         return answer if isinstance(answer, str) else None

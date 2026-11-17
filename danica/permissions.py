@@ -252,6 +252,7 @@ class PermissionPolicy:
         self.last_how = ""                  # how the latest check was decided (for the audit log)
         self.project_mode = False            # True inside a trusted project folder (set by the CLI)
         self.open_root: Path | None = None   # Open Mode: the START folder (None = not in Open Mode)
+        self.judge = None                    # shell judge: judge(command, mode) -> Verdict | None (see judge.py)
 
     def _taint_applies(self, tool: str, args: dict, known_hosts) -> bool:
         """While untrusted content is in context: which calls need a fresh yes?"""
@@ -328,6 +329,25 @@ class PermissionPolicy:
         if keys and keys <= self.session_allowed:
             self.last_how = "remembered"
             return True, ""
+
+        # The model judge (judge.py) only sees plain EXECUTE shell commands that no rule above settled. It can
+        # ESCALATE anywhere and explains the command in the prompt; it can wave a command through ONLY in a
+        # trusted project. The rules above are never relaxed, and no answer from it means "ask" as before.
+        if tool == "run_shell" and tier == Tier.EXECUTE and self.judge is not None:
+            mode = "project" if self.project_mode else ("open" if self.open_root is not None else "normal")
+            try:
+                verdict = self.judge(str(args.get("command", "")), mode)
+            except Exception:
+                verdict = None                          # a broken judge must never mean "allow"
+            if verdict is not None:
+                from danica import classifier
+                if (verdict.verdict == "safe" and mode == "project" and self.ask is not None
+                        and classifier.settings()["judge_can_approve"]):
+                    self.last_how = "model-free"
+                    return True, ""
+                reason = f"{reason}; model: {verdict.reason}" if reason else f"model: {verdict.reason}"
+                if verdict.verdict == "dangerous":
+                    tier, keys = Tier.DESTRUCTIVE, frozenset()      # asks every time, cannot be remembered
 
         if self.ask is None:
             self.last_how = "no-asker"
