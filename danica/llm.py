@@ -53,6 +53,7 @@ def stream_chat(
 
     # Tool calls arrive in fragments keyed by index; collect them here.
     pending: dict[int, dict] = {}
+    finish = ""          # why the server stopped: "stop", "length" (hit a token limit), "tool_calls"
 
     timeout = httpx.Timeout(connect=5.0, read=None, write=10.0, pool=5.0)
 
@@ -83,6 +84,7 @@ def stream_chat(
                 if not chunk.get("choices"):
                     continue
                 delta = chunk["choices"][0].get("delta", {})
+                finish = chunk["choices"][0].get("finish_reason") or finish
 
                 if delta.get("reasoning_content"):
                     yield {"type": "thinking", "text": delta["reasoning_content"]}
@@ -113,6 +115,9 @@ def stream_chat(
                         if frag:
                             yield {"type": "tool_delta", "index": index, "text": frag}
         
+    if include_usage and finish:           # a new piece type: only callers that asked for usage (the agent loop) get it
+        yield {"type": "finish", "reason": finish}
+
     # Stream finished: hand over the assembled tool calls (if any).
     if pending:
         calls = []

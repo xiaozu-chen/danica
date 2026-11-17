@@ -390,17 +390,24 @@ class Agent:
         # vision.prepare turns {"images": [paths]} into real pictures for THIS call only (the history keeps paths)
         return vision.prepare(self.messages + extra if extra else self.messages, self.ws.root)
 
-    def _model_turn(self) -> tuple[str, list[dict]]:
-        """Call the model once; stream text to the UI; return (content, tool_calls)."""
+    # ---------------------------------------------------------------- one model call
+    # A thinking model sometimes never writes its closing </think> (or runs out of tokens while thinking).
+    # The server then sends EVERYTHING as "reasoning", the answer included, and "content" stays empty:
+    # the screen shows a thinking block and no answer. _model_turn notices that and recovers.
+    SALVAGE_CHARS = 1800        # last resort: how much of the reasoning's end is shown as the answer
+
+    def _stream_turn(self, thinking: bool) -> tuple[str, list[dict], str, str]:
+        """ONE call to the model. Streams to the UI. Returns (content, tool_calls, reasoning_text, finish_reason)."""
         content_parts: list[str] = []
+        thought_parts: list[str] = []
         calls: list[dict] = []
+        finish = ""
         # How many messages the server is about to see (for the token tracker)
         msg_count = len(self.messages)
 
         for piece in stream_chat(
             self._messages_for_model(),
-            thinking=(self._thinking_for_request if self._thinking_for_request is not None
-                      else self.thinking),
+            thinking=thinking,
             # low: tool calls should be steady, not creative. The loop guard warms it up for a few
             # turns after it catches a loop (an unchanged context at low temperature repeats itself)
             temperature=self.guard.temperature(0.3),
@@ -413,6 +420,9 @@ class Agent:
                 # Exact prompt size: replace all earlier estimates
                 self.tracker.record(piece["prompt_tokens"], msg_count)
                 continue
+            if piece["type"] == "finish":
+                finish = piece["reason"]
+                continue
             if piece["type"] in ("tool_start", "tool_delta"):
                 self.on_event(piece["type"], piece)   # live tool-call display
                 continue
@@ -421,10 +431,38 @@ class Agent:
                 continue
             if piece["type"] == "content":
                 content_parts.append(piece["text"])
+            elif piece["type"] == "thinking":
+                thought_parts.append(piece["text"])
             # Thinking text is shown but never stored in the history (saves context)
             self.on_event(piece["type"], piece["text"])
 
-        return "".join(content_parts), calls
+        return "".join(content_parts), calls, "".join(thought_parts), finish
+
+    def _model_turn(self) -> tuple[str, list[dict]]:
+        """Call the model; stream text to the UI; return (content, tool_calls).
+        If the model ONLY thought (no answer, no tool call), recover instead of ending the request silently."""
+        thinking = self._thinking_for_request if self._thinking_for_request is not None else self.thinking
+        content, calls, thought, finish = self._stream_turn(thinking)
+        if content.strip() or calls or not thought.strip():
+            return content, calls                           # the normal case
+
+        # 1) Ask again with thinking OFF. The history is unchanged (the thought was never stored), so the
+        #    model sees the same conversation and simply answers; the server's prompt cache is reused.
+        why = "ran out of tokens while thinking" if finish == "length" else "never closed its thinking block"
+        self.on_event("notice", f"[thinking] the model {why}; asking again with thinking off")
+        self._log("thinking_unclosed", finish=finish, thought_chars=len(thought))
+        content, calls, _, _ = self._stream_turn(False)
+        if content.strip() or calls:
+            return content, calls
+
+        # 2) Still nothing: the answer is most likely at the END of the reasoning. Show that, clearly labelled,
+        #    rather than showing the user nothing.
+        tail = thought.strip()[-self.SALVAGE_CHARS:]
+        if len(thought.strip()) > self.SALVAGE_CHARS and "\n\n" in tail:
+            tail = tail.split("\n\n", 1)[1]               # start at a paragraph, not mid-sentence
+        text = "[The model did not finish its answer. This is the end of its reasoning:]\n\n" + tail
+        self.on_event("content", text)
+        return text, []
 
     def _log(self, event: str, **data) -> None:
         "Write an audit entry if auditing is on."
