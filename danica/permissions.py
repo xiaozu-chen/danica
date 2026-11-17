@@ -57,6 +57,7 @@ TOOL_TIERS = {
     "flashcards": Tier.WRITE,
     "flowchart": Tier.WRITE,
     "ask_user": Tier.READ,
+    "dev_server": Tier.EXECUTE,    # starts a background process: asks like run_shell
     "screenshot": Tier.WRITE,      # saves a picture (out), opens only local pages
     "view_image": Tier.READ,       # only looks at a workspace file (same jail as read_file)         # only shows the user a dialog
 }

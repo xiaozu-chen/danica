@@ -20,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable
 
-from danica import vision
+from danica import autolook, vision
 from danica.llm import stream_chat
 from danica.tools import run_tool, tool_schemas
 from danica.workspace import Workspace
@@ -183,6 +183,7 @@ class Agent:
         self.plans_dir = None     # where plan files go (set by the CLI); None = plans are kept in memory only
         self.last_plan: Plan | None = None
         self.next_images: list[str] = []   # pictures the user /attach-ed for the NEXT request (see vision.py)
+        self.auto_looks = 0                # automatic screenshots taken after builds in THIS request (see autolook.py)
         self.charts_made: list[str] = []   # pictures the chart tool made during the CURRENT request
         self.request_snap: str | None = None   # the checkpoint taken before the current request (for the artifact list)
         self.touched: list[str] = []           # files the file tools and document tools wrote during it
@@ -811,6 +812,13 @@ class Agent:
                 self.on_event("notice", "[security] untrusted web content entered the conversation: shell "
                                         "commands and new sites will now ask every time (see /taint)")
 
+        # A successful UI build gets a screenshot automatically (the picture is attached on the next step)
+        if call["name"] == "run_shell":
+            extra, took = autolook.maybe(self.ws, str(args.get("command", "")), result, self.auto_looks)
+            if took:
+                self.auto_looks += 1
+            result += extra
+
         # Output scan: secrets never reach the model's context
         cleaned, kinds = redact(result)
         found = sorted(set(kinds))
@@ -904,6 +912,7 @@ class Agent:
                 self.ws.todo_path.unlink()
         self._add({"role": "user", "content": user_text, **({"images": self.next_images} if self.next_images else {})})
         self.next_images = []                  # /attach pictures belong to this one request
+        self.auto_looks = 0
         # Sites the USER typed are trusted: fetching them never needs extra approval
         state_for(self.ws).trust_hosts_from(user_text)
         if plan is not None:

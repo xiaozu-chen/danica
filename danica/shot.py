@@ -12,6 +12,10 @@ WHAT IT CAN OPEN
   * an http://localhost:PORT/... or http://127.0.0.1:PORT/... address (a dev server you started).
   Nothing else: any request to a non-local host is blocked and reported, so a page can't call out.
 
+IT CAN ALSO USE THE PAGE before the picture: `steps` is a short list of click / type / press / select /
+hover / scroll / wait actions (see run_steps). Buttons and fields are found by their visible text, label or
+placeholder, or by an explicit `css=` selector. A failed step stops the list; the picture still shows the state.
+
 IT ALSO REPORTS what went wrong inside the page: console errors, uncaught exceptions, failed requests.
 Those lines are often more useful to a small model than the picture.
 
@@ -27,6 +31,9 @@ from pathlib import Path
 
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
 MAX_LOGS = 8
+MAX_STEPS = 12
+STEP_ACTIONS = ("click", "type", "press", "select", "hover", "scroll", "wait")
+PAGE_TEXT_CHARS = 500           # visible text returned after steps (lets a model without vision check the result)
 MAX_PAGE_HEIGHT = 6000          # a full-page picture is cut here (huge pictures cost context)
 SETUP_HINT = "run: pip install playwright   then: playwright install chromium"
 
@@ -34,10 +41,10 @@ SETUP_HINT = "run: pip install playwright   then: playwright install chromium"
 # ------------------------------------------------------------------ the half Danica calls
 
 def capture(target: str, out: Path, width: int = 1280, height: int = 800, full_page: bool = False,
-            wait_ms: int = 400, timeout: int = 45) -> dict:
+            wait_ms: int = 400, timeout: int = 45, steps: list[dict] | None = None) -> dict:
     """{"ok": True, "width", "height", "logs": [...]} or {"ok": False, "error": "..."}. Never raises."""
     args = {"target": target, "out": str(out), "width": width, "height": height,
-            "full_page": full_page, "wait_ms": wait_ms}
+            "full_page": full_page, "wait_ms": wait_ms, "steps": steps or []}
     try:
         done = subprocess.run([sys.executable, "-I", str(Path(__file__).resolve()), json.dumps(args)],
                               capture_output=True, text=True, timeout=timeout)
@@ -52,6 +59,67 @@ def capture(target: str, out: Path, width: int = 1280, height: int = 800, full_p
 
 
 # ------------------------------------------------------------------ the half in the other process
+
+def _locate(page, target: str):
+    """The element a step means, or None. `css=#id` is a CSS selector; anything else is matched the way a
+    person would say it: a button or link NAME, a field LABEL or PLACEHOLDER, or any visible TEXT."""
+    target = (target or "").strip()
+    if not target:
+        return None
+    if target.startswith("css="):
+        loc = page.locator(target[4:])
+        return loc.first if loc.count() else None
+    for find in (lambda: page.get_by_role("button", name=target), lambda: page.get_by_role("link", name=target),
+                 lambda: page.get_by_label(target), lambda: page.get_by_placeholder(target),
+                 lambda: page.get_by_text(target)):
+        loc = find()
+        if loc.count():
+            return loc.first
+    return None
+
+
+def run_steps(page, steps: list[dict]) -> tuple[list[str], bool]:
+    """Do the steps in order. Returns (one report line per step, all_ok). Stops at the first failure."""
+    report: list[str] = []
+    for n, step in enumerate(steps[:MAX_STEPS], start=1):
+        do, target, text = step.get("do"), str(step.get("target") or ""), str(step.get("text") or "")
+        label = f"step {n} {do} '{(target or text)[:40]}'"
+        try:
+            if do == "wait":
+                page.wait_for_timeout(min(max(int(text or 500), 0), 3000))
+            elif do == "scroll":
+                where = (text or "down").strip().lower()
+                if where in ("top", "bottom"):
+                    page.evaluate("w => window.scrollTo(0, w === 'top' ? 0 : document.documentElement.scrollHeight)", where)
+                else:
+                    page.mouse.wheel(0, -600 if where == "up" else (600 if where == "down" else int(where)))
+            elif do == "press":
+                loc = _locate(page, target) if target else None
+                if target and loc is None:
+                    raise LookupError(f"nothing on the page matches '{target}'")
+                if loc is not None:
+                    loc.focus()
+                page.keyboard.press(text)
+            else:
+                loc = _locate(page, target)
+                if loc is None:
+                    raise LookupError(f"nothing on the page matches '{target}'")
+                if do == "click":
+                    loc.click(timeout=4000)
+                elif do == "hover":
+                    loc.hover(timeout=4000)
+                elif do == "type":
+                    loc.fill(text, timeout=4000)
+                elif do == "select":
+                    loc.select_option(label=text, timeout=4000)
+            page.wait_for_timeout(250)                   # let the page react before the next step
+            report.append(f"{label}: ok")
+        except Exception as exc:                          # the page decides what is possible: report, do not crash
+            reason = str(exc).strip().splitlines()[0][:140] if str(exc).strip() else type(exc).__name__
+            report.append(f"{label}: FAILED ({reason}); the remaining steps were skipped")
+            return report, False
+    return report, True
+
 
 def _child(args: dict) -> dict:
     import functools
@@ -98,6 +166,7 @@ def _child(args: dict) -> dict:
             browser = p.chromium.launch()
             page = browser.new_page(viewport={"width": args["width"], "height": args["height"]})
             page.route("**/*", gate)
+            page.on("dialog", lambda d: (note(f"the page opened a dialog: {d.message[:80]}"), d.dismiss()))   # never hang on alert()
             page.on("console", lambda m: note(f"console {m.type}: {m.text}") if m.type in ("error", "warning") else None)
             page.on("pageerror", lambda e: note(f"uncaught error: {e}"))
             page.on("requestfailed", lambda r: note(f"failed to load {r.url.split('?')[0][-80:]}") if (urlparse(r.url).hostname or "") in {"localhost", "127.0.0.1", "::1"} else None)
@@ -108,6 +177,10 @@ def _child(args: dict) -> dict:
             except PWError:
                 pass
             page.wait_for_timeout(int(args["wait_ms"]))
+            report, all_ok = run_steps(page, args.get("steps") or []) if args.get("steps") else ([], True)
+            visible = ""
+            if args.get("steps"):
+                visible = " ".join(page.inner_text("body").split())[:PAGE_TEXT_CHARS]
             shot = {"path": args["out"]}
             if args["full_page"]:
                 shot["full_page"] = True
@@ -129,7 +202,8 @@ def _child(args: dict) -> dict:
             server.shutdown()
     if blocked:
         note("blocked requests to outside sites (not allowed): " + ", ".join(sorted(blocked)[:4]))
-    return {"ok": True, "width": args["width"], "height": args["height"], "logs": logs[:MAX_LOGS]}
+    return {"ok": True, "width": args["width"], "height": args["height"], "logs": logs[:MAX_LOGS],
+            "steps": report, "steps_ok": all_ok, "text": visible}
 
 
 if __name__ == "__main__":
