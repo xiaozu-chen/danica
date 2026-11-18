@@ -10,8 +10,10 @@ Screen {
     height: 1fr;
     padding: 0 2;
     scrollbar-size-vertical: 1;
-    scrollbar-color: #3b4261;
-    scrollbar-background: #16161e;
+    scrollbar-color: #5e5e5e;
+    scrollbar-background: #353535;
+    scrollbar-color-hover: #5e5e5e;
+    scrollbar-color-active: #5a5a5a;
 }
 
 .welcome { margin: 1 0 0 0; }
@@ -55,6 +57,11 @@ AssistantMessage {
     padding: 0;
     border: none;
     background: transparent;
+    scrollbar-size-vertical: 1;
+    scrollbar-color: #5e5e5e;
+    scrollbar-background: #353535;
+    scrollbar-color-hover: #5e5e5e;
+    scrollbar-color-active: #5a5a5a;
 }
 
 #prompt:focus {
@@ -80,7 +87,7 @@ AssistantMessage {
     scrollbar-color-active: #5a5a5a;
 }
 
-#popup > .option-list--option-highlighted { background: #3b4261; }
+#popup > .option-list--option-highlighted { background: #555555; }
 
 #caret { height: 1; }
 
@@ -131,7 +138,7 @@ PermissionScreen, ConfirmScreen, ChoiceScreen, TextScreen {
 }
 
 .dialog-buttons Button:last-of-type { margin-right: 0; }
-.dialog-buttons Button:focus { background: #3b4261; text-style: bold; }
+.dialog-buttons Button:focus { background: #5e5e5e; text-style: bold; }
 
 /* ---- split screen: chat | subagent pane ---- */
 #main { height: 1fr; }

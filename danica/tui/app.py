@@ -705,7 +705,7 @@ class DanicaApp(App):
         color = {"ok": "white", "prune": "yellow", "compact": "orange", "stop": "red"}.get(level, "white")
         t = Text()
         if self.open_root is not None:                # first, so a narrow terminal can never cut it off
-            t.append(" \u26a0 OPEN MODE ", style="bold white on red")
+            t.append(" OPEN MODE ", style="bold #000000 on #F14C4C")
             t.append(" ")
         if self.session_title:
             t.append(f"\u270e {self.session_title[:40]}  ", style="bold #ff9e64")
@@ -793,4 +793,4 @@ if __name__ == "__main__":
     # except EOFError:
     #     Console.print("[bold red on #555555] CRITICAL [/] Hard Stop")
     # except Exception as e:
-    #     Console.print(f"[bold #000000 on red] ERROR [/] {escape(str(e))}")
+    #     Console.print(f"[bold #000000 on red] ERROR [/] {escape(str(e))}")

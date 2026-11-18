@@ -358,10 +358,12 @@ class Notice(Static):
 
     def __init__(self, level: str, text: str) -> None:
         key = level.upper()
-        color = TAG_COLORS.get(key, "white")
+        tag = TAG_COLORS.get(key, {"color": "white", "symbol": ""})
+        color = tag["color"]
+        symbol = tag["symbol"]
         t = Text()
-        t.append(f" {key:^{TAG_WIDTH}} ", style=f"bold #000000 on {color}")
-        t.append("::" + text)
+        t.append(f" {symbol} ", style=f"{color}")
+        t.append(":: " + text, style=f"{color}")
         super().__init__(t, classes="notice")
 
 
@@ -436,9 +438,9 @@ def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.4.0
 ⠀⠀⠀⣹⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⠁⠀⠀⡀⠀⠀⢰⡾⠋⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⢻⡇⣀⡀⠀⠺⣿⠇⠀⣀⣤⣄⣀⣠⣬⣥⣤⠾⠛⠁⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠉⠛⠓⠂⠤⠤⠖⠊⠉⠉⠉⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-""", style=ACCENT)
+""", style="bold red" if open_mode else ACCENT)
     if open_mode:                      # impossible to miss: this session can reach the whole disk
-        left.append("\u26a0  OPEN MODE  \u26a0\n", style="bold white on red")
+        
         left.append("full disk access\n", style="bold red")
         left.append("start folder:\n", style="dim")
     else:
@@ -493,7 +495,7 @@ def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.4.0
 
     return Panel(
         body, 
-        title=f" Danica v{version}  \u26a0 OPEN MODE " if open_mode else f" Danica v{version} ",
+        title=f" Danica v{version} ",
         title_align="left",
         border_style="bold red" if open_mode else ACCENT,
         box=box.ASCII3, 
@@ -753,4 +755,4 @@ class BusyLine(Static):
 
 
 class StatusBar(Static):
-    pass
+    pass

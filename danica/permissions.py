@@ -59,6 +59,7 @@ TOOL_TIERS = {
     "ask_user": Tier.READ,
     "dev_server": Tier.EXECUTE,    # starts a background process: asks like run_shell
     "screenshot": Tier.WRITE,      # saves a picture (out), opens only local pages
+    "game_run": Tier.EXECUTE,      # runs the game's Python code (in the sandbox, headless): asks like run_shell
     "view_image": Tier.READ,       # only looks at a workspace file (same jail as read_file)         # only shows the user a dialog
 }
 
@@ -204,7 +205,7 @@ def is_read_only(command: str) -> bool:
 # Tools that WRITE a file, and the argument that names it (Open Mode asks when it is outside the start folder)
 WRITE_PATH_ARGS = {"write_file": "path", "edit_file": "path", "chart": "file", "dashboard": "file",
                    "diagram": "file", "mermaid": "file", "document": "source", "deck": "source",
-                   "quiz": "file", "flashcards": "file", "flowchart": "file", "screenshot": "out"}
+                   "quiz": "file", "flashcards": "file", "flowchart": "file", "screenshot": "out", "game_run": "out"}
 
 
 def classify(tool: str, args: dict, open_root: Path | None = None) -> tuple[Tier, str, frozenset[str]]:

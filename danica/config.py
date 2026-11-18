@@ -18,12 +18,12 @@ CONFIG_PATH = APP_DIR / "config.toml"
 SKILLS_DIR = APP_DIR / "skills"
 
 TAG_COLORS = {
-    "ERROR": "#FF0000",
-    "WARNING": "#FFFF00",
-    "OK": "#00FF00",
-    "FAIL": "#FFA500",
-    "INFO": "white",
-    "THINKING": "#808080",
+    "ERROR": "#E03E3E",     # Clear, vibrant red
+    "WARNING": "#E5C158",   # Brighter golden yellow
+    "OK": "#4CAF50",        # Clear emerald green
+    "FAIL": "#E67E22",      # Rich orange
+    "INFO": "#F5F6FA",      # Bright clean white
+    "THINKING": "#808080",  # Unchanged neutral gray
 }
 TAG_WIDTH = max(map(len, TAG_COLORS))   # updates itself if you add a longer label
 

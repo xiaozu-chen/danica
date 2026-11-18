@@ -22,11 +22,11 @@ from __future__ import annotations
 from typing import Protocol
 
 TAG_COLORS = {
-    "ERROR": "#FF0000",
-    "WARNING": "#FFFF00",
-    "OK": "#00FF00",
-    "FAIL": "#FFA500",
-    "INFO": "white",
+    "ERROR":   {"color": "#E03E3E", "symbol": "[ ✗ ]"},   # U+2717
+    "WARNING": {"color": "#E5C158", "symbol": "[ ▲ ]"},   # U+25B2
+    "OK":      {"color": "#4CAF50", "symbol": "[ ✓ ]"},   # U+2713
+    "FAIL":    {"color": "#E67E22", "symbol": "[ — ]"},   # U+2014
+    "INFO":    {"color": "#F5F6FA", "symbol": "[ i ]"},   # plain ASCII
 }
 TAG_WIDTH = max(map(len, TAG_COLORS))   # updates itself if you add a longer label
 
@@ -65,8 +65,14 @@ class RichUI:
     def log(self, level: str, text: str) -> None:
         from rich.markup import escape
         key = level.upper()
-        color = TAG_COLORS.get(key, "white")
-        label = f"{key:^{TAG_WIDTH}}"
+    
+        # Retrieve the dictionary for the level, fallback to white/empty if not found
+        tag_info = TAG_COLORS.get(key, {"color": "white", "symbol": ""})
+    
+        # Extract the individual string values correctly
+        color = tag_info["color"]
+        label = tag_info["symbol"]
+    
         self.console.print(f"[bold #000000 on {color}] {label} [/]::{escape(str(text))}", highlight=False)
 
     def say(self, text: str, style: str | None = None) -> None:
