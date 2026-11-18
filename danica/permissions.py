@@ -59,6 +59,10 @@ TOOL_TIERS = {
     "ask_user": Tier.READ,
     "dev_server": Tier.EXECUTE,    # starts a background process: asks like run_shell
     "screenshot": Tier.WRITE,      # saves a picture (out), opens only local pages
+    "mail_folders": Tier.READ,     # email is opened read-only (mail.py); the context becomes TAINTED when mail is read
+    "mail_list": Tier.READ,
+    "mail_read": Tier.READ,
+    "mail_scan": Tier.READ,
     "game_run": Tier.EXECUTE,      # runs the game's Python code (in the sandbox, headless): asks like run_shell
     "view_image": Tier.READ,       # only looks at a workspace file (same jail as read_file)         # only shows the user a dialog
 }

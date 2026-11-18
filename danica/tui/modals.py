@@ -137,14 +137,14 @@ class TextScreen(ModalScreen):
 
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
-    def __init__(self, title: str, default: str = "") -> None:
+    def __init__(self, title: str, default: str = "", secret: bool = False) -> None:
         super().__init__()
-        self.title_text, self.default = title, default
+        self.title_text, self.default, self.secret = title, default, secret      # secret = show dots instead of the text
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
             yield Static(Text(self.title_text, style="bold #ff9e64"), classes="dialog-title")
-            yield Input(value=self.default, id="answer")
+            yield Input(value=self.default, id="answer", password=self.secret)
             yield Static(Text("Enter to confirm, Esc to cancel", style="dim"), classes="dialog-reason")
 
     def on_mount(self) -> None:

@@ -146,9 +146,9 @@ class TextualUI:
         answer = self._ask(ChoiceScreen(title, body, options, detail))
         return answer if isinstance(answer, str) else None
 
-    def ask_text(self, title: str, default: str = "") -> str | None:
+    def ask_text(self, title: str, default: str = "", secret: bool = False) -> str | None:
         from danica.tui.modals import TextScreen
-        answer = self._ask(TextScreen(title, default))
+        answer = self._ask(TextScreen(title, default, secret))
         return answer if isinstance(answer, str) else None
 
     def ask_screen(self, screen):

@@ -809,7 +809,7 @@ class Agent:
             for source in state.taint_sources[known_sources:]:
                 self._log("taint", source=source[:200])
             if known_sources == 0:
-                self.on_event("notice", "[security] untrusted web content entered the conversation: shell "
+                self.on_event("notice", "[security] untrusted content (web page or email) entered the conversation: shell "
                                         "commands and new sites will now ask every time (see /taint)")
 
         # A successful UI build gets a screenshot automatically (the picture is attached on the next step)

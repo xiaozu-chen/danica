@@ -705,3 +705,4 @@ from danica.tui import commands_view  # noqa: E402,F401
 from danica.tui import commands_vision  # noqa: E402,F401
 from danica.tui import commands_classifier  # noqa: E402,F401
 from danica.tui import commands_game  # noqa: E402,F401
+from danica.tui import commands_mail  # noqa: E402,F401

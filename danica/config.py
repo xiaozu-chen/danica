@@ -54,6 +54,9 @@ DEFAULTS = {
         "log_decisions": True,
         "log_prompts": True,
     },
+    # email (read-only IMAP, see mail.py). The PASSWORD is never stored here: /mail login keeps it in memory.
+    "mail": {"host": "", "user": "", "port": 993, "folder": "INBOX", "ssl": True, "timeout": 20,
+             "max_list": 30, "snippet_chars": 240, "body_chars": 6000},
     "mcp": {"servers": {}},
     "hooks": {"before": [], "after": []},
     "webcache": {
