@@ -13,7 +13,7 @@ import queue
 import threading
 
 from textual.message import Message
-
+from textual.widgets import RichLog
 
 class AgentEvent(Message):
     """One on_event(kind, data) call from the agent. Handled by DanicaApp.on_agent_event."""
@@ -98,6 +98,9 @@ class TextualUI:
 
     def say(self, text: str, style: str | None = None) -> None:
         self._call(self.app.add_say, str(text), style)
+
+    def show(self, renderable) -> None:
+        self._call(self.app.add_renderable, renderable)
 
     def _inline(self) -> bool:
         """Approvals as an inline menu above the prompt (approval_menu.py); [ui] inline_approvals = false = old dialogs."""

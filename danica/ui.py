@@ -54,6 +54,9 @@ class UI(Protocol):
     def ask_text(self, title: str, default: str = "") -> str | None:
         """Blocking one-line text question. None if dismissed."""
 
+    def show(self, renderable) -> None:
+        """Display a rich/structured renderable (frontends may degrade it to text)."""
+
 
 class RichUI:
     """The classic terminal frontend (Rich output, prompt_toolkit input)."""
@@ -133,3 +136,6 @@ class RichUI:
             return prompt(f"{title} > ", default=default).strip()
         except (EOFError, KeyboardInterrupt):
             return None
+
+    def show(self, renderable) -> None:
+        self.console.print(renderable)

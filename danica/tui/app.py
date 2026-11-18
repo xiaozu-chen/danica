@@ -40,7 +40,7 @@ from danica.tui.commands import command_names, dispatch
 from danica.tui.engine import Engine
 from danica.tui.widgets import (ACCENT, ArtifactsList, AssistantMessage, BusyLine, Citations,
                                 CommandPopup, Notice, PromptInput, Say, StatusBar, ThinkingBlock, ToolCall,
-                                UserMessage, welcome_panel, SubagentPane)
+                                UserMessage, welcome_panel, SubagentPane, RichLog)
 from danica.tui.modals import ConfirmScreen
 from danica.server import ServerError, ServerMonitor, probe
 from danica.tui.connection import DisconnectedScreen, SetupScreen
@@ -299,6 +299,9 @@ class DanicaApp(App):
             return self.call_from_thread(fn, *args)
         except RuntimeError:
             return None
+
+    def add_renderable(self, renderable) -> None:
+        self.mount_block(Static(renderable))
 
     # ------------------------------------------------------------------ input
 

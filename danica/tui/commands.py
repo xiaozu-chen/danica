@@ -23,6 +23,7 @@ import subprocess
 import sys
 from typing import Optional
 from danica.app_core import ResumeCancelled
+from danica.tui.pack_cmd import render_help_menu
 
 COMMANDS: dict[str, Callable] = {}
 
@@ -65,7 +66,6 @@ DESCRIPTIONS = {
     "/imagetest": "not ported yet (use the classic CLI)",
 }
 
-
 def command_names() -> list[tuple[str, str]]:
     """(name, description) for every slash command, shortest first so an exact match sorts to the top."""
     names = set(COMMANDS) | set(NOT_PORTED)
@@ -103,7 +103,7 @@ def _exit(app, args):
 
 @command("/help")
 def _help(app, args):
-    app.ui.say(HELP)
+    app.ui.show(render_help_menu())
 
 
 @command("/think")
