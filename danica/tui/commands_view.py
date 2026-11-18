@@ -22,7 +22,7 @@ def _open_save(app, args):
                       anything else (pictures, .pptx, .docx...) goes to its default app as before
        /open <n> ext  force the default app / Explorer
        /save <n> [folder] (alias /download)  copy a file out, default Downloads"""
-    from danica.artifacts import (ArtifactError, open_artifact, pick, read_text, save_copy, tidy_for_view)
+    from danica.artifacts import (ArtifactError, downloads_dir, open_artifact, pick, read_text, save_copy, tidy_for_view)
     parts = args.split(maxsplit=1)               # the number, then the rest (a folder path, or "ext")
     arg = parts[0] if parts else ""
     rest = parts[1] if len(parts) > 1 else ""
@@ -41,7 +41,7 @@ def _open_save(app, args):
             app.ui.log("ok", open_artifact(item))
             app.audit.append("artifact_open", path=item.rel)
         else:
-            dest = Path(rest.strip().strip('"')) if rest.strip() else Path.home() / "Downloads"
+            dest = Path(rest.strip().strip('"')) if rest.strip() else downloads_dir()
             saved = save_copy(item.path, dest)
             app.audit.append("artifact_save", path=item.rel, to=str(saved.parent))
             app.ui.log("ok", f"saved a copy to {saved}")

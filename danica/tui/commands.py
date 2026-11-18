@@ -33,8 +33,8 @@ HELP = """Commands
   Plans     /plan [<request>]  /plan show  /plan auto ask|off
   Project   /mode  /project [path]  /openmode [folder]  /chat  /instructions
   Context   /context  /prune  /compact [tokens]  /summary  /todo [clear]
-  Sessions  /sessions  /resume [number|id]  /export
-  Files     /artifacts  /open <n>  /save <n> [folder]
+  Sessions  /sessions [delete n]  /resume [number|id]  /export
+  Files     /artifacts  /open <n>  /save <n> [folder]  /upload [path]  /attach <picture>
   Safety    /fullaccess  /sandbox  /audit  /undo  /rewind [id]  /taint  /untaint
   Web       /sources  /webcache [status | list | search <words> | |reindex | clear]
   Memory    /memory [list | add [scope] <text> | review | capture | search <words> | merge | forget <id> | show <id> | status | reindex | path]
@@ -463,7 +463,7 @@ def _artifacts(app, args):
 
 @command("/open", "/save")
 def _open_save(app, args):
-    from danica.artifacts import ArtifactError, open_artifact, pick, save_copy
+    from danica.artifacts import ArtifactError, downloads_dir, open_artifact, pick, save_copy
     parts = args.split(maxsplit=1)               # the number, then the rest (a folder path)
     arg = parts[0] if parts else ""
     rest = parts[1] if len(parts) > 1 else ""
@@ -473,7 +473,7 @@ def _open_save(app, args):
             app.ui.log("ok", open_artifact(item))
             app.audit.append("artifact_open", path=item.rel)
         else:
-            dest = Path(rest.strip().strip('"')) if rest.strip() else Path.home() / "Downloads"
+            dest = Path(rest.strip().strip('"')) if rest.strip() else downloads_dir()
             saved = save_copy(item.path, dest)
             app.audit.append("artifact_save", path=item.rel, to=str(saved.parent))
             app.ui.log("ok", f"saved a copy to {saved}")
@@ -706,3 +706,5 @@ from danica.tui import commands_vision  # noqa: E402,F401
 from danica.tui import commands_classifier  # noqa: E402,F401
 from danica.tui import commands_game  # noqa: E402,F401
 from danica.tui import commands_mail  # noqa: E402,F401
+from danica.tui import commands_upload  # noqa: E402,F401
+from danica.tui import commands_sessions  # noqa: E402,F401

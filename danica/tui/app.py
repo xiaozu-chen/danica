@@ -142,6 +142,7 @@ class DanicaApp(App):
         # Per-request streaming state (UI thread only)
         self.filter = PresentFilter()
         self.presented: set[str] = set()
+        self.save_targets: list[Path] = []                 # pictures behind the 'save picture' links (by index)
         self._assistant: AssistantMessage | None = None
         self._thinking: ThinkingBlock | None = None
         self._pending: deque[ToolCall] = deque()
@@ -530,6 +531,20 @@ class DanicaApp(App):
             self._assistant.finish()
             self._assistant = None
 
+    def action_save_picture(self, index: int) -> None:
+        """Click on 'save picture': copy the picture into the real Downloads folder (never overwrites). Works
+        without any browser, so it is the way out when the viewer page's own download button does not."""
+        from danica.artifacts import ArtifactError, downloads_dir, save_copy
+        try:
+            src = self.save_targets[int(index)]
+            saved = save_copy(src, downloads_dir())
+            self.add_notice("info", f"  saved a copy to {saved}")
+            self.audit.append("artifact_save", path=self.ws.display(src), to=str(saved.parent))
+        except (IndexError, ValueError, TypeError):
+            self.add_notice("warning", "  that picture is no longer available: use /save")
+        except ArtifactError as exc:
+            self.add_notice("warning", f"  could not save: {exc}")
+
     def show_image(self, rel: str) -> None:
         """<present file="..."/>. Pictures are never drawn inline: a picture becomes ONE clickable link
         to an interactive HTML viewer (htmlview.py), a sealed Danica slideshow links to itself. If the
@@ -548,11 +563,13 @@ class DanicaApp(App):
             label = self.ws.display(path)
             self.presented.add(label)
             what = "chart" if path.with_suffix(".json").is_file() else "picture"
+            self.save_targets.append(path)                          # the 'save picture' link points at this index
+            index = len(self.save_targets) - 1
             try:
-                self.mount_block(PresentLink(label, build_viewer(path), what))
+                self.mount_block(PresentLink(label, build_viewer(path), what, index))
             except ViewerError as exc:                              # no viewer: link the picture itself
                 self.add_notice("warning", f"  No interactive view ({exc}); linking the picture file")
-                self.mount_block(PresentLink(label, path, what))
+                self.mount_block(PresentLink(label, path, what, index))
         except (ImageError, PathJailError) as exc:
             self.add_notice("warning", f"  Could not show {rel}: {exc}")
 

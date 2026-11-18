@@ -20,7 +20,7 @@ class PresentLink(Static):
     """What <present file="..."/> shows now: ONE clickable line instead of a picture. Ctrl+click
     (Windows Terminal) opens the interactive HTML viewer in the browser."""
 
-    def __init__(self, label: str, target: Path, what: str) -> None:
+    def __init__(self, label: str, target: Path, what: str, save_index: int | None = None) -> None:
         t = Text("  \u25a3 ", style=ACCENT)
         t.append(f"{what}: {label}", style="bold")
         try:
@@ -28,6 +28,9 @@ class PresentLink(Static):
         except Exception:
             t.append(f"   ({target})", style="dim")
         t.append("   (Ctrl+click)", style="dim")
+        if save_index is not None:                       # a second link that works without any browser: click = copy to Downloads
+            t.append("   ")
+            t.append("save picture \u2193", style=Style(color=ACCENT, underline=True, meta={"@click": f"app.save_picture({save_index})"}))
         super().__init__(t, classes="say")
 
 

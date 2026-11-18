@@ -10,6 +10,9 @@ EXCEPT pruning (which only ever happened in memory).
 """
 
 import json
+import os
+import shutil
+import stat
 import re
 from datetime import datetime
 from pathlib import Path
@@ -165,3 +168,112 @@ def resolve_session(sessions_dir: Path, arg: str, current: str = "") -> str:
     if target == current:
         raise ValueError("that is the current session")
     return target
+
+# ------------------------------------------------------------------ deleting sessions
+
+def all_session_ids(sessions_dir: Path = SESSIONS_DIR) -> list[str]:
+    """Every saved session folder (newest first), including empty ones that /sessions hides."""
+    sessions_dir = Path(sessions_dir)
+    if not sessions_dir.exists():
+        return []
+    return sorted((d.name for d in sessions_dir.iterdir() if d.is_dir() and ID_RX.fullmatch(d.name)), reverse=True)
+
+
+def folder_size(path: Path) -> int:
+    """Total bytes under a folder. Links are counted as links, never followed."""
+    total = 0
+    for dirpath, dirnames, filenames in os.walk(path, followlinks=False):
+        for name in filenames:
+            try:
+                total += os.lstat(os.path.join(dirpath, name)).st_size
+            except OSError:
+                pass
+    return total
+
+
+def describe_session(sessions_dir: Path, sid: str) -> dict:
+    """What the delete confirmation shows about one session."""
+    folder = Path(sessions_dir) / sid
+    requests, when = [], None
+    path = folder / "transcript.jsonl"
+    if path.exists():
+        records, _ = load_records(path)
+        requests = harvest([r for r in records if "role" in r])[0]
+        when = datetime.fromtimestamp(path.stat().st_mtime)
+    from danica.projects import load_session_meta
+    meta = load_session_meta(folder)
+    mine = folder / "workspace"                                   # only a CHAT session keeps its files inside its folder
+    return {"id": sid, "modified": when, "requests": len(requests), "title": read_title(folder) or (requests[0][:60] if requests else ""),
+            "project": meta.get("project") or "", "size": folder_size(folder), "has_files": mine.is_dir() and any(mine.iterdir())}
+
+
+def select_sessions(sessions_dir: Path, words: list[str], current: str = "") -> tuple[list[str], list[str]]:
+    """Turn the words after '/sessions delete' into (session ids, problems). Never includes the current session.
+    Words: row numbers (3), ranges (2-5), ids or unique prefixes, `empty` (no requests), `all` (everything else)."""
+    sessions_dir = Path(sessions_dir)
+    chosen, problems = [], []
+
+    def add(sid: str) -> None:
+        if sid == current:
+            problems.append(f"{sid} is the current session: type /new first, then delete it")
+        elif sid not in chosen:
+            chosen.append(sid)
+
+    rows = [i["id"] for i in list_sessions(sessions_dir)]          # row numbers mean the rows /sessions shows
+    for word in words:
+        word = word.strip().lower()
+        if word == "all":
+            for sid in all_session_ids(sessions_dir):
+                if sid != current:
+                    add(sid)
+        elif word == "empty":
+            shown = {i["id"] for i in list_sessions(sessions_dir, limit=10 ** 6)}
+            for sid in all_session_ids(sessions_dir):
+                if sid not in shown and sid != current:
+                    add(sid)
+        elif re.fullmatch(r"\d{1,3}-\d{1,3}", word):
+            a, b = (int(x) for x in word.split("-"))
+            if not 1 <= a <= b <= len(rows):
+                problems.append(f"'{word}' is not a range of /sessions rows (there are {len(rows)})")
+            else:
+                for sid in rows[a - 1:b]:
+                    add(sid)
+        elif re.fullmatch(r"\d{1,3}", word):
+            n = int(word)
+            if not 1 <= n <= len(rows):
+                problems.append(f"there is no session number {n} (see /sessions)")
+            else:
+                add(rows[n - 1])
+        elif re.fullmatch(r"[0-9-]{4,15}", word):
+            hits = [s for s in all_session_ids(sessions_dir) if s.startswith(word)]
+            if len(hits) == 1:
+                add(hits[0])
+            else:
+                problems.append(f"'{word}' matches {len(hits)} sessions" + ("; type more of the id" if hits else ""))
+        else:
+            problems.append(f"'{word}' is not a session number, range, id, `empty` or `all`")
+    return chosen, problems
+
+
+def _unlock(func, path, _exc) -> None:
+    """rmtree helper: Windows refuses to delete read-only files, so clear the flag and try again."""
+    try:
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+    except OSError:
+        pass
+
+
+def delete_session(sessions_dir: Path, sid: str) -> bool:
+    """Delete ONE session folder. Only folders named like a session id, directly inside sessions_dir, and never a
+    link/junction (rmtree must not be pointed somewhere else). Returns True when the folder is gone."""
+    sessions_dir = Path(sessions_dir)
+    if not ID_RX.fullmatch(sid):
+        raise ValueError(f"'{sid}' is not a session id")
+    folder = sessions_dir / sid
+    if not folder.is_dir():
+        return False
+    if folder.is_symlink() or Path(os.path.realpath(folder)) != Path(os.path.realpath(sessions_dir)) / sid:
+        raise ValueError(f"{sid} is a link, not a real session folder: left alone")
+    shutil.rmtree(folder, onerror=_unlock)
+    return not folder.exists()

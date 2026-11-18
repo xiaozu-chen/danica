@@ -55,6 +55,8 @@ nav{display:flex;gap:4px}
 button,a.btn{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer;text-decoration:none}
 button:hover,a.btn:hover{border-color:var(--accent)}
 button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+footer{display:flex;gap:10px;align-items:center;padding:6px 16px;border-top:1px solid var(--line);color:var(--mute);font-size:12px}
+footer code{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;user-select:all}
 main{flex:1;min-height:0;position:relative}
 section{position:absolute;inset:0;overflow:auto;padding:12px 16px;display:none}
 section.on{display:block}
@@ -203,6 +205,18 @@ if(spec){addTab("chart",spec.type==="flow"?"Diagram":"Chart");
  if(spec.type==="table"){$("legend").style.display="none";$("chart").style.display="none";table($("chart-table"),spec.columns,spec.rows.map(function(r){return r.slice()}))}
  else if(spec.type==="flow"){$("legend").style.display="none";drawFlow()}
  else{drawChart();var d=dataRows();table($("data-table"),d.cols,d.rows);addTab("data","Data")}}
+/* ---------- download: build the file at click time (some browsers block a download link that holds the whole picture as text) ---------- */
+(function(){var dl=$("dl"),note=$("note");
+dl.addEventListener("click",function(e){try{
+var head=dl.getAttribute("href").split(","),mime=/^data:([^;]+)/.exec(head[0])[1],bin=atob(head[1]),a=new Uint8Array(bin.length);
+for(var i=0;i<bin.length;i++)a[i]=bin.charCodeAt(i);
+var url=URL.createObjectURL(new Blob([a],{type:mime})),t=document.createElement("a");
+t.href=url;t.download=dl.getAttribute("download");document.body.appendChild(t);t.click();document.body.removeChild(t);
+setTimeout(function(){URL.revokeObjectURL(url)},20000);e.preventDefault();
+note.textContent="Download started: check your browser's downloads. Nothing? Copy the path and use /save in Danica."}catch(x){}});
+var cp=$("copypath");cp.addEventListener("click",function(){var path=$("path").textContent;
+function done(ok){cp.textContent=ok?"Copied":"Select it and press Ctrl+C"}
+try{navigator.clipboard.writeText(path).then(function(){done(true)},function(){done(false)})}catch(x){done(false)}})})();
 addTab("image","Image");show(spec?"chart":"image");
 if(!spec)$("nav").style.display="none";
 })();
@@ -277,6 +291,8 @@ def build_viewer(png: Path) -> Path:
         "</main>\n"
         '<div id="tip"></div>\n'
         f'<script type="application/json" id="spec">{spec_json}</script>\n'
+        f'<footer><span id="note">Picture file:</span><code id="path">{escape(str(png.resolve()))}</code>'
+        '<button id="copypath">Copy path</button></footer>\n'
         "<noscript>This viewer needs JavaScript (the picture is still available through Download image).</noscript>\n"
         f"<script>{JS}</script>\n</body></html>\n")
     sealed = seal_html(page)

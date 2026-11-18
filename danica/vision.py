@@ -149,8 +149,9 @@ def prepare(messages: list[dict], root: Path | None = None) -> list[dict]:
                     uri, w, h = load_data_uri(path)
                     parts.append({"type": "image_url", "image_url": {"url": uri}})
                     # Say so in words: a small model otherwise goes looking for the file with its tools
-                    labels.append(f"[attached picture: {path.name}. It is shown below; you can already see it. "
-                                  "Do not search for it or call view_image for it.]")
+                    where = f" (saved in the workspace as {rel})" if not Path(rel).is_absolute() else ""
+                    labels.append(f"[attached picture: {path.name}{where}. It is shown below; you can already see it, so do not "
+                                  "search for it or call view_image for it now.]")
                     continue
                 except VisionError as e:
                     notes.append(f"[picture {rel} could not be loaded: {e}]")
@@ -158,7 +159,8 @@ def prepare(messages: list[dict], root: Path | None = None) -> list[dict]:
             if not available():
                 notes.append(f"[picture {rel}: not shown, this server has no vision (start llama-server with --mmproj)]")
             else:
-                notes.append(f"[picture {rel}: shown earlier, no longer attached]")
+                again = f" To look at it again, call view_image with path {rel}." if not Path(rel).is_absolute() else ""
+                notes.append(f"[picture {rel}: shown earlier, no longer attached.{again}]")
         clean = {k: v for k, v in m.items() if k != "images"}
         clean["content"] = ([{"type": "text", "text": "\n".join([text] + labels + notes).strip()}] + parts) if parts \
             else "\n".join([text] + notes).strip()

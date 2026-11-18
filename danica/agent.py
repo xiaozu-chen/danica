@@ -183,6 +183,7 @@ class Agent:
         self.plans_dir = None     # where plan files go (set by the CLI); None = plans are kept in memory only
         self.last_plan: Plan | None = None
         self.next_images: list[str] = []   # pictures the user /attach-ed for the NEXT request (see vision.py)
+        self.upload_notes: list[str] = []  # what /upload stored, told to the model with the NEXT request (see uploads.py)
         self.auto_looks = 0                # automatic screenshots taken after builds in THIS request (see autolook.py)
         self.charts_made: list[str] = []   # pictures the chart tool made during the CURRENT request
         self.request_snap: str | None = None   # the checkpoint taken before the current request (for the artifact list)
@@ -912,6 +913,9 @@ class Agent:
                 self.ws.todo_path.unlink()
         self._add({"role": "user", "content": user_text, **({"images": self.next_images} if self.next_images else {})})
         self.next_images = []                  # /attach pictures belong to this one request
+        if self.upload_notes:                  # files the user put in the workspace since the last request
+            self._add({"role": "user", "content": "\n".join(self.upload_notes)})        # (a harness reminder: summaries and exports skip it)
+            self.upload_notes = []
         self.auto_looks = 0
         # Sites the USER typed are trusted: fetching them never needs extra approval
         state_for(self.ws).trust_hosts_from(user_text)

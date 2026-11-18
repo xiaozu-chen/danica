@@ -1,7 +1,8 @@
 """
 commands_vision.py - /attach, /detach and /vision.
 
-    /attach <picture>   send a picture with your NEXT message (drag a file into the terminal to paste its path)
+    /attach <picture>   send a picture with your NEXT message (drag a file into the terminal to paste its path).
+                        A copy is kept in the workspace (uploads/), so Danica can look at it again with view_image.
     /detach             forget the pictures you attached
     /vision             does the server see pictures? (and how to turn it on)
 
@@ -10,7 +11,7 @@ Imported at the bottom of commands.py, like commands_view.py.
 
 from pathlib import Path
 
-from danica import vision
+from danica import uploads, vision
 from danica.tui.commands import DESCRIPTIONS, command
 
 DESCRIPTIONS.update({
@@ -52,9 +53,14 @@ def _attach(app, args):
     except vision.VisionError as e:
         app.ui.log("error", str(e))
         return
-    app.agent.next_images.append(str(path.resolve()))
-    app.ui.log("info", f"attached {path.name} ({len(app.agent.next_images)} waiting). "
-                       "Type your message; it goes with the next request.")
+    try:
+        stored = uploads.store_picture(app.ws.root, path)       # a copy in the workspace (uploads/): she can look again later
+    except uploads.UploadError as e:
+        app.ui.log("error", str(e))
+        return
+    app.agent.next_images.append(stored)                        # the WORKSPACE path is what the history keeps
+    app.ui.log("info", f"attached {path.name} ({len(app.agent.next_images)} waiting), kept in the workspace as {stored} "
+                       "so Danica can look at it again later. Type your message; it goes with the next request.")
 
 
 @command("/detach")

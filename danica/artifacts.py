@@ -117,6 +117,31 @@ def open_artifact(a: Artifact) -> str:
         raise ArtifactError(f"could not open it: {e}")
 
 
+def downloads_dir() -> Path:
+    """The user's real Downloads folder. On Windows it is asked from the system (it may be moved to another drive or
+    OneDrive, so ~/Downloads is often wrong); then ~/Downloads, Desktop, and finally the home folder."""
+    if os.name == "nt":
+        try:
+            import ctypes
+            import uuid
+            # FOLDERID_Downloads, as the 16 bytes Windows expects
+            raw = uuid.UUID("{374DE290-123F-4565-9164-39C4925E467B}").bytes_le
+            folder_id = (ctypes.c_ubyte * 16)(*raw)
+            out = ctypes.c_wchar_p()
+            if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(folder_id), 0, None, ctypes.byref(out)) == 0 and out.value:
+                found = Path(out.value)
+                ctypes.windll.ole32.CoTaskMemFree(out)
+                if found.is_dir():
+                    return found
+        except Exception:
+            pass                                       # fall back to the usual places
+    home = Path.home()
+    for candidate in (home / "Downloads", home / "Desktop"):
+        if candidate.is_dir():
+            return candidate
+    return home
+
+
 def save_copy(src: Path, dest_dir: Path) -> Path:
     """Copy a file into a folder without ever overwriting: a.txt, a (1).txt, a (2).txt..."""
     dest_dir = Path(dest_dir).expanduser()
