@@ -917,6 +917,8 @@ class Agent:
             self._add({"role": "user", "content": "\n".join(self.upload_notes)})        # (a harness reminder: summaries and exports skip it)
             self.upload_notes = []
         self.auto_looks = 0
+        if getattr(self.ws, "computer", None) is not None:      # computer use: every message starts with a fresh action budget
+            self.ws.computer.new_request()
         # Sites the USER typed are trusted: fetching them never needs extra approval
         state_for(self.ws).trust_hosts_from(user_text)
         if plan is not None:

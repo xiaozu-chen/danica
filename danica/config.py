@@ -57,6 +57,8 @@ DEFAULTS = {
     # email (read-only IMAP, see mail.py). The PASSWORD is never stored here: /mail login keeps it in memory.
     "mail": {"host": "", "user": "", "port": 993, "folder": "INBOX", "ssl": True, "timeout": 20,
              "max_list": 30, "snippet_chars": 240, "body_chars": 6000},
+    # computer use (computer.py): smooth = glide the mouse, max_actions = per request, settle = seconds to wait after an action
+    "computer": {"smooth": True, "max_actions": 25, "settle": 0.35, "grid": True},
     "mcp": {"servers": {}},
     "hooks": {"before": [], "after": []},
     "webcache": {

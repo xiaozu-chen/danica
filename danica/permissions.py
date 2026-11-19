@@ -63,6 +63,14 @@ TOOL_TIERS = {
     "mail_list": Tier.READ,
     "mail_read": Tier.READ,
     "mail_scan": Tier.READ,
+    "screen_windows": Tier.READ,   # computer use (computer.py): only windows the USER approved with /computer allow can be seen or driven
+    "screen_shot": Tier.READ,
+    "screen_click": Tier.EXECUTE,  # mouse and keyboard: ask once per session (one shared answer for all screen_* actions)
+    "screen_drag": Tier.EXECUTE,
+    "screen_type": Tier.EXECUTE,
+    "screen_key": Tier.EXECUTE,
+    "screen_scroll": Tier.EXECUTE,
+    "screen_focus": Tier.EXECUTE,
     "game_run": Tier.EXECUTE,      # runs the game's Python code (in the sandbox, headless): asks like run_shell
     "view_image": Tier.READ,       # only looks at a workspace file (same jail as read_file)         # only shows the user a dialog
 }
@@ -223,6 +231,8 @@ def classify(tool: str, args: dict, open_root: Path | None = None) -> tuple[Tier
         return Tier.OUTSIDE, "executes a user-managed extension", frozenset()
 
     tier = TOOL_TIERS.get(tool, Tier.EXECUTE)  # unclassified tools fail safe
+    if tool.startswith("screen_") and tier == Tier.EXECUTE:
+        return tier, "controls the mouse and keyboard of a window you approved", frozenset({"tool:screen_input"})
     if tool != "run_shell":
         return tier, "", frozenset() if tier != Tier.EXECUTE else frozenset({f"tool:{tool}"})
 
