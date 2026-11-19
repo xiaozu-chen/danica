@@ -23,7 +23,6 @@ import base64
 import io
 from pathlib import Path
 
-import requests
 from PIL import Image
 
 from danica.config import CONFIG
@@ -46,6 +45,7 @@ class VisionError(Exception):
 
 def probe_vision(server_url: str, timeout: float = 2.0) -> bool:
     """True if llama-server was started with a vision projector (--mmproj). Never raises."""
+    import requests                       # imported here: slow to load, and only this check needs it
     try:
         data = requests.get(f"{server_url}/props", timeout=timeout).json()
     except (requests.RequestException, ValueError):

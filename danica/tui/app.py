@@ -48,7 +48,7 @@ from danica.tui.viewer_widgets import ArtifactPane, PresentLink
 from danica.htmlview import ViewerError, build_viewer
 from danica.workspace import PathJailError
 from danica.seal import is_sealed_html
-from danica import titles, vision
+from danica import perf, titles, vision
 from danica.interactive import page_kind
 
 IDLE_PLACEHOLDER = f"Ask Danica…"
@@ -177,6 +177,7 @@ class DanicaApp(App):
         self.query_one("#viewer-pane", ArtifactPane).display = False
         self.sync_side()
         self.query_one(PromptInput).focus()
+        perf.mark("window drawn")
         self.set_working(True, "starting")
         self.engine.start()
         self.engine.submit(self.boot)
@@ -205,6 +206,7 @@ class DanicaApp(App):
         try:
             if not self._ensure_server():
                 return                              # the user quit from the set-up screen
+            perf.mark("server answered")
             self.swap_session(None, boot=True)
         except Exception as exc:
             self.ui.log("error", f"could not start a session: {type(exc).__name__}: {exc}")
@@ -237,6 +239,7 @@ class DanicaApp(App):
         open_root: start Open Mode in this folder (the caller already showed the warning)."""
         new_id = datetime.now().strftime("%Y%m%d-%H%M%S")
         parts = build_session(new_id, self.ui, self.bridge, project, open_root=open_root)
+        perf.mark("session built")
         default = f"New session {new_id}."
         if open_root is not None:
             default = (f"OPEN MODE: full disk access (protected areas stay blocked)\n"
@@ -292,6 +295,7 @@ class DanicaApp(App):
         self._reset_stream_state()
         self.is_ready = True
         self.set_working(False)
+        perf.mark("ready for input")
 
     def _call(self, fn, *args):
         """Worker thread -> UI thread, tolerant of shutdown."""

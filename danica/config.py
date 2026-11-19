@@ -8,7 +8,6 @@ import os
 import tomllib # built into Python 3.11+, read-only TOML parser
 import re
 from pathlib import Path
-import requests
 from rich.console import Console
 from rich.markup import escape
 
@@ -58,6 +57,10 @@ DEFAULTS = {
     "mail": {"host": "", "user": "", "port": 993, "folder": "INBOX", "ssl": True, "timeout": 20,
              "max_list": 30, "snippet_chars": 240, "body_chars": 6000},
     # computer use (computer.py): smooth = glide the mouse, max_actions = per request, settle = seconds to wait after an action
+    # tools.lazy: send only the tools a request needs (toolgroups.py). verify.mode: "auto" = check only work that changed files or had
+    # a plan/TODO; "always" = every tool-based answer; "off" = never
+    "tools": {"lazy": True},
+    "verify": {"mode": "auto"},
     "computer": {"smooth": True, "max_actions": 25, "settle": 0.35, "grid": True, "coords": "normalized"},   # coords: "normalized" = x,y 0-1000, "pixels" = picture pixels
     "mcp": {"servers": {}},
     "hooks": {"before": [], "after": []},
@@ -87,6 +90,7 @@ def refresh_context_size() -> int:
 
 def get_llama_context_size(server_url: str, timeout: float = 2.0) -> int:
     """Fetches the configured context size (n_ctx) from a running llama-server."""
+    import requests                       # imported here: it takes ~0.1 s to load and only this call needs it
     try:
         response = requests.get(f"{server_url}/props", timeout=timeout)
         response.raise_for_status()

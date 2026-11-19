@@ -709,3 +709,4 @@ from danica.tui import commands_mail  # noqa: E402,F401
 from danica.tui import commands_upload  # noqa: E402,F401
 from danica.tui import commands_sessions  # noqa: E402,F401
 from danica.tui import commands_computer  # noqa: E402,F401
+from danica.tui import commands_perf  # noqa: E402,F401

@@ -5,24 +5,79 @@ Everything in Danica that talks to the model goes through this file,
 so if the server API changes, there is exactly one place to fix.
 """
 
+import contextlib
 import json
+import threading
+import time
 from typing import Iterator
 
 import httpx
 
+from danica import perf
 from danica.config import CONFIG
 
 # Where llama-server is listening (comes from config.toml, or the default)
 BASE_URL = CONFIG["server"]["base_url"]
 
+# ONE shared HTTP client for the whole program. Making a new client per call loads the certificate store every time
+# (about 0.1 s each, and a request with tool steps makes several calls) and throws the connection away.
+_client: httpx.Client | None = None
+_client_lock = threading.Lock()
+TIMEOUT = httpx.Timeout(connect=5.0, read=None, write=10.0, pool=5.0)
 
-def stream_chat(
+
+def _http() -> httpx.Client:
+    global _client
+    with _client_lock:
+        if _client is None:
+            _client = httpx.Client(timeout=TIMEOUT)
+        return _client
+
+
+def reset_client() -> None:
+    """Drop the shared client (after a connection error, so the next call starts clean)."""
+    global _client
+    with _client_lock:
+        old, _client = _client, None
+    if old is not None:
+        try:
+            old.close()
+        except Exception:
+            pass
+
+
+@contextlib.contextmanager
+def _shared():
+    yield _http()
+
+
+_local: httpx.Client | None = None
+
+
+def local_http() -> httpx.Client:
+    """The shared client for the small side calls (titles, classifier, embeddings): local server, never via a proxy.
+    Give each request its own timeout=."""
+    global _local
+    with _client_lock:
+        if _local is None:
+            _local = httpx.Client(trust_env=False)
+        return _local
+
+
+@contextlib.contextmanager
+def local_client():
+    yield local_http()
+
+
+def _stream_chat(
     messages: list[dict],
     thinking: bool = False,
     temperature: float = 0.7,
     tools: list[dict] | None = None,
     include_usage: bool = False,
     stream_tools: bool = False,
+    label: str = "chat",
+    tool_choice: str | None = None,
 ) -> Iterator[dict]:
     """
     Stream a chat completion from llama-server.
@@ -43,9 +98,14 @@ def stream_chat(
         "temperature": temperature,
         # Qwen's chat template reads this flag to switch thinking on/off.
         "chat_template_kwargs": {"enable_thinking": thinking},
+        # Keep the processed prompt in the server's memory and reuse its start next time (the default on new servers,
+        # explicit here so an older build does not re-read the whole conversation on every message)
+        "cache_prompt": True,
     }
     if tools:
         payload["tools"] = tools  # OpenAI-style tool schemas from the registry
+        if tool_choice:
+            payload["tool_choice"] = tool_choice          # "none": the tools are listed (same prompt start, cache reused) but not used
 
     if include_usage:
         # Makes the server attach token counts to the final stream chunk
@@ -55,9 +115,12 @@ def stream_chat(
     pending: dict[int, dict] = {}
     finish = ""          # why the server stopped: "stop", "length" (hit a token limit), "tool_calls"
 
-    timeout = httpx.Timeout(connect=5.0, read=None, write=10.0, pool=5.0)
+    t0 = time.perf_counter()
+    first = None                 # when the first word / tool call arrived
+    usage: dict = {}
+    timings: dict = {}           # llama-server's own numbers: how much of the prompt was reused from its cache
 
-    with httpx.Client(timeout=timeout) as client:
+    with _shared() as client:
         with client.stream(
             "POST", f"{BASE_URL}/v1/chat/completions", json=payload
         ) as response:
@@ -76,6 +139,10 @@ def stream_chat(
                 # The usage chunk can have an EMPTY "choices" list, so we must
                 # look for it before the "no choices -> skip" check below.
                 if chunk.get("usage"):
+                    usage = chunk["usage"]
+                if chunk.get("timings"):
+                    timings = chunk["timings"]
+                if chunk.get("usage"):
                     yield {
                         "type": "usage",
                         "prompt_tokens": chunk["usage"].get("prompt_tokens", 0),
@@ -86,6 +153,8 @@ def stream_chat(
                 delta = chunk["choices"][0].get("delta", {})
                 finish = chunk["choices"][0].get("finish_reason") or finish
 
+                if first is None and (delta.get("reasoning_content") or delta.get("content") or delta.get("tool_calls")):
+                    first = time.perf_counter() - t0
                 if delta.get("reasoning_content"):
                     yield {"type": "thinking", "text": delta["reasoning_content"]}
                 if delta.get("content"):
@@ -114,7 +183,12 @@ def stream_chat(
                             frag = slot["arguments"]      # anything that arrived before the name
                         if frag:
                             yield {"type": "tool_delta", "index": index, "text": frag}
-        
+
+    now = time.perf_counter() - t0
+    perf.record_call(label=label, first=first if first is not None else now, total=now, thinking=thinking,
+                     prompt_tokens=usage.get("prompt_tokens", 0), completion_tokens=usage.get("completion_tokens", 0),
+                     cache_n=timings.get("cache_n"), prompt_n=timings.get("prompt_n"),
+                     tools_chars=len(json.dumps(tools)) if tools else 0)
     if include_usage and finish:           # a new piece type: only callers that asked for usage (the agent loop) get it
         yield {"type": "finish", "reason": finish}
 
@@ -128,6 +202,16 @@ def stream_chat(
             call["id"] = call["id"] or f"call_{index}"
             calls.append(call)
         yield {"type": "tool_calls", "calls": calls}
+
+
+def stream_chat(*args, **kwargs) -> Iterator[dict]:
+    """Stream a chat completion (see _stream_chat). After a connection error the shared client is dropped so the next
+    call starts clean (for example after llama-server was restarted)."""
+    try:
+        yield from _stream_chat(*args, **kwargs)
+    except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.ReadError):
+        reset_client()
+        raise
 
 
 def chat(

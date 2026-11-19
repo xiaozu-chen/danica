@@ -32,6 +32,7 @@ import time
 
 import httpx
 
+from danica import llm
 from danica.config import CONFIG
 
 DEFAULTS = {"enabled": True, "url": "", "timeout": 20.0, "min_slots": 2,
@@ -138,11 +139,12 @@ def call_tool(what: str, system: str, user: str, name: str, description: str, pa
     started = time.time()
     error, args = "", None
     try:
-        with httpx.Client(timeout=httpx.Timeout(wait, connect=1.5), trust_env=False) as client:
-            reply = client.post(f"{base_url()}/v1/chat/completions", json=payload)
+        limit = httpx.Timeout(wait, connect=1.5)
+        with llm.local_client() as client:                     # one shared connection (no certificate loading per call)
+            reply = client.post(f"{base_url()}/v1/chat/completions", json=payload, timeout=limit)
             if reply.status_code == 400:                       # a server that rejects tool_choice: ask without it
                 payload.pop("tool_choice")
-                reply = client.post(f"{base_url()}/v1/chat/completions", json=payload)
+                reply = client.post(f"{base_url()}/v1/chat/completions", json=payload, timeout=limit)
             reply.raise_for_status()
             args = _parse_args(reply.json()["choices"][0]["message"])
             if args is None:

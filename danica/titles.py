@@ -24,6 +24,7 @@ from pathlib import Path
 
 import httpx
 
+from danica import llm
 from danica.config import APP_DIR, CONFIG
 
 SESSIONS = APP_DIR / "sessions"
@@ -87,7 +88,6 @@ def fallback_title(first_request: str) -> str:
 
 def request_title(agent) -> str:
     """Ask the model for a title. Blocking (a second or two). Returns "" on any failure."""
-    from danica.tools.registry import tool_schemas
     base = CONFIG["server"]["base_url"]
     messages = list(agent._messages_for_model()) + [{"role": "user", "content": INSTRUCTION}]
     payload = {
@@ -96,17 +96,26 @@ def request_title(agent) -> str:
         "temperature": 0.2,
         "max_tokens": TITLE_TOKENS,
         "chat_template_kwargs": {"enable_thinking": False},
-        "tools": tool_schemas(),                 # same tools = same prompt start = the server's cache is reused
+        "tools": _tools_of(agent),               # same tools = same prompt start = the server's cache is reused
         "tool_choice": "none",                   # (ignored by servers that don't know it: we only read the text)
     }
     try:
-        with httpx.Client(timeout=TIMEOUT, trust_env=False) as client:   # local server: never via a proxy
-            reply = client.post(f"{base}/v1/chat/completions", json=payload)
+        with llm.local_client() as client:                 # local server: never via a proxy, one shared connection
+            reply = client.post(f"{base}/v1/chat/completions", json=payload, timeout=TIMEOUT)
             reply.raise_for_status()
             content = reply.json()["choices"][0]["message"].get("content") or ""
     except (httpx.HTTPError, ValueError, KeyError, IndexError):
         return ""
     return clean_title(content)
+
+
+def _tools_of(agent) -> list:
+    """The tool list the agent's own requests carry (so the server's cache matches); all tools for a bare agent."""
+    pick = getattr(agent, "active_tools", None)
+    if pick:
+        return pick()
+    from danica.tools.registry import tool_schemas
+    return tool_schemas()
 
 
 def first_request_text(agent) -> str:

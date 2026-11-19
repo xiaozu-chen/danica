@@ -24,17 +24,26 @@ from PIL import Image
 from danica.docgen import MARKER
 from danica.markdown_doc import DocError, labelled
 
-try:
-    from lxml import etree
-    from pptx import Presentation
-    from pptx.dml.color import RGBColor
-    from pptx.enum.shapes import MSO_SHAPE
-    from pptx.enum.text import MSO_AUTO_SIZE, PP_ALIGN
-    from pptx.oxml.ns import qn
-    from pptx.util import Emu, Inches, Pt
-    HAVE_PPTX = True
-except ImportError:
-    HAVE_PPTX = False
+HAVE_PPTX = None        # unknown until the first deck: python-pptx is slow to import and most sessions never build one
+
+
+def _load_pptx() -> bool:
+    """Import python-pptx the first time it is needed and put its names where the drawing helpers below find them."""
+    global HAVE_PPTX, etree, Presentation, RGBColor, MSO_SHAPE, MSO_AUTO_SIZE, PP_ALIGN, qn, Emu, Inches, Pt
+    if HAVE_PPTX is None:
+        try:
+            from lxml import etree
+            from pptx import Presentation
+            from pptx.dml.color import RGBColor
+            from pptx.enum.shapes import MSO_SHAPE
+            from pptx.enum.text import MSO_AUTO_SIZE, PP_ALIGN
+            from pptx.oxml.ns import qn
+            from pptx.util import Emu, Inches, Pt
+            HAVE_PPTX = True
+        except ImportError:
+            HAVE_PPTX = False
+    return HAVE_PPTX
+
 
 MAX_SLIDES = 60
 MAX_TABLE_ROWS = 12
@@ -361,7 +370,7 @@ def _content_slide(prs, spec: dict, n: int, theme: dict, image_for, warnings: li
 def build_pptx(blocks: list[dict], out: Path, *, theme: str, deck_title: str, meta_title: str,
                sources: list[tuple[str, str, str]], image_for) -> tuple[int, list[str]]:
     """Write a .pptx. Returns (number of slides, warnings)."""
-    if not HAVE_PPTX:
+    if not _load_pptx():
         raise DocError("slide decks need the python-pptx package (pip install python-pptx)")
     if theme not in THEMES:
         raise DocError("theme must be one of: " + ", ".join(THEMES))

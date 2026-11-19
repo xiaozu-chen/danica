@@ -17,7 +17,7 @@ HELP = [
     {"name": "Memory", "commands": ["/memory [list | add [scope] <text> | review | capture | search <words> | merge | forget <id> | show <id> | status | reindex | path]"]},
     {"name": "Knowledge", "commands": ["/knowledge [index|search|watch|stop|status|digest|graph|commit <preview-id>]"]},
     {"name": "Reminder", "commands": ["/reminder add <ISO datetime> <text>", "/reminder list"]},
-    {"name": "Other", "commands": ["/ws", "/skills", "/agents [run <task> | peek|wait|kill <id>]", "/config", "/classifier", "/dialogs", "/diagrams", "/help"]},
+    {"name": "Other", "commands": ["/ws", "/skills", "/agents [run <task> | peek|wait|kill <id>]", "/config", "/perf [tools]", "/classifier", "/dialogs", "/diagrams", "/help"]},
 ]
 
 def render_help_menu():

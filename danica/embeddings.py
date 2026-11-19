@@ -6,8 +6,8 @@ nomic-embed-text-v1.5 expects task prefixes. Forgetting them degrades retrieval:
     queries ->  "search_query: <text>"
 
 Vectors come back L2-normalised (we normalise again to be sure), so a dot product
-equals cosine similarity. When the server can't be reached we remember that for 60
-seconds, so a missing server costs one fast failure instead of a delay on every request.
+equals cosine similarity. When the server can't be reached we remember that for 5
+minutes, so a missing server costs one fast failure instead of a delay on every request.
 """
 
 import math
@@ -15,6 +15,7 @@ import time
 
 import httpx
 
+from danica import llm
 from danica.config import CONFIG
 
 DOC_PREFIX = "search_document: "
@@ -22,7 +23,8 @@ QUERY_PREFIX = "search_query: "
 BATCH = 16                 # notes per request
 MAX_DOC_CHARS = 3000       # notes are at most 2000 characters, so this never cuts one
 MAX_QUERY_CHARS = 500
-COOLDOWN_SECONDS = 60      # after a failed connection, don't try again for this long
+COOLDOWN_SECONDS = 300     # after a failed connection or an error answer, don't try again for this long (a model without
+                           # embedding support answers with an error EVERY time: asking on every message just costs time)
 
 
 class EmbeddingError(Exception):
@@ -48,10 +50,10 @@ class Embedder:
         if now < self.down_until:
             raise EmbeddingError(self.down_reason)       # recently failed: don't wait again
         try:
-            resp = httpx.post(f"{self.url}/v1/embeddings",
+            resp = llm.local_http().post(f"{self.url}/v1/embeddings",
                               json={"input": inputs, "model": self.model_name},
                               timeout=httpx.Timeout(5.0, connect=2.0, read=read_seconds),
-                              trust_env=False)           # ignore proxy variables
+                              )                          # (shared client: ignores proxy variables)
         except (httpx.ConnectError, httpx.TimeoutException):
             self.down_reason = (f"the embedding server at {self.url} did not answer (start it, or set "
                                 f"[embeddings] enabled = false)")
@@ -60,7 +62,9 @@ class Embedder:
         except httpx.HTTPError as e:
             raise EmbeddingError(f"the embedding request failed ({type(e).__name__})")
         if resp.status_code >= 400:
-            raise EmbeddingError(f"the embedding server returned HTTP {resp.status_code}")
+            self.down_reason = f"the embedding server returned HTTP {resp.status_code} (it may not support embeddings)"
+            self.down_until = now + COOLDOWN_SECONDS
+            raise EmbeddingError(self.down_reason)
 
         try:
             items = sorted(resp.json()["data"], key=lambda d: d.get("index", 0))
