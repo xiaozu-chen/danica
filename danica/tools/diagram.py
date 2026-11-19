@@ -29,6 +29,9 @@ from danica.workspace import Workspace
     },
 )
 def diagram(ws: Workspace, file: str) -> str:
+    """Draw a flowchart or boxes-and-arrows diagram as a PNG image from a JSON file
+        you wrote with write_file (for example diagrams/flow.json).
+    """
     p = ws.resolve(file)
     if p.suffix.lower() != ".json":
         return "ERROR: the file must end in .json (write it with write_file first)"

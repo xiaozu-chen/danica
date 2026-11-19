@@ -49,6 +49,7 @@ RENDER_SIZES = [(2000, 1200, 700, 300), (400, 300, 200, 120)]
 
 
 def is_summary(message: dict) -> bool:
+    """Return whether a user message contains a generated summary."""
     return message.get("role") == "user" and (message.get("content") or "").startswith(SUMMARY_PREFIX)
 
 
@@ -219,8 +220,13 @@ def fallback_narrative(previous: str, old: list[dict]) -> str:
 
 # ---------------------------------------------------------- the replacement
 
-def build_message(narrative: str, requests: list[str], changed: list[str], read: list[str],
-                  sources: list[str] | None = None) -> dict:
+def build_message(
+    narrative: str,
+    requests: list[str],
+    changed: list[str],
+    read: list[str],
+    sources: list[str] | None = None,
+) -> dict:
     """The one message that stands in for everything that was removed."""
     # Keep the very first request plus the 7 most recent ones
     shown = requests if len(requests) <= 8 else requests[:1] + requests[-7:]

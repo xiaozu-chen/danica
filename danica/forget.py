@@ -28,11 +28,14 @@ WORD_PREFIX = 6           # distinctive words are compared by their first 6 lett
 
 @dataclass
 class ForgetReport:
+    """Report whether a forgotten note was removed from stored sources."""
+
     checks: list[tuple[str, bool, str]] = field(default_factory=list)   # (name, passed, detail)
     mentions: list[str] = field(default_factory=list)                   # files that still quote the note
 
     @property
     def ok(self) -> bool:
+        """Return whether every deletion verification check passed."""
         return all(passed for _, passed, _ in self.checks)
 
 
@@ -74,7 +77,9 @@ def find_mentions(text: str, roots: list[Path]) -> list[str]:
     return found
 
 
-def forget(store: MemoryStore, page: Page, roots: list[Path] | None = None) -> ForgetReport:
+def forget(
+    store: MemoryStore, page: Page, roots: list[Path] | None = None
+) -> ForgetReport:
     """Forget one note everywhere Danica keeps it, and verify. Raises MemoryStoreError only
     if a note FILE can't be deleted; every later problem is reported as a failed check."""
     report = ForgetReport()
@@ -123,5 +128,8 @@ def forget(store: MemoryStore, page: Page, roots: list[Path] | None = None) -> F
         except MemoryStoreError as e:
             add("the database could be inspected", False, str(e))
 
-    report.mentions = find_mentions(page.body, roots if roots is not None else [SESSIONS_DIR, EXPORTS_DIR])
+    report.mentions = find_mentions(
+        page.body,
+        roots if roots is not None else [SESSIONS_DIR, EXPORTS_DIR],
+    )
     return report

@@ -131,6 +131,7 @@ def set_server(url: str, n_ctx: int) -> None:
         save_server_url(url)
 
 def load_config() -> dict:
+    """Load defaults and merge settings from the user's configuration file."""
     APP_DIR.mkdir(parents=True, exist_ok=True)
 
     # Copy defaults so we never mutate the module-level constant
@@ -160,19 +161,6 @@ def load_config() -> dict:
                                     if value is not None})
         if isinstance(current, dict):
             cfg["thinking"].update(current)
-    # Fetch context size using the resolved server base URL
-    server_url = cfg.get("server", {}).get("base_url", DEFAULTS["server"]["base_url"])
-    user_set_context = "context" in user.get("model", {} if CONFIG_PATH.exists() else False)
-
-    # [removed]
-    # if not user_set_context:
-    #     try:
-    #         context_size = get_llama_context_size(server_url)
-    #         cfg["model"]["context"] = context_size
-    #         _log("info", f"Active context size (n_ctx): {context_size}")
-    #     except Exception:
-    #         _log("fail", f"Failed to retrieve context size. Falling back to default: {cfg['model']['context']}")
-
     return cfg
 
 

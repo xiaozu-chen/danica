@@ -32,6 +32,8 @@ class PlanError(Exception):
 
 @dataclass
 class Plan:
+    """Store a proposed sequence of steps for completing a request."""
+
     goal: str
     steps: list[str]
     notes: list[str] = field(default_factory=list)
@@ -116,6 +118,7 @@ Rules: 3 to 8 steps. Each step is short and checkable (what gets made or verifie
 
 
 def render_steps(plan: Plan) -> str:
+    """Format a plan goal and its steps for display."""
     return f"GOAL: {plan.goal}\nSTEPS:\n" + "\n".join(f"{i}. {s}" for i, s in enumerate(plan.steps, start=1))
 
 

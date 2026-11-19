@@ -11,9 +11,10 @@ that deletes things when run). Real containment comes from the sandbox levels
 """
 
 import re
+from collections.abc import AbstractSet, Sequence
 from enum import Enum
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from danica.openmode import outputs_dir, shell_protected_hit
 from danica.tools.registry import TOOLS
@@ -21,6 +22,8 @@ from danica.web import host_of
 
 
 class Tier(Enum):
+    """Define the permission levels used for tool actions."""
+
     READ = "read"
     WRITE = "write"
     EXECUTE = "execute"
@@ -121,6 +124,7 @@ NETWORK_RX = re.compile(r"\b(invoke-webrequest|invoke-restmethod|iwr|irm|curl|wg
 
 
 def is_network_command(command: str) -> bool:
+    """Return whether a command appears to perform network access."""
     return bool(NETWORK_RX.search(command))
 
 # ---------------------------------------------------------------------------
@@ -221,7 +225,9 @@ WRITE_PATH_ARGS = {"write_file": "path", "edit_file": "path", "chart": "file", "
                    "quiz": "file", "flashcards": "file", "flowchart": "file", "screenshot": "out", "game_run": "out"}
 
 
-def classify(tool: str, args: dict, open_root: Path | None = None) -> tuple[Tier, str, frozenset[str]]:
+def classify(
+    tool: str, args: dict, open_root: Path | None = None
+) -> tuple[Tier, str, frozenset[str]]:
     """Return (tier, reason, session_keys). session_keys is what 'allow for session' remembers.
     open_root: the Open Mode start folder (None = not in Open Mode)."""
     if tool not in TOOLS:
@@ -261,6 +267,8 @@ DENIED_MESSAGE = ("ERROR: the user denied this action. Do not retry it. "
 
 
 class PermissionPolicy:
+    """Apply session and workspace rules to tool permission requests."""
+
     def __init__(self, ask: AskCallback | None = None):
         self.ask = ask                       # None = nobody to ask = deny
         self.full_access = False             # the /fullaccess toggle
@@ -290,11 +298,20 @@ class PermissionPolicy:
             target = (self.open_root / str(args.get(arg) or "")).resolve()
         except (OSError, ValueError, RuntimeError):
             return None
-        if target.is_relative_to(self.open_root) or target.is_relative_to(outputs_dir()):
+        if (
+            target.is_relative_to(self.open_root)
+            or target.is_relative_to(outputs_dir())
+        ):
             return None        # inside the start folder, or in the anchor's outputs folder: no ask
         return target
 
-    def check(self, tool: str, args: dict, tainted_by=(), known_hosts=frozenset()) -> tuple[bool, str]:
+    def check(
+        self,
+        tool: str,
+        args: dict[str, Any],
+        tainted_by: Sequence[str] = (),
+        known_hosts: AbstractSet[str] = frozenset(),
+    ) -> tuple[bool, str]:
         """Return (allowed, message_for_model_if_denied). Sets self.last_how.
         tainted_by: what put untrusted web content in the context (empty = clean)."""
         tier, reason, keys = classify(tool, args, self.open_root)

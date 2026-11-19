@@ -31,6 +31,9 @@ def _line(text: str, limit: int) -> str:
     },
 )
 def web_cache_search(ws: Workspace, query: str, count: int = 5) -> str:
+    """Search web pages and searches that were ALREADY fetched and stored locally
+        (by keywords and meaning).
+    """
     query = " ".join(str(query).split())[:300]
     if not query:
         return "ERROR: the query is empty"

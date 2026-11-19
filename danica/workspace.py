@@ -20,8 +20,15 @@ class PathJailError(Exception):
 
 
 class Workspace:
-    def __init__(self, root: Path, todo_path: Path | None = None, sources_path: Path | None = None,
-                 open_mode: bool = False):
+    """Resolve and constrain filesystem operations to a workspace root."""
+
+    def __init__(
+        self,
+        root: Path,
+        todo_path: Path | None = None,
+        sources_path: Path | None = None,
+        open_mode: bool = False,
+    ):
         # resolve() makes the root absolute and follows symlinks, so later
         # comparisons are against the *real* location on disk.
         self.root = Path(root).resolve()

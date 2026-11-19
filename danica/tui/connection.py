@@ -129,16 +129,20 @@ class _ServerForm:
             self.dismiss(n_ctx)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle server form button actions."""
         if event.button.id == "go":
             self._start_check()
         elif event.button.id == "quit":
             self.app.exit()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Handle submitted server settings."""
         self._start_check()
 
 
 class SetupScreen(_ServerForm, Screen[int]):
+    """Collect settings needed to connect to the local model server."""
+
     DEFAULT_CSS = _css("SetupScreen", "#setup")
 
     BODY = (
@@ -150,6 +154,7 @@ class SetupScreen(_ServerForm, Screen[int]):
         self.url = url
 
     def compose(self) -> ComposeResult:
+        """Compose the server setup screen."""
         with Vertical(id="setup"):
             yield Static("""
 
@@ -170,10 +175,13 @@ class SetupScreen(_ServerForm, Screen[int]):
                 yield Button("Quit", id="quit")
 
     def on_mount(self) -> None:
+        """Focus the server address field after mounting."""
         self.query_one("#url", Input).focus()
 
 
 class DisconnectedScreen(_ServerForm, ModalScreen[int]):
+    """Show connection state and options after the model server disconnects."""
+
     DEFAULT_CSS = _css("DisconnectedScreen", "#box")
 
     def __init__(self, url: str, reason: str = "") -> None:
@@ -182,6 +190,7 @@ class DisconnectedScreen(_ServerForm, ModalScreen[int]):
         self.reason = reason
 
     def compose(self) -> ComposeResult:
+        """Compose the server disconnected dialog."""
         with Vertical(id="box"):
             yield Static("Disconnected from llama-server", classes="heading")
             yield Static("Danica lost the connection to the model server. It reconnects "

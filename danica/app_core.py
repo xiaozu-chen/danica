@@ -15,7 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from danica.agent import Agent
+from danica.agent import Agent, EventCallback
 from danica.audit import AuditLog
 from danica.capture import ProposalQueue
 from danica.checkpoints import Checkpoints
@@ -25,9 +25,14 @@ from danica.extensions import ExtensionError, ExtensionManager
 from danica.knowledge import KnowledgeError, KnowledgeIndex
 from danica.memory import MemoryStore
 from danica.memory_index import FACTS_DB, MemoryIndex
-from danica.openmode import anchor_dir, ensure_anchor, open_mode_note, start_folder_problem
+from danica.openmode import (
+    anchor_dir,
+    ensure_anchor,
+    open_mode_note,
+    start_folder_problem,
+)
 from danica.judge import judge_command
-from danica.permissions import PermissionPolicy
+from danica.permissions import AskCallback, PermissionPolicy, Tier
 from danica.projects import (approve_instructions, load_session_meta, lookup,
                              read_instructions, save_session_meta, scan)
 from danica.sessions import SESSIONS_DIR, load_records
@@ -39,9 +44,9 @@ _KNOWLEDGE_INDEX: KnowledgeIndex | None = None
 _EXTENSION_MANAGER: ExtensionManager | None = None
 
 class ResumeCancelled(ValueError):
-    """"""
+    """Signal that the user cancelled session resumption."""
 
-def short_path(root) -> str:
+def short_path(root: str | Path) -> str:
     """The workspace as a short label. (cli.py calls relative_to(APP_DIR/"sessions") directly,
     which raises ValueError in project mode because the root is then your own folder.)"""
     root = Path(root)
@@ -52,13 +57,17 @@ def short_path(root) -> str:
 
 
 def knowledge_index() -> KnowledgeIndex:
+    """Return the shared knowledge index, creating it on first use."""
     global _KNOWLEDGE_INDEX
     if _KNOWLEDGE_INDEX is None:
         _KNOWLEDGE_INDEX = KnowledgeIndex(APP_DIR / "knowledge.db", get_embedder())
     return _KNOWLEDGE_INDEX
 
 
-def extension_manager(audit=None, headless: bool = False) -> ExtensionManager:
+def extension_manager(
+    audit: AuditLog | None = None, headless: bool = False
+) -> ExtensionManager:
+    """Return the shared extension manager configured for this session."""
     global _EXTENSION_MANAGER
     if _EXTENSION_MANAGER is None:
         _EXTENSION_MANAGER = ExtensionManager(
@@ -70,11 +79,17 @@ def extension_manager(audit=None, headless: bool = False) -> ExtensionManager:
     return _EXTENSION_MANAGER
 
 
-def make_ask(ui: UI):
+def make_ask(ui: UI) -> AskCallback:
     """The permission callback for PermissionPolicy. It runs on whatever thread the agent
     runs on; ui.permission() blocks that thread until the user answers."""
 
-    def ask(tool: str, summary: str, tier, reason: str, can_remember: bool) -> str:
+    def ask(
+        tool: str,
+        summary: str,
+        tier: Tier,
+        reason: str,
+        can_remember: bool,
+    ) -> str:
         try:
             answer = ui.permission(tool, summary, tier.value, reason, can_remember)
         except Exception:
@@ -83,7 +98,7 @@ def make_ask(ui: UI):
     return ask
 
 
-def apply_instructions(project: dict, agent, audit, ui: UI) -> None:
+def apply_instructions(project: dict, agent: Agent, audit: AuditLog, ui: UI) -> None:
     """Load the project's DANICA.md. New or changed text must be approved first."""
     found = read_instructions(project["path"])
     if found is None:
@@ -109,7 +124,7 @@ def apply_instructions(project: dict, agent, audit, ui: UI) -> None:
     ui.log("ok", f"  Loaded DANICA.md ({len(text)} characters.)")
 
 
-def make_asker(ui):
+def make_asker(ui: UI) -> Callable[[list[dict]], object] | None:
     """How the ask_user tool reaches the user: a dialog on the TUI. None when this UI has no dialogs
     (the tool then tells the model to carry on with sensible defaults). Blocks the worker thread
     until the user answers; returns [{"question", "answers", "other"}, ...] or None if skipped."""
@@ -117,15 +132,21 @@ def make_asker(ui):
     if show is None:
         return None
 
-    def ask(questions: list[dict]):
+    def ask(questions: list[dict]) -> object:
         from danica.tui.ask_screen import AskScreen
         return show(AskScreen(questions))
     return ask
 
 
-def build_session(session_id: str, ui: UI, on_event, project: dict | None = None,
-                  headless: bool = False, workspace_root: Path | None = None,
-                  open_root: Path | None = None):
+def build_session(
+    session_id: str,
+    ui: UI,
+    on_event: EventCallback,
+    project: dict | None = None,
+    headless: bool = False,
+    workspace_root: Path | None = None,
+    open_root: Path | None = None,
+) -> tuple[Workspace, AuditLog, Checkpoints, PermissionPolicy, Agent]:
     """Create everything one session needs.
     project=None  -> normal chat: a throwaway workspace inside the session folder
     project=info  -> project mode: the workspace IS the user's trusted folder
@@ -206,7 +227,11 @@ def build_session(session_id: str, ui: UI, on_event, project: dict | None = None
     return ws, audit, checkpoints, policy, agent
 
 
-def open_resumed(target: str, ui: UI, on_event):
+def open_resumed(
+    target: str,
+    ui: UI,
+    on_event: EventCallback,
+) -> tuple[tuple[Workspace, AuditLog, Checkpoints, PermissionPolicy, Agent], str]:
     """Build a session around an existing folder and load its history.
     Returns (the 5 session objects, a text report for the user).
     Raises ValueError (message shown to the user) if it can't or shouldn't be resumed.
@@ -230,7 +255,7 @@ def open_resumed(target: str, ui: UI, on_event):
             raise ValueError("Open Mode was not confirmed, so the session was not resumed. "
                              "(You can /resume it again and confirm, or work in Chat Mode.)")
     parts = build_session(target, ui, on_event, project, open_root=open_root)
-    ws, audit, checkpoints, policy, agent = parts
+    ws, audit, _, _, agent = parts
 
     try:
         fixed = agent.load_history(records)
@@ -337,7 +362,9 @@ def ask_trust(path: Path, ui: UI) -> bool:
                       yes="Trust", no="Cancel")
 
 
-def shutdown(ws, log: Callable[[str, str], None] | None = None) -> None:
+def shutdown(
+    ws: Workspace | None, log: Callable[[str, str], None] | None = None
+) -> None:
     """Stop subagents, knowledge watchers and extensions (what cli.py does after its loop)."""
     log = log or (lambda level, text: None)
     supervisor = getattr(ws, "subagent_supervisor", None) if ws is not None else None

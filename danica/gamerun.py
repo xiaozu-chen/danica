@@ -63,9 +63,17 @@ def _env() -> dict[str, str]:
     return env
 
 
-def _spawn(argv: list[str], cwd: Path, log_file, env: dict[str, str]) -> tuple[subprocess.Popen, object | None]:
+def _spawn(
+    argv: list[str], cwd: Path, log_file, env: dict[str, str]
+) -> tuple[subprocess.Popen, object | None]:
     """Start confined. Windows: inside a Job Object (fails closed). Elsewhere (tests / Linux): its own process group."""
-    kwargs = dict(cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=log_file, stderr=subprocess.STDOUT)
+    kwargs = dict(
+        cwd=cwd,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+    )
     if os.name == "nt":
         from danica.config import CONFIG
         from danica.sandbox import Job, SandboxError
@@ -99,8 +107,15 @@ def _tail(text: str, lines: int = LOG_TAIL_LINES) -> str:
     return "\n".join(text.strip().splitlines()[-lines:])[-2500:]
 
 
-def run(game: Path, out_base: Path, frames: int = 120, actions: list[dict] | None = None,
-        shots: list[int] | None = None, probes: list[str] | None = None, timeout: int = TIMEOUT) -> dict:
+def run(
+    game: Path,
+    out_base: Path,
+    frames: int = 120,
+    actions: list[dict] | None = None,
+    shots: list[int] | None = None,
+    probes: list[str] | None = None,
+    timeout: int = TIMEOUT,
+) -> dict:
     """Run `game` headless. Returns the child's result dict plus "log" (what the game printed); on a failure to even
     run it, {"ok": False, "error": "..."}. Never raises. Pictures are saved as <out_base stem>_f0040.png."""
     import importlib.util
@@ -108,9 +123,16 @@ def run(game: Path, out_base: Path, frames: int = 120, actions: list[dict] | Non
         return {"ok": False, "error": "pygame is not installed. " + SETUP_HINT}
     LAST["path"] = game
     work = Path(tempfile.mkdtemp(prefix="danica_game_"))
-    args = {"game": str(game), "out_base": str(out_base), "frames": frames, "actions": actions or [],
-            "shots": shots or [], "probes": probes or [], "result": str(work / "result.json"),
-            "heartbeat": str(work / "frame.txt")}
+    args = {
+        "game": str(game),
+        "out_base": str(out_base),
+        "frames": frames,
+        "actions": actions or [],
+        "shots": shots or [],
+        "probes": probes or [],
+        "result": str(work / "result.json"),
+        "heartbeat": str(work / "frame.txt"),
+    }
     (work / "args.json").write_text(json.dumps(args), encoding="utf-8")
     log_path = work / "game.log"
     try:
@@ -152,7 +174,9 @@ def run(game: Path, out_base: Path, frames: int = 120, actions: list[dict] | Non
 
 # ------------------------------------------------------------------ contact sheet (called by tools/game_run.py)
 
-def make_sheet(frames: list[tuple[int, Path]], out: Path, cell_width: int = 420) -> None:
+def make_sheet(
+    frames: list[tuple[int, Path]], out: Path, cell_width: int = 420
+) -> None:
     """One picture with several frames side by side (3 per row), each labelled with its frame number."""
     from PIL import Image, ImageDraw
     cells = []
@@ -160,7 +184,11 @@ def make_sheet(frames: list[tuple[int, Path]], out: Path, cell_width: int = 420)
         with Image.open(path) as im:
             im = im.convert("RGB")
             scale = min(1.0, cell_width / im.width)
-            im = im.resize((max(1, int(im.width * scale)), max(1, int(im.height * scale))), Image.LANCZOS)
+            size = (
+                max(1, int(im.width * scale)),
+                max(1, int(im.height * scale)),
+            )
+            im = im.resize(size, Image.LANCZOS)
             cells.append((number, im))
     cols = min(3, len(cells))
     rows = -(-len(cells) // cols)
@@ -190,6 +218,7 @@ def _play_env() -> dict[str, str]:
 
 
 def play_log_path() -> Path:
+    """Return the log path for a game run."""
     folder = Path(os.environ.get("APPDATA") or tempfile.gettempdir()) / "Danica" / "run"
     folder.mkdir(parents=True, exist_ok=True)
     return folder / "play.log"
@@ -201,7 +230,13 @@ def play(game: Path) -> subprocess.Popen:
     stop_play()
     log = play_log_path()
     with open(log, "wb") as log_file:
-        kwargs = dict(cwd=game.parent, env=_play_env(), stdin=subprocess.DEVNULL, stdout=log_file, stderr=subprocess.STDOUT)
+        kwargs = dict(
+            cwd=game.parent,
+            env=_play_env(),
+            stdin=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+        )
         if os.name == "nt":
             kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         else:
@@ -213,11 +248,13 @@ def play(game: Path) -> subprocess.Popen:
 
 
 def play_running() -> bool:
+    """Return whether a game run is still active."""
     proc = PLAYING["proc"]
     return proc is not None and proc.poll() is None
 
 
 def play_output() -> str:
+    """Return the captured output from a game run."""
     log = PLAYING["log"]
     try:
         return _tail(log.read_text(encoding="utf-8", errors="replace")) if log else ""
@@ -335,14 +372,23 @@ def _child(args_path: str) -> None:
     class FakeClock:
         """pygame.time.Clock that never sleeps: tick() only records how long a frame is meant to last."""
         def tick(self, framerate=0):
+            """Advance simulated game time by one frame."""
             if framerate:
                 S.frame_ms = 1000.0 / framerate
             S.last_tick_ms = int(S.frame_ms)
             return S.last_tick_ms
         tick_busy_loop = tick
-        def get_time(self): return S.last_tick_ms
-        def get_rawtime(self): return S.last_tick_ms
-        def get_fps(self): return 1000.0 / S.frame_ms
+        def get_time(self):
+            """Return elapsed milliseconds in the last simulated frame."""
+            return S.last_tick_ms
+
+        def get_rawtime(self):
+            """Return unadjusted milliseconds in the last simulated frame."""
+            return S.last_tick_ms
+
+        def get_fps(self):
+            """Return the current simulated frames per second."""
+            return 1000.0 / S.frame_ms
 
     def fake_wait(ms):
         S.ticks += max(0, ms)
@@ -386,7 +432,9 @@ def _child(args_path: str) -> None:
     pygame.key.get_mods = mods
     pygame.key.get_focused = pygame.mouse.get_focused = lambda: True
     pygame.mouse.get_pos = lambda: S.mouse_pos
-    pygame.mouse.get_pressed = lambda num_buttons=3, **kw: tuple((i + 1) in S.buttons for i in range(num_buttons))
+    pygame.mouse.get_pressed = lambda num_buttons=3, **kw: tuple(
+        (i + 1) in S.buttons for i in range(num_buttons)
+    )
     pygame.mouse.get_rel = get_rel
 
     def post(kind, **attrs):
@@ -397,14 +445,25 @@ def _child(args_path: str) -> None:
         what = entry[1]
         if what == "down":
             S.held.add(entry[2])
-            post(pygame.KEYDOWN, key=entry[2], mod=mods(), unicode=chr(entry[2]) if 32 <= entry[2] < 127 else "", scancode=0)
+            post(
+                pygame.KEYDOWN,
+                key=entry[2],
+                mod=mods(),
+                unicode=chr(entry[2]) if 32 <= entry[2] < 127 else "",
+                scancode=0,
+            )
         elif what == "up":
             S.held.discard(entry[2])
             post(pygame.KEYUP, key=entry[2], mod=mods(), scancode=0)
         elif what == "move":
             old, S.mouse_pos = S.mouse_pos, entry[2]
             S.rel = (S.mouse_pos[0] - old[0], S.mouse_pos[1] - old[1])
-            post(pygame.MOUSEMOTION, pos=S.mouse_pos, rel=S.rel, buttons=tuple((i + 1) in S.buttons for i in range(3)))
+            post(
+                pygame.MOUSEMOTION,
+                pos=S.mouse_pos,
+                rel=S.rel,
+                buttons=tuple((i + 1) in S.buttons for i in range(3)),
+            )
         elif what == "mdown":
             apply((1, "move", entry[2]))
             S.buttons.add(entry[3])
@@ -431,7 +490,10 @@ def _child(args_path: str) -> None:
             return real(self, address, *rest)
         return checked
 
-    socket.socket.connect, socket.socket.connect_ex = guard(real_connect), guard(real_connect_ex)
+    socket.socket.connect, socket.socket.connect_ex = (
+        guard(real_connect),
+        guard(real_connect_ex),
+    )
 
     # ---- probes: expressions evaluated against the game's state
     def namespace(main_module):
@@ -536,7 +598,10 @@ def _child(args_path: str) -> None:
         return wrapper
 
     pygame.display.flip, pygame.display.update = flip, update
-    pygame.quit, pygame.display.quit = last_picture_then(real_quit), last_picture_then(real_display_quit)
+    pygame.quit, pygame.display.quit = (
+        last_picture_then(real_quit),
+        last_picture_then(real_display_quit),
+    )
 
     # ---- run the game as if it were `python game.py`
     module = types.ModuleType("__main__")
@@ -556,7 +621,11 @@ def _child(args_path: str) -> None:
             status, problem = "crash", f"the game exited with code {exc.code!r}"
     except BaseException as exc:                              # a crash in the GAME: report it with a clean traceback
         status = "crash"
-        tb = [f for f in traceback.extract_tb(exc.__traceback__) if f.filename != __file__]
+        tb = [
+            frame
+            for frame in traceback.extract_tb(exc.__traceback__)
+            if frame.filename != __file__
+        ]
         text = "".join(traceback.format_list(tb)) + "".join(traceback.format_exception_only(type(exc), exc))
         problem = text.replace(game_dir + os.sep, "").replace(game_dir, "")
         try:
@@ -564,10 +633,16 @@ def _child(args_path: str) -> None:
         except Exception:
             pass
 
-    perf = {"avg_ms": round(S.total / S.counted, 2) if S.counted else 0.0, "worst_ms": round(S.worst, 1),
-            "worst_frame": S.worst_frame, "over_budget": S.over, "budget_ms": round(S.frame_ms, 1)}
+    perf = {
+        "avg_ms": round(S.total / S.counted, 2) if S.counted else 0.0,
+        "worst_ms": round(S.worst, 1),
+        "worst_frame": S.worst_frame,
+        "over_budget": S.over,
+        "budget_ms": round(S.frame_ms, 1),
+    }
     result.update(ok=status != "crash", status=status, error=problem, frames=S.frame, size=S.size,
-                  caption=S.caption, shots=S.taken, perf=perf, fps=round(1000.0 / S.frame_ms))
+                  caption=S.caption, shots=S.taken, perf=perf,
+                  fps=round(1000.0 / S.frame_ms))
     finish()
 
 

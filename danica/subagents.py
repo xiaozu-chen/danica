@@ -10,7 +10,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, TYPE_CHECKING
+from typing import Any, Callable, TYPE_CHECKING
 
 from danica.audit import AuditLog
 from danica.workspace import Workspace
@@ -32,6 +32,8 @@ WATCHED_EVENTS = ("content", "thinking", "tool_call", "tool_result", "notice", "
 
 @dataclass
 class Child:
+    """Track one delegated worker and its current state."""
+
     id: str
     task: str
     process: subprocess.Popen | None
@@ -51,7 +53,7 @@ def _one_line(value, limit: int) -> str:
     text = " ".join(str(value).split())
     return text if len(text) <= limit else text[:limit - 1] + "..."
 
-def wire_event(kind: str, data) -> dict | None:
+def wire_event(kind: str, data: Any) -> dict[str, Any] | None:
     """Agent event -> small JSON-safe dict for the socket (None = nobody sees it.)"""
     if kind not in WATCHED_EVENTS:
         return None
@@ -62,7 +64,7 @@ def wire_event(kind: str, data) -> dict | None:
         return {"kind": kind, "data": _one_line(data, 400)}
     return {"kind": kind, "data": str(data)[:4000]}
 
-def describe_event(kind: str, data) -> tuple[str, str] | None:
+def describe_event(kind: str, data: Any) -> tuple[str, str] | None:
     """Wire event -> (rich style, one line). content/thinking stream, so the caller handles them."""
     if kind == "tool_call":
         name, summary = data
@@ -93,6 +95,8 @@ def _read_line(conn: socket.socket, limit: int) -> bytes:
 
 
 class SubagentSupervisor:
+    """Start, monitor, and stop delegated agent workers."""
+
     def __init__(
         self,
         ws: Workspace,
@@ -135,6 +139,7 @@ class SubagentSupervisor:
     def run(self, task: str, depth: int = 0, *,
             _ready: threading.Event | None = None,
             _ready_child: list[str] | None = None) -> str:
+        """Run a delegated task and return its final text result."""
         task = task.strip()
         if not task:
             raise SubagentError("task must not be empty")
@@ -241,7 +246,9 @@ class SubagentSupervisor:
             if len(summary) > MAX_SUMMARY_CHARS:
                 summary = summary[:MAX_SUMMARY_CHARS] + "\n[summary truncated]"
             files = result.get("changed_files", [])
-            if not isinstance(files, list) or not all(isinstance(item, str) for item in files):
+            if not isinstance(files, list) or not all(
+                isinstance(item, str) for item in files
+            ):
                 raise SubagentError("subagent returned invalid changed-file metadata")
             child.status = "completed"
             child.result = summary
@@ -249,7 +256,12 @@ class SubagentSupervisor:
                       changed_files=files[:50])
             return json.dumps({"summary": summary, "changed_files": files[:50]},
                               ensure_ascii=False)
-        except (OSError, socket.timeout, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        except (
+            OSError,
+            socket.timeout,
+            json.JSONDecodeError,
+            UnicodeDecodeError,
+        ) as exc:
             if child.status != "killed":
                 child.status = "failed"
                 child.result = f"{type(exc).__name__}: {exc}"[:500]
@@ -279,6 +291,7 @@ class SubagentSupervisor:
                     process.wait(timeout=5)
 
     def start(self, task: str) -> str:
+        """Start a delegated task and return its worker identifier."""
         ready = threading.Event()
         finished = threading.Event()
         failure: list[SubagentError] = []
@@ -308,6 +321,7 @@ class SubagentSupervisor:
             return child.id
 
     def wait(self, child_id: str, timeout: float | None = None) -> bool:
+        """Wait for a worker to finish, returning whether it completed."""
         thread = self._threads.get(child_id)
         if thread is None:
             return True
@@ -315,6 +329,7 @@ class SubagentSupervisor:
         return not thread.is_alive()
 
     def close(self) -> None:
+        """Stop all running delegated workers."""
         for child in list(self.children):
             if child.status in ("starting", "running"):
                 self.kill(child.id)
@@ -324,6 +339,7 @@ class SubagentSupervisor:
                 raise SubagentError(f"subagent worker {thread.name} did not stop")
 
     def list(self) -> list[dict]:
+        """Return each child worker's state and a short result summary."""
         for child in self.children:
             if child.process and child.status == "running" and child.process.poll() is not None:
                 child.status = "failed"
@@ -333,6 +349,7 @@ class SubagentSupervisor:
                 for c in self.children]
 
     def kill(self, child_id: str) -> bool:
+        """Stop a worker by identifier and report whether it was found."""
         with self._lock:
             for child in self.children:
                 if child.id == child_id and child.status == "running" and child.process:
@@ -365,7 +382,9 @@ def _print_event(live: dict, kind: str, data) -> None:
         print(described[1], flush=True)
 
 
-def run_worker_connection(host: str, port: int, token: str, console: bool = False) -> None:
+def run_worker_connection(
+    host: str, port: int, token: str, console: bool = False
+) -> None:
     """Connect to the supervisor and execute one bounded task."""
     with socket.create_connection((host, port), timeout=15) as conn:
         conn.settimeout(360)
@@ -390,7 +409,9 @@ def run_worker_connection(host: str, port: int, token: str, console: bool = Fals
         policy.open_root = Path(open_root) if open_root else None
         policy.full_access = bool(permission.get("full_access"))
         allowed = permission.get("session_allowed", [])
-        if not isinstance(allowed, list) or not all(isinstance(item, str) for item in allowed):
+        if not isinstance(allowed, list) or not all(
+            isinstance(item, str) for item in allowed
+        ):
             raise SubagentError("invalid inherited session permissions")
         policy.session_allowed = set(allowed)
         audit_path = Path(payload["audit_path"]) if payload.get("audit_path") else None
@@ -400,8 +421,12 @@ def run_worker_connection(host: str, port: int, token: str, console: bool = Fals
         web_state = state_for(ws)
         sources = payload.get("taint_sources", [])
         hosts = payload.get("known_hosts", [])
-        if (not isinstance(sources, list) or not all(isinstance(item, str) for item in sources)
-                or not isinstance(hosts, list) or not all(isinstance(item, str) for item in hosts)):
+        if (
+            not isinstance(sources, list)
+            or not all(isinstance(item, str) for item in sources)
+            or not isinstance(hosts, list)
+            or not all(isinstance(item, str) for item in hosts)
+        ):
             raise SubagentError("invalid inherited web trust state")
         for source in sources:
             web_state.mark_tainted(source)

@@ -16,10 +16,20 @@ import base64
 import hashlib
 import html as htmllib
 import os
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
-from danica.deckgen import (MAX_CODE_LINES, MAX_SLIDES, MAX_TABLE_ROWS, SIZES, SOURCES_PER_SLIDE, THEMES,
-                            fit_size, plain, split_slides, text_items)
+from danica.deckgen import (
+    MAX_CODE_LINES,
+    MAX_SLIDES,
+    MAX_TABLE_ROWS,
+    SIZES,
+    SOURCES_PER_SLIDE,
+    THEMES,
+    fit_size,
+    split_slides,
+    text_items,
+)
 from danica.docgen import MARKER
 from danica.markdown_doc import DocError, labelled
 from danica.seal import seal_html
@@ -29,10 +39,12 @@ MAX_FILE_BYTES = 40_000_000
 
 
 def esc(text: str) -> str:
+    """Escape text for safe insertion into HTML."""
     return htmllib.escape(text, quote=True)
 
 
-def runs_html(runs) -> str:
+def runs_html(runs: Iterable[tuple[str, frozenset]]) -> str:
+    """Render styled text runs as escaped HTML elements."""
     out = []
     for text, style in runs:
         t = esc(text)
@@ -188,7 +200,9 @@ def _title_slide(spec: dict, n: int, warnings: list[str]) -> str:
             f'<div class="sub">{sub}</div>{_notes_html(spec)}</section>')
 
 
-def _content_slide(spec: dict, n: int, image_for, warnings: list[str], budget: list[int]) -> str:
+def _content_slide(
+    spec: dict, n: int, image_for, warnings: list[str], budget: list[int]
+) -> str:
     title = spec["title"][:100]
     label = f"slide {n} ('{title[:30]}')"
     visuals = [b for b in spec["body"] if b["t"] in ("img", "table")]
@@ -235,8 +249,16 @@ def _content_slide(spec: dict, n: int, image_for, warnings: list[str], budget: l
             f'<div class="body {layout}">{text}{extra}</div>{_notes_html(spec)}<div class="pn">{n}</div></section>')
 
 
-def build_html(blocks: list[dict], out: Path, *, theme: str, deck_title: str, meta_title: str,
-               sources: list[tuple[str, str, str]], image_for) -> tuple[int, list[str]]:
+def build_html(
+    blocks: list[dict],
+    out: Path,
+    *,
+    theme: str,
+    deck_title: str,
+    meta_title: str,
+    sources: list[tuple[str, str, str]],
+    image_for: Callable[[str], Path],
+) -> tuple[int, list[str]]:
     """Write a sealed slideshow. Returns (number of slides, warnings)."""
     if theme not in THEMES:
         raise DocError("theme must be one of: " + ", ".join(THEMES))

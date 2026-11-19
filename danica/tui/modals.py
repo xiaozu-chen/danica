@@ -7,6 +7,8 @@ to the waiting worker thread. Esc always means "no" / "deny" (the safe default).
 
 from __future__ import annotations
 
+from typing import Any
+
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -24,12 +26,20 @@ class PermissionScreen(ModalScreen[str]):
         Binding("3,n,escape", "choose('deny')", "Deny"),
     ]
 
-    def __init__(self, tool: str, summary: str, tier: str, reason: str, can_remember: bool) -> None:
+    def __init__(
+        self,
+        tool: str,
+        summary: str,
+        tier: str,
+        reason: str,
+        can_remember: bool,
+    ) -> None:
         super().__init__()
         self.tool, self.summary, self.tier = tool, summary, tier
         self.reason, self.can_remember = reason, can_remember
 
     def compose(self) -> ComposeResult:
+        """Compose the permission request screen."""
         with Vertical(classes="dialog warn"):
             yield Static(Text(f"Permission needed ({self.tier})", style="bold #ffff00"), classes="dialog-title")
             yield Static(Text(self.reason), classes="dialog-reason")
@@ -42,13 +52,16 @@ class PermissionScreen(ModalScreen[str]):
                 yield Button("3  Deny", id="deny", variant="error")
 
     def on_mount(self) -> None:
+        """Set initial focus when the permission screen opens."""
         self.query_one("#deny", Button).focus()     # Enter alone = deny, like the old CLI
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle permission screen button actions."""
         event.stop()
         self.dismiss(event.button.id or "deny")
 
     def action_choose(self, choice: str) -> None:
+        """Resolve the permission request with a chosen value."""
         if choice == "session" and not self.can_remember:
             return
         self.dismiss(choice)
@@ -69,6 +82,7 @@ class ConfirmScreen(ModalScreen[bool]):
         self.yes, self.no = yes, no
 
     def compose(self) -> ComposeResult:
+        """Compose the confirmation dialog."""
         with Vertical(classes="dialog"):
             yield Static(Text(self.title_text, style="bold #ff9e64"), classes="dialog-title")
             if self.body:
@@ -81,13 +95,16 @@ class ConfirmScreen(ModalScreen[bool]):
                 yield Button(f"n  {self.no}", id="no", variant="error")
 
     def on_mount(self) -> None:
+        """Focus the confirmation choice when the dialog opens."""
         self.query_one("#no", Button).focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle confirmation dialog buttons."""
         event.stop()
         self.dismiss(event.button.id == "yes")
 
     def action_answer(self, value: bool) -> None:
+        """Resolve the dialog with the selected answer."""
         self.dismiss(value)
 
 
@@ -98,9 +115,13 @@ class ChoiceScreen(ModalScreen):
 
     def __init__(self, title: str, body: str, options: list[tuple[str, str]], detail: str = "") -> None:
         super().__init__()
-        self.title_text, self.body, self.options, self.detail = title, body, options, detail
+        self.title_text = title
+        self.body = body
+        self.options = options
+        self.detail = detail
 
     def compose(self) -> ComposeResult:
+        """Compose the option selection dialog."""
         with Vertical(classes="dialog"):
             yield Static(Text(self.title_text, style="bold #ff9e64"), classes="dialog-title")
             if self.body:
@@ -114,9 +135,11 @@ class ChoiceScreen(ModalScreen):
                                  variant="success" if i == 0 else "default")
 
     def on_mount(self) -> None:
+        """Focus the first option after mounting."""
         self.query_one("#opt0", Button).focus()
 
-    def on_key(self, event) -> None:
+    def on_key(self, event: Any) -> None:
+        """Handle keyboard navigation in the option list."""
         for key, _ in self.options:
             if event.key == key:
                 event.stop()
@@ -124,11 +147,13 @@ class ChoiceScreen(ModalScreen):
                 return
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Resolve the selection when a button is pressed."""
         event.stop()
         index = int((event.button.id or "opt0")[3:])
         self.dismiss(self.options[index][0])
 
     def action_cancel(self) -> None:
+        """Cancel the option selection dialog."""
         self.dismiss(None)
 
 
@@ -142,19 +167,23 @@ class TextScreen(ModalScreen):
         self.title_text, self.default, self.secret = title, default, secret      # secret = show dots instead of the text
 
     def compose(self) -> ComposeResult:
+        """Compose the text input dialog."""
         with Vertical(classes="dialog"):
             yield Static(Text(self.title_text, style="bold #ff9e64"), classes="dialog-title")
             yield Input(value=self.default, id="answer", password=self.secret)
             yield Static(Text("Enter to confirm, Esc to cancel", style="dim"), classes="dialog-reason")
 
     def on_mount(self) -> None:
+        """Focus the text field after mounting."""
         field = self.query_one("#answer", Input)
         field.focus()
         field.cursor_position = len(self.default)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Resolve the dialog with the submitted text."""
         event.stop()
         self.dismiss(event.value)
 
     def action_cancel(self) -> None:
+        """Cancel the text input dialog."""
         self.dismiss(None)

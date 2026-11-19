@@ -30,7 +30,13 @@ def _guard(ws: Workspace, fn, action: bool = False):
         return f"ERROR: {exc}"
 
 
-def _picture(ws: Workspace, comp, window: str | None = None, region=None, grid=None) -> str:
+def _picture(
+    ws: Workspace,
+    comp,
+    window: str | None = None,
+    region=None,
+    grid=None,
+) -> str:
     """Take the picture that follows an action (or the one the model asked for) and attach it to the next step."""
     path, text = comp.shot(window, ws.root / FOLDER, region=region, grid=grid)
     shown = ws.display(path)
@@ -52,6 +58,9 @@ def _picture(ws: Workspace, comp, window: str | None = None, region=None, grid=N
       "If none is listed, tell the user to type /computer on and /computer allow <window>.",
       {})
 def screen_windows(ws: Workspace) -> str:
+    """List the windows the user has APPROVED for computer use (title, program,
+        size).
+    """
     comp = computer_for(ws)
     if not comp.enabled:
         return "ERROR: computer use is off. Ask the user to type /computer on, then /computer allow <window>."
@@ -75,6 +84,9 @@ def screen_windows(ws: Workspace) -> str:
        "region": {"type": "array", "items": {"type": "number"}, "default": [], "description": "[x, y, width, height] to zoom into"},
        "grid": {"type": "boolean", "default": True, "description": "Draw the labelled grid"}})
 def screen_shot(ws: Workspace, window: str = "", region: list | None = None, grid: bool = True) -> str:
+    """Take a picture of an approved window (nothing else on the screen is ever
+        shown).
+    """
     return _guard(ws, lambda comp: "OUTPUT: " + _picture(ws, comp, window or None, region or None, grid))
 
 
@@ -99,6 +111,10 @@ def _act(ws: Workspace, what, window: str = "") -> str:
        "button": {"type": "string", "default": "left", "description": "left, right or middle"},
        "double": {"type": "boolean", "default": False, "description": "Double click"}})
 def screen_click(ws: Workspace, x: float | None = None, y: float | None = None, cell: str = "", button: str = "left", double: bool = False) -> str:
+    """Click in the approved window at a position from the LAST picture: x and y
+        from 0 to 1000 across the picture, or cell="C4". button = left (default),
+        right or middle; double = true for a double click.
+    """
     return _act(ws, lambda c: c.click(x, y, cell or None, button, bool(double)))
 
 
@@ -111,6 +127,9 @@ def screen_click(ws: Workspace, x: float | None = None, y: float | None = None, 
        "button": {"type": "string", "default": "left", "description": "left, right or middle"}})
 def screen_drag(ws: Workspace, from_x: float | None = None, from_y: float | None = None, from_cell: str = "",
                 to_x: float | None = None, to_y: float | None = None, to_cell: str = "", button: str = "left") -> str:
+    """Drag with the mouse inside the approved window: press at the start, glide to
+        the end, release.
+    """
     return _act(ws, lambda c: c.drag({"x": from_x, "y": from_y, "cell": from_cell or None},
                                      {"x": to_x, "y": to_y, "cell": to_cell or None}, button))
 
@@ -121,6 +140,9 @@ def screen_drag(ws: Workspace, from_x: float | None = None, from_y: float | None
       {"text": {"type": "string", "description": "The text to type"},
        "window": {"type": "string", "default": "", "description": "Part of the window title if several are approved"}})
 def screen_type(ws: Workspace, text: str, window: str = "") -> str:
+    """Type text with the keyboard into the approved window that is in front (click
+        the right box first).
+    """
     return _act(ws, lambda c: c.type_text(text, window or None), window)
 
 
@@ -130,6 +152,9 @@ def screen_type(ws: Workspace, text: str, window: str = "") -> str:
       {"keys": {"type": "string", "description": "For example ctrl+s"},
        "window": {"type": "string", "default": "", "description": "Part of the window title if several are approved"}})
 def screen_key(ws: Workspace, keys: str, window: str = "") -> str:
+    """Press keys in the approved window: "enter", "tab", "escape", "f5", "ctrl+s",
+        "ctrl+shift+t", or several in a row: "ctrl+a ctrl+c".
+    """
     return _act(ws, lambda c: c.press(keys, window or None), window)
 
 
@@ -139,6 +164,9 @@ def screen_key(ws: Workspace, keys: str, window: str = "") -> str:
       {"clicks": {"type": "integer", "description": "Positive = up, negative = down, -30..30"},
        "x": {"type": "number"}, "y": {"type": "number"}, "cell": {"type": "string", "default": ""}})
 def screen_scroll(ws: Workspace, clicks: int, x: float | None = None, y: float | None = None, cell: str = "") -> str:
+    """Scroll the mouse wheel in the approved window: clicks positive = up,
+        negative = down (3 = a few lines).
+    """
     return _act(ws, lambda c: c.scroll(clicks, x, y, cell or None))
 
 
@@ -146,4 +174,7 @@ def screen_scroll(ws: Workspace, clicks: int, x: float | None = None, y: float |
       "Bring an approved window to the front (restores it if minimized), then returns a picture of it.",
       {"window": {"type": "string", "default": "", "description": "Part of the window title"}})
 def screen_focus(ws: Workspace, window: str = "") -> str:
+    """Bring an approved window to the front (restores it if minimized), then
+        returns a picture of it.
+    """
     return _act(ws, lambda c: c.focus(window or None), window)

@@ -39,6 +39,8 @@ def _normalize(vec: list[float]) -> list[float]:
 
 
 class Embedder:
+    """Generate text embeddings with the configured local model."""
+
     def __init__(self, url: str, model_name: str):
         self.url = url.rstrip("/")
         self.model_name = model_name     # a LABEL: change it when you swap models (rebuilds the index)
@@ -52,7 +54,9 @@ class Embedder:
         try:
             resp = llm.local_http().post(f"{self.url}/v1/embeddings",
                               json={"input": inputs, "model": self.model_name},
-                              timeout=httpx.Timeout(5.0, connect=2.0, read=read_seconds),
+                    timeout=httpx.Timeout(
+                        5.0, connect=2.0, read=read_seconds
+                    ),
                               )                          # (shared client: ignores proxy variables)
         except (httpx.ConnectError, httpx.TimeoutException):
             self.down_reason = (f"the embedding server at {self.url} did not answer (start it, or set "
@@ -76,7 +80,11 @@ class Embedder:
 
         out, dim = [], None
         for v in vectors:
-            if not isinstance(v, list) or not v or not all(isinstance(x, (int, float)) for x in v):
+            if (
+                not isinstance(v, list)
+                or not v
+                or not all(isinstance(x, (int, float)) for x in v)
+            ):
                 raise EmbeddingError("the embedding server's answer was not in the expected format")
             if dim is not None and len(v) != dim:
                 raise EmbeddingError("the embedding server returned vectors of different sizes")
@@ -94,7 +102,9 @@ class Embedder:
 
     def embed_query(self, text: str) -> list[float]:
         """The vector for a search query."""
-        return self._request([QUERY_PREFIX + text[:MAX_QUERY_CHARS]], read_seconds=15.0)[0]
+        return self._request(
+            [QUERY_PREFIX + text[:MAX_QUERY_CHARS]], read_seconds=15.0
+        )[0]
 
 
 _cached: Embedder | None = None

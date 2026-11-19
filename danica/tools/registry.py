@@ -7,18 +7,24 @@ Errors are returned as strings too (never raised to the loop), so the model
 can read the message and correct itself.
 """
 
+from collections.abc import Callable
 import re
+from typing import Any
 
 from danica.workspace import PathJailError, Workspace
 
 # name -> {"fn": callable, "schema": OpenAI-style tool definition}
-TOOLS: dict[str, dict] = {}
+TOOLS: dict[str, dict[str, Any]] = {}
 
 
-def tool(name: str, description: str, parameters: dict):
+def tool(
+    name: str,
+    description: str,
+    parameters: dict[str, Any],
+) -> Callable[[Callable[..., str]], Callable[..., str]]:
     """Decorator that registers a function as a model-callable tool."""
 
-    def decorator(fn):
+    def decorator(fn: Callable[..., str]) -> Callable[..., str]:
         TOOLS[name] = {
             "fn": fn,
             "schema": {
@@ -45,18 +51,31 @@ def tool_schemas() -> list[dict]:
     return [t["schema"] for t in TOOLS.values()]
 
 
-def register_external_tool(name: str, description: str, schema: dict, fn) -> None:
+def register_external_tool(
+    name: str,
+    description: str,
+    schema: dict[str, Any],
+    fn: Callable[..., str],
+) -> None:
     """Register a namespaced external tool with its already-validated JSON schema."""
     if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", name) or name in TOOLS:
         raise ValueError(f"tool name is empty or already registered: {name}")
     properties = schema.get("properties", {})
     required = schema.get("required", [])
-    if (len(str(schema)) > 16_000 or schema.get("type") != "object" or not isinstance(properties, dict)
-            or not isinstance(required, list) or not all(isinstance(item, str) for item in required)
-            or len(properties) > 64
-            or not set(required) <= set(properties)
-            or not all(isinstance(key, str) and isinstance(value, dict)
-                       for key, value in properties.items())):
+    invalid_schema = (
+        len(str(schema)) > 16_000
+        or schema.get("type") != "object"
+        or not isinstance(properties, dict)
+        or not isinstance(required, list)
+        or not all(isinstance(item, str) for item in required)
+        or len(properties) > 64
+        or not set(required) <= set(properties)
+        or not all(
+            isinstance(key, str) and isinstance(value, dict)
+            for key, value in properties.items()
+        )
+    )
+    if invalid_schema:
         raise ValueError(f"tool {name} has an invalid input schema")
     TOOLS[name] = {
         "fn": fn,

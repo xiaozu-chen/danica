@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 
 from danica.titles import read_title
+from danica.workspace import Workspace
 from danica.compaction import harvest, is_summary
 from danica.config import APP_DIR
 from danica.projects import SKIP_DIRS
@@ -138,8 +139,17 @@ def copy_workspace(root: Path, dest: Path) -> tuple[list[str], list[str]]:
     return copied, skipped
 
 
-def build_readme(session_id: str, project: dict | None, records: list[dict], state: WebState,
-                 copied: list[str], skipped: list[str], has_summary: bool, has_todo: bool) -> str:
+def build_readme(
+    session_id: str,
+    project: dict | None,
+    records: list[dict],
+    state: WebState,
+    copied: list[str],
+    skipped: list[str],
+    has_summary: bool,
+    has_todo: bool,
+) -> str:
+    """Build a Markdown transcript from session records and metadata."""
     requests, changed, _ = harvest([r for r in records if "role" in r])
     changed = list(dict.fromkeys(changed))
     compactions = sum(1 for r in records if r.get("event") == "compaction")
@@ -177,7 +187,12 @@ def build_readme(session_id: str, project: dict | None, records: list[dict], sta
     return "\n".join(lines)
 
 
-def export_session(session_dir: Path, ws, project: dict | None, out_root: Path = EXPORTS_DIR) -> Path:
+def export_session(
+    session_dir: Path,
+    ws: Workspace,
+    project: dict | None,
+    out_root: Path = EXPORTS_DIR,
+) -> Path:
     """Write the bundle and return its folder. Raises ValueError if there is nothing to export."""
     session_dir = Path(session_dir)
     records, _ = load_records(session_dir / "transcript.jsonl")

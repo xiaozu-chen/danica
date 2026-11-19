@@ -70,6 +70,7 @@ def _write_guard(ws: Workspace, p) -> str | None:
     },
 )
 def read_file(ws: Workspace, path: str, offset: int = 1, limit: int = 200) -> str:
+    """Read a text file."""
     p = ws.resolve(path)
     if not p.is_file():
         return f"ERROR: '{path}' is not a file (or does not exist)"
@@ -104,6 +105,7 @@ def read_file(ws: Workspace, path: str, offset: int = 1, limit: int = 200) -> st
     },
 )
 def write_file(ws: Workspace, path: str, content: str) -> str:
+    """Create a file or completely overwrite an existing one."""
     p = ws.resolve(path)
     if p.is_dir():
         return f"ERROR: '{path}' is a directory"
@@ -137,8 +139,15 @@ def write_file(ws: Workspace, path: str, content: str) -> str:
     },
 )
 def edit_file(
-    ws: Workspace, path: str, old_string: str, new_string: str, replace_all: bool = False
+    ws: Workspace,
+    path: str,
+    old_string: str,
+    new_string: str,
+    replace_all: bool = False,
 ) -> str:
+    """Replace an exact string in a file. old_string must match exactly and be
+        unique unless replace_all is true.
+    """
     p = ws.resolve(path)
     if not p.is_file():
         return f"ERROR: '{path}' is not a file (or does not exist)"
@@ -179,6 +188,7 @@ def edit_file(
     },
 )
 def list_dir(ws: Workspace, path: str = ".") -> str:
+    """List files and folders in a directory (folders end with /)."""
     p = ws.resolve(path)
     if not p.is_dir():
         return f"ERROR: '{path}' is not a directory (or does not exist)"

@@ -9,7 +9,13 @@ whose signature verifies, see seal.py).
 from danica.citations import verify
 from danica.deckgen import THEMES, build_pptx
 from danica.docgen import image_resolver, is_danica_file
-from danica.markdown_doc import MAX_CHARS, DocError, first_heading, parse, strip_invisible
+from danica.markdown_doc import (
+    MAX_CHARS,
+    DocError,
+    first_heading,
+    parse,
+    strip_invisible,
+)
 from danica.secret_scan import find_secrets, is_sensitive_path
 from danica.slideshow import build_html
 from danica.tools.files import _write_guard
@@ -42,6 +48,10 @@ MAX_SOURCE_BYTES = MAX_CHARS * 4
 )
 def deck(ws: Workspace, source: str, theme: str = "clean", title: str = "", sources: bool = True,
          format: str = "pptx") -> str:
+    """Make a PowerPoint (.pptx) slide deck, or a single-file HTML slideshow, from
+        a Markdown outline you wrote with write_file (for example decks/pitch.md).
+        '# Title' makes the title slide (text under it is the subtitle).
+    """
     fmt = str(format).lower().lstrip(".")
     if fmt not in ("pptx", "html"):
         return "ERROR: format must be pptx or html"
@@ -90,7 +100,7 @@ def deck(ws: Workspace, source: str, theme: str = "clean", title: str = "", sour
     build = build_pptx if fmt == "pptx" else build_html
     try:
         count, warnings = build(blocks, out, theme=theme, deck_title=clean_title,
-                                meta_title=clean_title or first_heading(blocks) or p.stem,
+            meta_title=clean_title or first_heading(blocks) or p.stem,
                                 sources=listing, image_for=image_resolver(ws, p))
     except DocError as e:
         return f"ERROR: {e}"

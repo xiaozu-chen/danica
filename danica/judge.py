@@ -42,6 +42,8 @@ PARAMS = {"type": "object", "additionalProperties": False,
 
 @dataclass(frozen=True)
 class Verdict:
+    """Represent a safety decision for a shell command."""
+
     verdict: str          # safe | needs_approval | dangerous
     reason: str           # one sentence for the approval prompt
     source: str = "model"
@@ -80,4 +82,5 @@ def judge_command(command: str, mode: str = "normal") -> Verdict | None:
 
 
 def clear_cache() -> None:
+    """Clear cached command safety decisions."""
     _cache.clear()

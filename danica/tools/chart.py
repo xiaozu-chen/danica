@@ -30,6 +30,9 @@ from danica.workspace import Workspace
     },
 )
 def chart(ws: Workspace, file: str) -> str:
+    """Draw a chart or table as a PNG image from a JSON data file you wrote with
+        write_file (for example charts/sales.json).
+    """
     p = ws.resolve(file)
     if p.suffix.lower() != ".json":
         return "ERROR: the data file must end in .json (write it with write_file first)"

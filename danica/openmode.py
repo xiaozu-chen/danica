@@ -87,6 +87,7 @@ def protected_roots() -> tuple[tuple[Path, str], ...]:
 
 
 def reset_cache() -> None:
+    """Clear cached path checks after the open workspace changes."""
     protected_roots.cache_clear()
     _home_parent.cache_clear()
 
@@ -125,7 +126,11 @@ def protected_reason(path: Path) -> str | None:
     users = _home_parent()
     if users and os.name == "nt":
         users_dir, mine = users
-        if path.is_relative_to(users_dir) and path != users_dir and not path.is_relative_to(mine):
+    if (
+        path.is_relative_to(users_dir)
+        and path != users_dir
+        and not path.is_relative_to(mine)
+    ):
             return "another user's profile"
     return None
 

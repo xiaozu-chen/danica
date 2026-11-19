@@ -14,7 +14,8 @@ from danica.workspace import Workspace
       "Load extra tools. Not every tool is sent with every request (it would slow you down). Groups: "
       + toolgroups.describe() + ". Call this with the groups you need; they are available from your next step and stay on.",
       {"groups": {"type": "array", "items": {"type": "string"}, "description": "Group names, for example [\"docs\", \"viz\"]"}})
-def enable_tools(ws: Workspace, groups: list) -> str:
+def enable_tools(ws: Workspace, groups: list[str]) -> str:
+    """Load tool groups for use in the next request step."""
     if not isinstance(groups, list) or not groups:
         return "ERROR: groups must be a list such as [\"docs\"]. Groups: " + ", ".join(toolgroups.GROUPS)
     unknown = [g for g in groups if g not in toolgroups.GROUPS]

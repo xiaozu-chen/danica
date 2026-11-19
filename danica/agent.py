@@ -41,8 +41,16 @@ from danica.tools.todo import counts, open_items, read_todo
 from danica.sessions import rebuild
 from danica.citations import build_notice, verify
 from danica.capture import extract, worth_checking
-from danica.planner import (Plan, PlanError, PlanFormatError, parse_plan, plan_note, planning_prompt,
-                            todo_text, write_plan_file)
+from danica.planner import (
+    Plan,
+    PlanError,
+    PlanFormatError,
+    parse_plan,
+    plan_note,
+    planning_prompt,
+    todo_text,
+    write_plan_file,
+)
 from danica.tools.skills import skills_prompt
 from danica.thinking import ThinkingClassifier, log_thinking_decision
 from danica.webcache import age_text, get_web_cache
@@ -122,6 +130,8 @@ def _json_object(text: str) -> str:
 
 
 class Agent:
+    """Manage a conversation, stream model output, and execute tool calls."""
+
     PARALLEL_READ_TOOLS = frozenset({"read_file", "list_dir", "glob", "grep"})
 
     def __init__(
@@ -285,7 +295,11 @@ class Agent:
         """After a finished request: if the USER stated something durable, queue PROPOSED
         notes. Nothing is saved until the user approves it (/memory review). Never raises:
         a dead model server must not break a request that already succeeded."""
-        if self.proposals is None or self.memory is None or not worth_checking(user_text):
+        if (
+            self.proposals is None
+            or self.memory is None
+            or not worth_checking(user_text)
+        ):
             return
         try:
             found = extract(user_text, self.memory)
@@ -309,7 +323,9 @@ class Agent:
                 and not str(m["content"]).startswith("[harness reminder")]
         return out + tail[-4:]
 
-    def _plan_turn(self, msgs: list[dict], schemas: list[dict]) -> tuple[str, list[dict]]:
+    def _plan_turn(
+        self, msgs: list[dict], schemas: list[dict]
+    ) -> tuple[str, list[dict]]:
         """One model call while drafting: nothing is streamed to the screen (the plan is shown formatted)."""
         content, calls = [], []
         for piece in stream_chat(msgs, thinking=bool(CONFIG["planning"]["thinking"]), temperature=0.3,
@@ -404,7 +420,8 @@ class Agent:
             })
         # No extras: hand back the list itself (nothing to copy, nothing changed)
         # vision.prepare turns {"images": [paths]} into real pictures for THIS call only (the history keeps paths)
-        return vision.prepare(self.messages + extra if extra else self.messages, self.ws.root)
+        messages = self.messages + extra if extra else self.messages
+        return vision.prepare(messages, self.ws.root)
 
     # ---------------------------------------------------------------- one model call
     # A thinking model sometimes never writes its closing </think> (or runs out of tokens while thinking).
@@ -457,7 +474,11 @@ class Agent:
     def _model_turn(self) -> tuple[str, list[dict]]:
         """Call the model; stream text to the UI; return (content, tool_calls).
         If the model ONLY thought (no answer, no tool call), recover instead of ending the request silently."""
-        thinking = self._thinking_for_request if self._thinking_for_request is not None else self.thinking
+        thinking = (
+            self._thinking_for_request
+            if self._thinking_for_request is not None
+            else self.thinking
+        )
         content, calls, thought, finish = self._stream_turn(thinking)
         if content.strip() or calls or not thought.strip():
             return content, calls                           # the normal case
@@ -497,7 +518,9 @@ class Agent:
             worth = planned or bool(self.touched)
         return worth and self.tracker.level(self.messages) == "ok"
 
-    def _reflect(self, request: str, plan: Plan | None, answer: str) -> list[str] | None:
+    def _reflect(
+        self, request: str, plan: Plan | None, answer: str
+    ) -> list[str] | None:
         """Check a completed tool-based task against its request and plan, without tools.
         None means the verification call or its structured response was unavailable."""
         approved_plan = None
@@ -526,8 +549,14 @@ class Agent:
         try:
             parts: list[str] = []
             unexpected_calls = False
-            for piece in stream_chat(messages, thinking=False, temperature=0.1, tools=self.active_tools(),
-                                      tool_choice="none", label="verify"):
+            for piece in stream_chat(
+                messages,
+                thinking=False,
+                temperature=0.1,
+                tools=self.active_tools(),
+                tool_choice="none",
+                label="verify",
+            ):
                 if piece["type"] == "content":
                     parts.append(piece["text"])
                 elif piece["type"] == "tool_calls":
@@ -535,14 +564,21 @@ class Agent:
             if unexpected_calls:
                 raise ValueError("verifier returned an unexpected tool call")
             result = json.loads(_json_object("".join(parts)))
-            if (not isinstance(result, dict) or set(result) != {"status", "issues"}
-                    or result["status"] not in ("pass", "fix")
-                    or not isinstance(result["issues"], list)
-                    or len(result["issues"]) > 5
-                    or any(not isinstance(issue, str) or not issue.strip() or len(issue) > 300
-                           for issue in result["issues"])
-                    or (result["status"] == "pass" and result["issues"])
-                    or (result["status"] == "fix" and not result["issues"])):
+            if (
+                not isinstance(result, dict)
+                or set(result) != {"status", "issues"}
+                or result["status"] not in ("pass", "fix")
+                or not isinstance(result["issues"], list)
+                or len(result["issues"]) > 5
+                or any(
+                    not isinstance(issue, str)
+                    or not issue.strip()
+                    or len(issue) > 300
+                    for issue in result["issues"]
+                )
+                or (result["status"] == "pass" and result["issues"])
+                or (result["status"] == "fix" and not result["issues"])
+            ):
                 raise ValueError("verifier response did not match the required format")
         except Exception as e:
             self._log("self_reflection", status="unavailable", error=type(e).__name__)
@@ -605,7 +641,11 @@ class Agent:
         margin, and counting the tool schemas the server sees but the message list does not."""
         tools = int(len(json.dumps(self.active_tools())) / CHARS_PER_TOKEN)
         fixed = int(estimate_tokens(self.messages[:1]) * ESTIMATE_MARGIN) + tools
-        history = int(estimate_tokens(self.messages[1:]) * ESTIMATE_MARGIN) if len(self.messages) > 1 else 0
+        history = (
+            int(estimate_tokens(self.messages[1:]) * ESTIMATE_MARGIN)
+            if len(self.messages) > 1
+            else 0
+        )
         return ContextReport(self.tracker.window, fixed, history)
 
     def adopt_window(self, n_ctx: int) -> ContextReport:
@@ -679,7 +719,13 @@ class Agent:
         # text, and the summary is a trusted-looking message, so they stay out.
         state = self.ws.web
         sources = [f"{s.id}: {(s.final_url or s.url)[:150]}" for s in state.by_id.values()] if state else []
-        msg = build_message(self.summary, self.user_requests, self.files_changed, self.files_read, sources)
+        msg = build_message(
+            self.summary,
+            self.user_requests,
+            self.files_changed,
+            self.files_read,
+            sources,
+        )
         self.messages = [self.messages[0], msg] + tail
         self.compactions += 1
 
@@ -843,7 +889,9 @@ class Agent:
                   redacted=found, error=result.startswith("ERROR"))
         return cleaned
 
-    def _execute_parallel_reads(self, calls: list[dict]) -> list[tuple[dict, str]] | None:
+    def _execute_parallel_reads(
+        self, calls: list[dict]
+    ) -> list[tuple[dict, str]] | None:
         """Parallelize only independent, read-only workspace tools with no hooks."""
         if len(calls) < 2 or any(call.get("name") not in self.PARALLEL_READ_TOOLS for call in calls):
             return None
@@ -866,7 +914,8 @@ class Agent:
             allowed, _ = self.policy.check(call["name"], args)
             self.on_event("tool_call", (call["name"], args))
             self._log("tool_call", tool=call["name"], args=_safe_args(args),
-                      tier=tier.value, allowed=allowed, how=self.policy.last_how, tainted=False)
+                       tier=tier.value, allowed=allowed,
+                       how=self.policy.last_how, tainted=False)
             if not allowed:
                 return None
 
@@ -890,9 +939,8 @@ class Agent:
 
     # ---------------------------------------------------------------- main loop
 
-    def run(self, user_text: str, plan: "Plan | None" = None) -> str:
-        """Handle one user request. Returns the model's final text answer."""
-        # Snapshot the workspace BEFORE anything changes, so /undo can return here
+    def _prepare_request(self, user_text: str, plan: "Plan | None") -> bool:
+        """Reset request state and prepare its message and context."""
         self.cancel_event.clear()
         self.request_snap, self.touched = None, []
         self.did_tool_work = False
@@ -952,11 +1000,15 @@ class Agent:
         self._log("user_request", chars=len(user_text))
 
         toolgroups.from_text(self.ws, user_text)      # the request talks about slides / email / a game...: load those tools
-        nudged = False          # the open-TODO reminder is sent at most once per request
         should_reflect = bool(plan or read_todo(self.ws))
+        return should_reflect
+
+    def run(self, user_text: str, plan: "Plan | None" = None) -> str:
+        """Handle one user request. Returns the model's final text answer."""
+        should_reflect = self._prepare_request(user_text, plan)
+        nudged = False          # the open-TODO reminder is sent at most once per request
 
         for repair_round in range(2):
-            empty_retried = False
             repair_requested = False
 
             for _ in range(self.max_steps):
@@ -1000,20 +1052,7 @@ class Agent:
 
                 # No tool calls = the model considers the task finished
                 if not calls:
-                    # An empty reply (no text, no tool calls) would end the request silently.
-                    # Ask once; if it happens again, tell the user instead of saying nothing.
-
-                    # if not content.strip():
-                    #     if not empty_retried:
-                    #         empty_retried = True
-                    #         self._add({"role": "user", "content": (
-                    #             "[harness reminder, not from the user] Your last reply was empty. "
-                    #             "Answer the user's latest request now.")})
-                    #         continue
-                    #     return "[stopped: the model returned an empty reply twice. Try rephrasing the request.]"
-                    
-                    # ...but if the plan still has open items, ask ONCE whether that is
-                    # really true. Small models forget to tick things off.
+                    # Small models can forget to close TODO items after finishing the work.
                     left = open_items(read_todo(self.ws))
                     if left and not nudged:
                         nudged = True
@@ -1023,7 +1062,11 @@ class Agent:
                             "with the todo tool (action 'done', item like '1,2,3'). If not, keep "
                             "working. Then give your final summary.")})
                         continue
-                    issues = self._reflect(user_text, plan, content) if self._should_verify(should_reflect) else []
+                    issues = (
+                        self._reflect(user_text, plan, content)
+                        if self._should_verify(should_reflect)
+                        else []
+                    )
                     if issues:
                         if repair_round == 0:
                             self.on_event("notice", "[verification] found a possible gap; allowing one "
@@ -1057,7 +1100,9 @@ class Agent:
                         self._log("loop_guard", level="blocked", tool=call["name"])
                 runnable = [c for c in calls if c["id"] not in blocked]
 
-                parallel_results = self._execute_parallel_reads(runnable) if runnable else []
+                parallel_results = (
+                    self._execute_parallel_reads(runnable) if runnable else []
+                )
                 if parallel_results is None:
                     parallel_results = []
                     for i, call in enumerate(runnable):

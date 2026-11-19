@@ -14,10 +14,12 @@ from __future__ import annotations
 
 import queue
 import threading
-from typing import Callable
+from typing import Any, Callable
 
 
 class Engine:
+    """Serialize session jobs on one long-lived worker thread."""
+
     def __init__(self, on_error: Callable[[BaseException], None] | None = None) -> None:
         self._q: queue.Queue = queue.Queue()
         self._on_error = on_error or (lambda exc: None)
@@ -25,14 +27,17 @@ class Engine:
         self.busy = False
 
     def start(self) -> None:
+        """Start the session worker thread if it is not running."""
         if not self._thread.is_alive():
             self._thread.start()
 
     @property
     def ident(self) -> int | None:
+        """Return the session worker thread identifier."""
         return self._thread.ident
 
-    def submit(self, fn: Callable, *args) -> None:
+    def submit(self, fn: Callable, *args: Any) -> None:
+        """Queue a callable for execution on the session worker."""
         self._q.put((fn, args))
 
     def stop(self, timeout: float = 3.0) -> None:

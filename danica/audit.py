@@ -15,6 +15,7 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 GENESIS = "0" * 64  # "previous hash" of the very first entry
 
@@ -28,6 +29,8 @@ def _digest(entry: dict) -> str:
 
 
 class AuditLog:
+    """Append audit events to a hash-linked session log."""
+
     def __init__(self, path: Path, session: str = ""):
         self.path = Path(path)
         self.session = session
@@ -50,7 +53,7 @@ class AuditLog:
                     pass  # corrupt line: verify() will flag it
         return last
 
-    def append(self, event: str, **data) -> None:
+    def append(self, event: str, **data: Any) -> None:
         """Write one entry. Never put raw secrets or full file contents in data."""
         entry = {
             "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),

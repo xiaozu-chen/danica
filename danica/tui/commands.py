@@ -15,13 +15,11 @@ Not yet: /imagetest (see NOT_PORTED)
 
 from __future__ import annotations
 
+from typing import Any, Callable
+
 from pathlib import Path
 from typing import Callable
-import shutil
-import socket
-import subprocess
-import sys
-from typing import Optional
+
 from danica.app_core import ResumeCancelled
 from danica.tui.pack_cmd import render_help_menu
 
@@ -72,7 +70,8 @@ def command_names() -> list[tuple[str, str]]:
     return [(n, DESCRIPTIONS.get(n, "")) for n in sorted(names, key=lambda n: (len(n), n))]
 
 
-def command(*names: str):
+def command(*names: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Register a slash command handler and its description."""
     def deco(fn):
         for name in names:
             COMMANDS[name] = fn
@@ -80,7 +79,8 @@ def command(*names: str):
     return deco
 
 
-def dispatch(app, text: str):
+def dispatch(app: Any, text: str) -> Any:
+    """Parse and dispatch one slash command."""
     name, _, args = text.strip().partition(" ")
     args = args.strip()
     handler = COMMANDS.get(name)
@@ -141,7 +141,9 @@ def _context(app, args):
     from danica.context import breakdown
     agent = app.agent
     lines = [agent.tracker.bar(agent.messages)]
-    for role, tokens in sorted(breakdown(agent.messages).items(), key=lambda kv: -kv[1]):
+    for role, tokens in sorted(
+        breakdown(agent.messages).items(), key=lambda item: -item[1]
+    ):
         lines.append(f"  {role:<10} ~{tokens:,} tokens")
     app.ui.say("\n".join(lines))
 
@@ -463,7 +465,13 @@ def _artifacts(app, args):
 
 @command("/open", "/save")
 def _open_save(app, args):
-    from danica.artifacts import ArtifactError, downloads_dir, open_artifact, pick, save_copy
+    from danica.artifacts import (
+        ArtifactError,
+        downloads_dir,
+        open_artifact,
+        pick,
+        save_copy,
+    )
     parts = args.split(maxsplit=1)               # the number, then the rest (a folder path)
     arg = parts[0] if parts else ""
     rest = parts[1] if len(parts) > 1 else ""

@@ -142,7 +142,9 @@ def scan(path: Path) -> tuple[int, int, bool, bool]:
 
 # ------------------------------------------------------------ per-session mode
 
-def save_session_meta(session_dir: Path, project_path: str | None, open_root: str | None = None) -> None:
+def save_session_meta(
+    session_dir: Path, project_path: str | None, open_root: str | None = None
+) -> None:
     """Remember which folder a session worked in (None = a normal chat session).
     open_root: the START folder of an Open Mode session. Only the folder is remembered: Open
     Mode itself is never switched on again without asking (see open_resumed)."""

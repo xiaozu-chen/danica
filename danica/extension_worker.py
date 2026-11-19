@@ -8,6 +8,7 @@ import sys
 
 
 def main() -> int:
+    """Parse worker options and run the extension worker connection."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--module", required=True)
     parser.add_argument("--tool", required=True)

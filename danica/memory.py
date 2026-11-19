@@ -52,6 +52,8 @@ class MemoryStoreError(Exception):
 
 @dataclass
 class Page:
+    """Represent one stored knowledge note and its metadata."""
+
     uuid: str
     title: str
     summary: str
@@ -134,7 +136,14 @@ def parse_page(text: str, scope: str, path: Path) -> Page | None:
 
 
 class MemoryStore:
-    def __init__(self, global_dir: Path, project_dir: Path | None = None, chat_dir: Path | None = None):
+    """Read and write Markdown notes in the local memory store."""
+
+    def __init__(
+        self,
+        global_dir: Path,
+        project_dir: Path | None = None,
+        chat_dir: Path | None = None,
+    ):
         # Only scopes that exist in this session are listed: no project open = no project scope
         self.dirs: dict[str, Path] = {"global": Path(global_dir)}
         if project_dir:
@@ -209,9 +218,18 @@ class MemoryStore:
         uid = str(uuidlib.uuid4())
         slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:40] or "note"
         path = self.dirs[scope] / f"{slug}-{uid[:6]}.md"
-        page = Page(uuid=uid, title=title, summary=_one_line(text, SUMMARY_CHARS), scope=scope,
-                    created=now, updated=now, body=text, path=path,
-                    source=source, confidence=confidence)
+        page = Page(
+            uuid=uid,
+            title=title,
+            summary=_one_line(text, SUMMARY_CHARS),
+            scope=scope,
+            created=now,
+            updated=now,
+            body=text,
+            path=path,
+            source=source,
+            confidence=confidence,
+        )
 
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")

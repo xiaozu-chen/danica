@@ -13,6 +13,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from danica.checkpoints import Checkpoints
 from danica.docgen import is_danica_file
 from danica.secret_scan import is_sensitive_path
 from danica.workspace import PathJailError, Workspace
@@ -36,6 +37,8 @@ class ArtifactError(Exception):
 
 @dataclass
 class Artifact:
+    """Describe a workspace file created or changed during a request."""
+
     rel: str          # workspace-relative path, forward slashes
     path: Path        # the real path
     status: str       # new, changed or written
@@ -44,12 +47,20 @@ class Artifact:
 
 @dataclass
 class ArtifactList:
+    """Collect changed files and counts for the artifact summary."""
+
     items: list[Artifact] = field(default_factory=list)
     deleted: int = 0
     more: int = 0     # files that did not fit in the list
 
 
-def collect(ws: Workspace, checkpoints, snap: str | None, touched: list[str], shown: set[str]) -> ArtifactList:
+def collect(
+    ws: Workspace,
+    checkpoints: Checkpoints | None,
+    snap: str | None,
+    touched: list[str],
+    shown: set[str],
+) -> ArtifactList:
     """The files this request made or changed.
     Sources: the shadow git diff against the checkpoint taken before the request (catches files
     made by shell scripts) AND the paths the file tools wrote (catches files the project's
@@ -105,6 +116,7 @@ def _explorer(path: str) -> None:
 
 
 def open_artifact(a: Artifact) -> str:
+    """Open an artifact safely or show its containing folder."""
     if not a.path.is_file():
         raise ArtifactError("that file no longer exists")
     try:
@@ -128,7 +140,13 @@ def downloads_dir() -> Path:
             raw = uuid.UUID("{374DE290-123F-4565-9164-39C4925E467B}").bytes_le
             folder_id = (ctypes.c_ubyte * 16)(*raw)
             out = ctypes.c_wchar_p()
-            if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(folder_id), 0, None, ctypes.byref(out)) == 0 and out.value:
+            if (
+                ctypes.windll.shell32.SHGetKnownFolderPath(
+                    ctypes.byref(folder_id), 0, None, ctypes.byref(out)
+                )
+                == 0
+                and out.value
+            ):
                 found = Path(out.value)
                 ctypes.windll.ole32.CoTaskMemFree(out)
                 if found.is_dir():

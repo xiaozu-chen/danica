@@ -110,7 +110,11 @@ def extract(user_text: str, store: MemoryStore) -> list[tuple[str, str]]:
         scope, note = m.group(1).lower(), clean_note(m.group(2))
         if not note or len(note) > MAX_NOTE or note.lower() in seen:
             continue
-        if find_secrets(note) or not grounded(note, source) or already_known(store, note):
+        if (
+            find_secrets(note)
+            or not grounded(note, source)
+            or already_known(store, note)
+        ):
             continue
         # A project note in a session with no project open becomes a chat note
         if scope not in store.dirs:
@@ -151,9 +155,11 @@ class ProposalQueue:
             pass     # the in-memory queue still works for this session
 
     def items(self) -> list[dict]:
+        """Return queued capture proposals in display order."""
         return list(self._items)
 
     def count(self) -> int:
+        """Return the number of queued capture proposals."""
         return len(self._items)
 
     def add(self, scope: str, text: str) -> bool:
@@ -168,5 +174,6 @@ class ProposalQueue:
         return True
 
     def remove(self, pid: str) -> None:
+        """Remove a proposal by identifier."""
         self._items = [i for i in self._items if i["id"] != pid]
         self._write()

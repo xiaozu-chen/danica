@@ -10,7 +10,13 @@ from danica.citations import verify
 from danica.config import CONFIG
 from danica.docgen import build_docx, build_pdf, is_danica_file
 from danica.imageview import ImageError, check_image
-from danica.markdown_doc import MAX_CHARS, DocError, first_heading, parse, strip_invisible
+from danica.markdown_doc import (
+    MAX_CHARS,
+    DocError,
+    first_heading,
+    parse,
+    strip_invisible,
+)
 from danica.secret_scan import find_secrets, is_sensitive_path
 from danica.tools.files import _write_guard
 from danica.tools.registry import tool
@@ -35,6 +41,9 @@ MAX_SOURCE_BYTES = MAX_CHARS * 4        # a Markdown file can hold multi-byte ch
     },
 )
 def document(ws: Workspace, source: str, format: str = "docx", title: str = "", sources: bool = True) -> str:
+    """Make a Word (.docx) or PDF document from a Markdown file you wrote with
+        write_file (for example reports/summary.md).
+    """
     fmt = str(format).lower().lstrip(".")
     if fmt not in ("docx", "pdf"):
         return "ERROR: format must be docx or pdf"
@@ -98,8 +107,15 @@ def document(ws: Workspace, source: str, format: str = "docx", title: str = "", 
     clean_title = " ".join(str(title).split())[:120]
     build = build_docx if fmt == "docx" else build_pdf
     try:
-        warnings = build(blocks, out, title=clean_title, meta_title=clean_title or first_heading(blocks) or p.stem,
-                         sources=listing, page=page, image_for=image_for)
+        warnings = build(
+            blocks,
+            out,
+            title=clean_title,
+            meta_title=clean_title or first_heading(blocks) or p.stem,
+            sources=listing,
+            page=page,
+            image_for=image_for,
+        )
     except DocError as e:
         return f"ERROR: {e}"
     if TAG_RX.search(text):

@@ -8,10 +8,11 @@ Nothing here talks to the network or the disk, and it costs microseconds.
 
 import collections
 import time
+from typing import Any
 
 START = time.perf_counter()
 MARKS: list[tuple[str, float]] = []                 # (phase, seconds since start)
-CALLS: collections.deque = collections.deque(maxlen=40)
+CALLS: collections.deque[dict[str, Any]] = collections.deque(maxlen=40)
 
 
 def mark(name: str) -> None:
@@ -20,12 +21,14 @@ def mark(name: str) -> None:
         MARKS.append((name, time.perf_counter() - START))
 
 
-def record_call(**entry) -> None:
+def record_call(**entry: Any) -> None:
+    """Record a model call with its timestamp and supplied metrics."""
     entry["at"] = time.time()
     CALLS.append(entry)
 
 
 def startup_lines() -> list[str]:
+    """Format recorded startup phases as human-readable lines."""
     out, last = [], 0.0
     for name, at in MARKS:
         out.append(f"  {at:6.2f}s  (+{at - last:5.2f}s)  {name}")
@@ -34,7 +37,7 @@ def startup_lines() -> list[str]:
 
 
 def call_lines(count: int = 10) -> list[str]:
-    """One line per recent model call: what it was, how long until the first word, how much of the prompt was NEW work."""
+    """Format recent model call timings and token counts."""
     out = []
     for c in list(CALLS)[-count:]:
         cached, new = c.get("cache_n"), c.get("prompt_n")

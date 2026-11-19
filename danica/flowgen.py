@@ -29,6 +29,7 @@ from __future__ import annotations
 import io
 import re
 import textwrap
+from typing import Any
 
 from danica.charts import _plt, _text
 
@@ -52,7 +53,7 @@ class FlowError(Exception):
 
 # --------------------------------------------------------------- validation
 
-def validate(data) -> dict:
+def validate(data: dict[str, Any]) -> dict[str, Any]:
     """Check a flow chart spec and return a cleaned copy. Raises FlowError with a fix-it message."""
     if not isinstance(data, dict):
         raise FlowError('the file must hold one JSON object: {"type": "flow", "nodes": [...], "edges": [...]}')
@@ -148,7 +149,12 @@ def _candidates(a: dict, b: dict) -> list[list[tuple]]:
         for s in ("R", "L"):
             out = CW / 2 if s == "R" else -CW / 2
             routes.append([_anchor(a, s), (a["x"] + out, a["y"]), (b["x"] + out, b["y"]), _anchor(b, s)])
-    routes.append([_anchor(a, h if abs(dx) >= abs(dy) else v), _anchor(b, hb if abs(dx) >= abs(dy) else vb)])
+    routes.append(
+        [
+            _anchor(a, h if abs(dx) >= abs(dy) else v),
+            _anchor(b, hb if abs(dx) >= abs(dy) else vb),
+        ]
+    )
     return routes
 
 
@@ -174,15 +180,34 @@ def layout(spec: dict) -> dict:
         obstacles = [_box(n) for k, n in nodes.items() if k not in (e["from"], e["to"])]
         chosen = None
         for route in _candidates(a, b):
-            if not any(_hits(p, q, r) for p, q in zip(route, route[1:]) for r in obstacles):
+            if not any(
+                _hits(start, end, obstacle)
+                for start, end in zip(route, route[1:])
+                for obstacle in obstacles
+            ):
                 chosen = route
                 break
         chosen = chosen or _candidates(a, b)[-1]
         # the label sits on the longest segment
-        seg = max(zip(chosen, chosen[1:]), key=lambda s: abs(s[0][0] - s[1][0]) + abs(s[0][1] - s[1][1]))
-        out_edges.append({"from": e["from"], "to": e["to"], "label": e["label"],
-                          "points": [[round(x, 1), round(y, 1)] for x, y in chosen],
-                          "lx": round((seg[0][0] + seg[1][0]) / 2, 1), "ly": round((seg[0][1] + seg[1][1]) / 2, 1)})
+        seg = max(
+            zip(chosen, chosen[1:]),
+            key=lambda segment: (
+                abs(segment[0][0] - segment[1][0])
+                + abs(segment[0][1] - segment[1][1])
+            ),
+        )
+        out_edges.append(
+            {
+                "from": e["from"],
+                "to": e["to"],
+                "label": e["label"],
+                "points": [
+                    [round(x, 1), round(y, 1)] for x, y in chosen
+                ],
+                "lx": round((seg[0][0] + seg[1][0]) / 2, 1),
+                "ly": round((seg[0][1] + seg[1][1]) / 2, 1),
+            }
+        )
     return {"width": MARGIN * 2 + cols * CW, "height": top + rows * CH + MARGIN - 10,
             "title": spec["title"], "title_y": MARGIN, "nodes": list(nodes.values()), "edges": out_edges}
 
@@ -195,11 +220,22 @@ def _patch(n: dict):
     x, y, w, h = n["x"], n["y"], n["w"], n["h"]
     style = dict(facecolor=n["fill"], edgecolor="#374151", linewidth=1.6, zorder=3)
     if n["shape"] == "diamond":
-        return patches.Polygon([(x, y - h / 2), (x + w / 2, y), (x, y + h / 2), (x - w / 2, y)], closed=True, **style)
+        vertices = [
+            (x, y - h / 2),
+            (x + w / 2, y),
+            (x, y + h / 2),
+            (x - w / 2, y),
+        ]
+        return patches.Polygon(vertices, closed=True, **style)
     if n["shape"] == "parallelogram":
         k = 18
-        return patches.Polygon([(x - w / 2 + k, y - h / 2), (x + w / 2, y - h / 2), (x + w / 2 - k, y + h / 2),
-                                (x - w / 2, y + h / 2)], closed=True, **style)
+        vertices = [
+            (x - w / 2 + k, y - h / 2),
+            (x + w / 2, y - h / 2),
+            (x + w / 2 - k, y + h / 2),
+            (x - w / 2, y + h / 2),
+        ]
+        return patches.Polygon(vertices, closed=True, **style)
     if n["shape"] == "oval":
         return patches.Ellipse((x, y), w, h, **style)
     if n["shape"] == "circle":

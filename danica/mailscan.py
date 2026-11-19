@@ -84,12 +84,15 @@ LEVEL_FOR = ((45, "high"), (20, "suspicious"), (0, "low"))
 
 @dataclass
 class Scan:
+    """Summarize the result of scanning a mailbox."""
+
     score: int = 0
     level: str = "low"
     reasons: list = field(default_factory=list)       # [(points, text)] strongest first
     notes: list = field(default_factory=list)         # facts that are not points (what the server said about SPF / DKIM / DMARC)
 
     def summary(self) -> str:
+        """Format the scan score, level, and strongest findings."""
         if not self.reasons:
             return "low (nothing unusual)"
         return f"{self.level.upper()} ({self.score} points: " + "; ".join(t for _, t in self.reasons[:3]) + ")"
@@ -163,7 +166,9 @@ def _brand_issue(domain: str) -> str | None:
         if any((r + ".") in flat or flat.startswith(r + ".") for r in real if len(r) > 5):
             return f"{domain} contains the real {brand} address but belongs to {reg}"
         # the brand name inside a longer name (paypal-secure.com). Short brands only count if letters were swapped (paypa1)
-        if main != token and token in leet and (len(token) >= 5 or (len(token) == 4 and substituted)):
+        if main != token and token in leet and (
+            len(token) >= 5 or (len(token) == 4 and substituted)
+        ):
             return f"{domain} imitates {brand} (the real one is {sorted(real, key=lambda r: (not r.endswith('.com'), len(r), r))[0]})"
         if len(token) >= 5 and 0 < _distance(leet, token) <= 1:
             return f"{domain} is one letter away from {brand}"
@@ -175,6 +180,7 @@ def _brand_issue(domain: str) -> str | None:
 # ------------------------------------------------------------------ the scan
 
 def scan(p: Parsed) -> Scan:
+    """Scan messages for phishing indicators and summarize the findings."""
     s = Scan()
     add = lambda points, why: s.reasons.append((points, why))        # noqa: E731
 

@@ -23,6 +23,7 @@ from pathlib import Path
 from html.parser import HTMLParser
 from urllib.parse import urlsplit
 
+from danica.workspace import Workspace
 PASSAGE_CHARS = 1000        # target size of one citable passage
 MAX_TEXT_CHARS = 200_000    # cap on the text kept from one page
 CACHE_SECONDS = 900         # how long a fetched page stays cached
@@ -86,7 +87,8 @@ class _Extractor(HTMLParser):
                 or attrs.get("aria-hidden", "").strip().lower() == "true"
                 or bool(HIDDEN_STYLE.search(attrs.get("style", ""))))
 
-    def handle_starttag(self, tag, attrs):
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        """Track content visibility and structure for an opening tag."""
         # Only the first <title> outside hidden/skipped elements is the page title
         if tag == "title" and not self.suppress and not self.title_parts:
             self.in_title = True
@@ -114,7 +116,8 @@ class _Extractor(HTMLParser):
         elif tag in BLOCK_TAGS:
             self.parts.append("\n")
 
-    def handle_endtag(self, tag):
+    def handle_endtag(self, tag: str) -> None:
+        """Close the nearest matching open HTML element."""
         if tag == "title":
             self.in_title = False
             return
@@ -132,7 +135,8 @@ class _Extractor(HTMLParser):
                 return
         # an end tag with no matching start tag is ignored
 
-    def handle_data(self, data):
+    def handle_data(self, data: str) -> None:
+        """Collect page title and visible text, or count hidden text."""
         if self.in_title:
             self.title_parts.append(data)
             return
@@ -220,6 +224,8 @@ def safe_attr(text: str) -> str:
 
 @dataclass
 class Source:
+    """Represent a web source collected during the current request."""
+
     id: str                     # "S1": what the model cites as [S1.3]
     url: str                    # the URL that was requested (cache key)
     final_url: str = ""         # where it ended up after redirects
@@ -251,6 +257,7 @@ class WebState:
 
     @staticmethod
     def key(url: str) -> str:
+        """Return the source state associated with a URL."""
         return url.split("#", 1)[0]    # a #fragment never changes what the server sends
 
     def lookup(self, url: str) -> Source | None:
@@ -260,7 +267,15 @@ class WebState:
             return src
         return None
 
-    def add(self, url: str, final_url: str, title: str, passages: list[str], notes: list[str]) -> Source:
+    def add(
+        self,
+        url: str,
+        final_url: str,
+        title: str,
+        passages: list[str],
+        notes: list[str],
+    ) -> Source:
+        """Add a verified web source to the request state."""
         key = self.key(url)
         src = self.by_url.get(key)
         if src is None:
@@ -275,6 +290,7 @@ class WebState:
         return src
 
     def mark_tainted(self, url: str) -> None:
+        """Mark fetched content as untrusted input."""
         self.tainted = True
         if url not in self.taint_sources:
             self.taint_sources.append(url)
@@ -318,7 +334,9 @@ class WebState:
             # Skip entries that don't look like ours (bad id, passages not a list of text)
             if not re.fullmatch(r"S\d+", str(src.id)):
                 continue
-            if not isinstance(src.passages, list) or not all(isinstance(p, str) for p in src.passages):
+            if not isinstance(src.passages, list) or not all(
+                isinstance(passage, str) for passage in src.passages
+            ):
                 continue
             self.by_id[src.id] = src
             self.by_url[src.url] = src
@@ -343,7 +361,7 @@ def render(src: Source, start: int, budget: int = RENDER_BUDGET) -> tuple[str, i
         i += 1
     return "\n\n".join(out), i - 1
 
-def state_for(ws) -> WebState:
+def state_for(ws: Workspace) -> WebState:
     """The workspace's WebState, created (and loaded from disk) on first use."""
     if ws.web is None:
         ws.web = WebState(ws.sources_path)

@@ -8,6 +8,7 @@ import sys
 import threading
 import tomllib
 from pathlib import Path
+from typing import Any
 
 from danica.tools.registry import register_external_tool, tool_schemas
 
@@ -34,6 +35,8 @@ def _child_env() -> dict[str, str]:
 
 
 class MCPServer:
+    """Manage one connection to an external MCP server."""
+
     def __init__(self, name: str, command: list[str], cwd: Path | None = None):
         if not command or not all(isinstance(part, str) and part for part in command):
             raise ExtensionError(f"MCP server {name} needs a non-empty command and argument list")
@@ -49,15 +52,22 @@ class MCPServer:
         self._reader: threading.Thread | None = None
 
     def start(self) -> None:
+        """Launch the MCP process and complete its initialization handshake."""
         if self.process is not None:
             return
         try:
             self.process = subprocess.Popen(
                 self.command, cwd=str(self.cwd) if self.cwd else None,
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
                 text=True, encoding="utf-8", errors="replace", bufsize=1,
                 env=_child_env(),
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
+                creationflags=(
+                    getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                    if os.name == "nt"
+                    else 0
+                ),
             )
         except OSError as exc:
             raise ExtensionError(f"could not start MCP server {self.name}: {exc}") from exc
@@ -118,13 +128,16 @@ class MCPServer:
             raise ExtensionError(f"could not write to MCP server {self.name}: {exc}") from exc
 
     def request(self, method: str, params: dict | None = None) -> dict:
+        """Send one JSON-RPC request and return its result object."""
         request_id = self._next_id
         self._next_id += 1
         self._send({"jsonrpc": "2.0", "id": request_id, "method": method,
                     "params": params or {}})
         with self._condition:
             ready = self._condition.wait_for(
-                lambda: request_id in self._responses or bool(self._failure), timeout=RPC_TIMEOUT)
+                lambda: request_id in self._responses or bool(self._failure),
+                timeout=RPC_TIMEOUT,
+            )
             if not ready:
                 raise ExtensionError(f"MCP request {method} timed out")
             response = self._responses.pop(request_id, None)
@@ -139,6 +152,7 @@ class MCPServer:
         self._send({"jsonrpc": "2.0", "method": method, "params": params})
 
     def call_tool(self, name: str, arguments: dict) -> str:
+        """Call a tool exposed by this MCP server."""
         result = self.request("tools/call", {"name": name, "arguments": arguments})
         if not isinstance(result, dict):
             raise ExtensionError(f"MCP tool {name} returned an invalid result")
@@ -158,6 +172,7 @@ class MCPServer:
         return rendered
 
     def close(self) -> None:
+        """Stop the MCP process and release its communication handles."""
         process = self.process
         if process is None:
             return
@@ -177,6 +192,8 @@ class MCPServer:
 
 
 class ExtensionManager:
+    """Load extensions and route their tools and lifecycle hooks."""
+
     def __init__(self, app_dir: Path, config: dict, audit=None, enable_mcp: bool = True,
                  enable_hooks: bool = True):
         self.app_dir = Path(app_dir)
@@ -191,6 +208,7 @@ class ExtensionManager:
             self._load_mcp()
 
     def has_hooks(self) -> bool:
+        """Return whether any extension lifecycle hooks are configured."""
         hooks = self.config.get("hooks", {})
         if not isinstance(hooks, dict):
             return self.enable_hooks
@@ -207,7 +225,12 @@ class ExtensionManager:
         for manifest in sorted(root.glob("*/plugin.toml")):
             try:
                 self._register_plugin(manifest)
-            except (OSError, ValueError, tomllib.TOMLDecodeError, ExtensionError) as exc:
+            except (
+                OSError,
+                ValueError,
+                tomllib.TOMLDecodeError,
+                ExtensionError,
+            ) as exc:
                 self.errors.append(f"{manifest.parent.name}: {exc}")
 
     def _register_plugin(self, manifest: Path) -> None:
@@ -299,11 +322,16 @@ class ExtensionManager:
                 if server is not None:
                     try:
                         server.close()
-                    except (OSError, ExtensionError, subprocess.TimeoutExpired) as close_exc:
+                    except (
+                        OSError,
+                        ExtensionError,
+                        subprocess.TimeoutExpired,
+                    ) as close_exc:
                         self.errors.append(f"MCP {server_name} cleanup: {close_exc}")
                 self.errors.append(f"MCP {server_name}: {exc}")
 
     def call_mcp(self, server_name: str, tool_name: str, arguments: dict) -> str:
+        """Call a tool on a named MCP server."""
         server = self.servers.get(server_name)
         if server is None:
             raise ExtensionError(f"MCP server {server_name} is unavailable")
@@ -312,17 +340,37 @@ class ExtensionManager:
                   result_chars=len(result))
         return result
 
-    def call_plugin(self, module: Path, tool_name: str, arguments: dict, ws) -> str:
-        command = [sys.executable, "-m", "danica.extension_worker",
-                   "--module", str(module), "--tool", tool_name]
+    def call_plugin(
+        self, module: Path, tool_name: str, arguments: dict[str, Any], ws: Any
+    ) -> str:
+        """Run a local plugin tool with its workspace context."""
+        command = [
+            sys.executable,
+            "-m",
+            "danica.extension_worker",
+            "--module",
+            str(module),
+            "--tool",
+            tool_name,
+        ]
         payload = json.dumps({"arguments": arguments, "workspace": str(ws.root)}).encode("utf-8")
         if len(payload) > 32_000:
             raise ExtensionError("plugin input exceeds the 32 KiB limit")
         try:
             result = subprocess.run(
-                command, input=payload, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                cwd=str(module.parent), env=_child_env(), timeout=RPC_TIMEOUT, check=False,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
+                command,
+                input=payload,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                cwd=str(module.parent),
+                env=_child_env(),
+                timeout=RPC_TIMEOUT,
+                check=False,
+                creationflags=(
+                    getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                    if os.name == "nt"
+                    else 0
+                ),
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise ExtensionError(f"plugin {module.parent.name} failed: {exc}") from exc
@@ -345,6 +393,7 @@ class ExtensionManager:
 
     def run_hooks(self, phase: str, tool_name: str, arguments: dict,
                   result: str = "") -> bool:
+        """Run enabled hooks for a tool lifecycle phase."""
         if not self.enable_hooks:
             return True
         hooks = self.config.get("hooks", {}).get(phase, [])
@@ -379,9 +428,18 @@ class ExtensionManager:
                 raise ExtensionError(f"hooks.{phase} needs an argument-array command")
             try:
                 completed = subprocess.run(
-                    command, input=payload, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                    timeout=RPC_TIMEOUT, check=False, env=_child_env(),
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
+                    command,
+                    input=payload,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    timeout=RPC_TIMEOUT,
+                    check=False,
+                    env=_child_env(),
+                    creationflags=(
+                        getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                        if os.name == "nt"
+                        else 0
+                    ),
                 )
             except (OSError, subprocess.TimeoutExpired) as exc:
                 raise ExtensionError(f"{phase} hook failed: {exc}") from exc
@@ -400,6 +458,7 @@ class ExtensionManager:
         return True
 
     def close(self) -> None:
+        """Close all MCP servers managed by this extension manager."""
         failures = []
         for server in self.servers.values():
             try:

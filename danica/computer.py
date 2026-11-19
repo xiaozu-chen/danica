@@ -25,9 +25,11 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from danica import screenctl
 from danica.screenctl import ScreenError, Win
+from danica.workspace import Workspace
 
 MAX_WIDTH = 1280                 # pictures are scaled down to this width (cheaper for the model, still readable)
 MAX_TYPE = 400                   # characters per screen_type call
@@ -55,6 +57,8 @@ class ComputerError(Exception):
 
 @dataclass
 class Approval:
+    """Record a window approved for computer interaction."""
+
     hwnd: int
     pid: int
     process: str
@@ -92,7 +96,13 @@ def blocked_reason(win: Win) -> str:
     return ""
 
 
-def smooth_path(x0: float, y0: float, x1: float, y1: float, min_seconds: float = 0.0) -> list[tuple[int, int, float]]:
+def smooth_path(
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    min_seconds: float = 0.0,
+) -> list[tuple[int, int, float]]:
     """Mouse positions from (x0,y0) to (x1,y1) as (x, y, pause_after) steps: slow start, fast middle, slow end.
     Short moves take about 0.15 s, long ones up to 0.6 s; min_seconds makes drags slower."""
     dist = math.hypot(x1 - x0, y1 - y0)
@@ -110,7 +120,7 @@ def smooth_path(x0: float, y0: float, x1: float, y1: float, min_seconds: float =
     return out
 
 
-def parse_keys(spec) -> list[list[str]]:
+def parse_keys(spec: str | list[str]) -> list[list[str]]:
     """'ctrl+s', 'enter', 'ctrl+a ctrl+c' or a list of those -> [['ctrl','s'], ...]. Raises ComputerError for anything odd."""
     parts = spec if isinstance(spec, list) else re.split(r"[\s,]+", str(spec or "").strip())
     combos = []
@@ -130,7 +140,7 @@ def parse_keys(spec) -> list[list[str]]:
     return combos
 
 
-def draw_grid(img, cols: int, rows: int):
+def draw_grid(img: Any, cols: int, rows: int) -> Any:
     """Draw labelled cells (A1, B1 ...) on a copy of the picture so a model can name a place instead of measuring it."""
     from PIL import Image, ImageDraw, ImageFont
     base = img.convert("RGBA")
@@ -151,11 +161,24 @@ def draw_grid(img, cols: int, rows: int):
         for c in range(cols):
             label = f"{chr(65 + c)}{r + 1}"
             x, y = round(c * w / cols) + 3, round(r * h / rows) + 2
-            d.text((x, y), label, font=font, fill=(255, 235, 0, 255), stroke_width=2, stroke_fill=(0, 0, 0, 255))
+            d.text(
+                (x, y),
+                label,
+                font=font,
+                fill=(255, 235, 0, 255),
+                stroke_width=2,
+                stroke_fill=(0, 0, 0, 255),
+            )
     return Image.alpha_composite(base, layer).convert("RGB")
 
 
-def draw_marker(img, points, left: float, top: float, scale: float):
+def draw_marker(
+    img: Any,
+    points: list[tuple[float, float]],
+    left: float,
+    top: float,
+    scale: float,
+) -> Any:
     """Green circle + cross where the last click landed, so the model can SEE whether it hit the button."""
     from PIL import ImageDraw
     d = ImageDraw.Draw(img)
@@ -171,7 +194,7 @@ def draw_marker(img, points, left: float, top: float, scale: float):
     return img
 
 
-def draw_ruler(img):
+def draw_ruler(img: Any) -> Any:
     """Tick labels 0..1000 along the top and left edges, so a model that thinks in thousandths can read a position off the picture."""
     from PIL import ImageDraw, ImageFont
     d = ImageDraw.Draw(img)
@@ -184,8 +207,22 @@ def draw_ruler(img):
         x, y = min(w - 1, round(v * w / 1000)), min(h - 1, round(v * h / 1000))
         d.line([(x, 0), (x, 6)], fill=(255, 235, 0), width=1)
         d.line([(0, y), (6, y)], fill=(255, 235, 0), width=1)
-        d.text((min(max(x + 2, 0), w - 26), 7), str(v), font=font, fill=(255, 235, 0), stroke_width=1, stroke_fill=(0, 0, 0))
-        d.text((8, min(max(y - 5, 0), h - 12)), str(v), font=font, fill=(255, 235, 0), stroke_width=1, stroke_fill=(0, 0, 0))
+        d.text(
+            (min(max(x + 2, 0), w - 26), 7),
+            str(v),
+            font=font,
+            fill=(255, 235, 0),
+            stroke_width=1,
+            stroke_fill=(0, 0, 0),
+        )
+        d.text(
+            (8, min(max(y - 5, 0), h - 12)),
+            str(v),
+            font=font,
+            fill=(255, 235, 0),
+            stroke_width=1,
+            stroke_fill=(0, 0, 0),
+        )
     return img
 
 
@@ -210,7 +247,8 @@ class Computer:
 
     # ------------------------------------------------------------------ state
     @property
-    def backend(self):
+    def backend(self) -> Any:
+        """Return the active input backend, initializing it when needed."""
         try:
             return self.backend_getter()
         except ScreenError as exc:
@@ -221,12 +259,14 @@ class Computer:
         del self.log[:-MAX_LOG]
 
     def enable(self) -> None:
+        """Enable computer control for the current session."""
         _ = self.backend                                  # raises when this is not Windows
         self.enabled = True
         self.actions = 0
         self._note("computer use ON")
 
     def disable(self, why: str = "turned off") -> None:
+        """Disable computer control and clear its active approvals."""
         if self.enabled:
             self._note(f"computer use OFF ({why})")
         self.enabled, self.mapping = False, None
@@ -236,14 +276,24 @@ class Computer:
         self.actions = 0
 
     def approve(self, win: Win) -> None:
+        """Approve a window for computer interaction."""
         reason = blocked_reason(win)
         if reason:
             raise ComputerError(f"'{clean_title(win.title)}' cannot be approved: {reason}")
-        self.approvals[win.hwnd] = Approval(win.hwnd, win.pid, win.process, clean_title(win.title))
+        self.approvals[win.hwnd] = Approval(
+            win.hwnd, win.pid, win.process, clean_title(win.title)
+        )
         self._note(f"approved '{clean_title(win.title)}' ({win.process})")
 
     def revoke(self, hwnd: int | None = None) -> int:
-        gone = list(self.approvals) if hwnd is None else [hwnd] if hwnd in self.approvals else []
+        """Revoke one window approval or all approvals."""
+        gone = (
+            list(self.approvals)
+            if hwnd is None
+            else [hwnd]
+            if hwnd in self.approvals
+            else []
+        )
         for h in gone:
             self._note(f"revoked '{self.approvals[h].title}'")
             del self.approvals[h]
@@ -284,6 +334,7 @@ class Computer:
         return win
 
     def approved_windows(self) -> list[Win]:
+        """Return the windows approved for the current session."""
         out = []
         for hwnd in list(self.approvals):
             try:
@@ -298,7 +349,12 @@ class Computer:
         if not wins:
             raise ComputerError("no approved window is open. Ask the user to run /computer allow <window>.")
         if title:
-            hits = [w for w in wins if title.lower() in w.title.lower() or title.lower() in w.process]
+            hits = [
+                window
+                for window in wins
+                if title.lower() in window.title.lower()
+                or title.lower() in window.process
+            ]
             if len(hits) == 1:
                 return hits[0]
             names = ", ".join(f"'{clean_title(w.title, 40)}'" for w in (hits or wins))
@@ -328,14 +384,24 @@ class Computer:
         partly outside the window is in the picture too. Other windows of the same program are NOT included."""
         rects = [tuple(win.rect)]
         for w in self.backend.list_windows():
-            if w.hwnd == win.hwnd or w.minimized or blocked_reason(w) or not self._owned(w.hwnd, win.hwnd):
+            if (
+                w.hwnd == win.hwnd
+                or w.minimized
+                or blocked_reason(w)
+                or not self._owned(w.hwnd, win.hwnd)
+            ):
                 continue
             l, t, r, b = w.rect
             if r - l >= 40 and b - t >= 30:
                 rects.append(tuple(w.rect))
             if len(rects) >= 5:
                 break
-        union = (min(r[0] for r in rects), min(r[1] for r in rects), max(r[2] for r in rects), max(r[3] for r in rects))
+        union = (
+            min(rect[0] for rect in rects),
+            min(rect[1] for rect in rects),
+            max(rect[2] for rect in rects),
+            max(rect[3] for rect in rects),
+        )
         if union[2] - union[0] > 4000 or union[3] - union[1] > 3000:          # absurdly large: just the window
             return tuple(win.rect), [tuple(win.rect)]
         return union, rects
@@ -353,7 +419,14 @@ class Computer:
     def _covered(self, win: Win) -> float:
         """The share of sample points of the window that show the window itself (1.0 = nothing in front of it)."""
         l, t, r, b = win.rect
-        pts = [(l + (r - l) * (i + 0.5) / 6, t + (b - t) * (j + 0.5) / 4) for i in range(6) for j in range(4)]
+        pts = [
+            (
+                l + (r - l) * (i + 0.5) / 6,
+                t + (b - t) * (j + 0.5) / 4,
+            )
+            for i in range(6)
+            for j in range(4)
+        ]
         seen = same = 0
         for x, y in pts:
             hit = self.backend.window_at(int(x), int(y))
@@ -364,7 +437,14 @@ class Computer:
         return same / seen if seen else 1.0
 
     # ------------------------------------------------------------------ the picture
-    def shot(self, title: str | None, folder: Path, region=None, grid: bool | None = None, spend: bool = False) -> tuple[Path, str]:
+    def shot(
+        self,
+        title: str | None,
+        folder: Path,
+        region: Any = None,
+        grid: bool | None = None,
+        spend: bool = False,
+    ) -> tuple[Path, str]:
         """Take a picture of an approved window (or of a part of the last picture). Returns (file, description)."""
         self._ready()
         win = self.pick(title)
@@ -380,31 +460,52 @@ class Computer:
         left, top, right, bottom = float(l), float(t), float(r), float(b)
         if region is not None:                                           # zoom: a part of the last picture
             m = self.mapping
-            if not m or m.hwnd != win.hwnd or m.rect != union or m.rects != tuple(rects):
+            if (
+                not m
+                or m.hwnd != win.hwnd
+                or m.rect != union
+                or m.rects != tuple(rects)
+            ):
                 raise ComputerError("zoom needs a recent full picture of this window first: call screen_shot without region.")
             try:
                 x, y, w, h = (float(v) for v in region)
             except (TypeError, ValueError):
                 raise ComputerError("region must be [x, y, width, height] in the same units as positions (0-1000 across the picture)")
             if self.coords == "normalized":                              # thousandths of the picture -> picture pixels
-                x, w, y, h = x * m.width / 1000, w * m.width / 1000, y * m.height / 1000, h * m.height / 1000
+                x, w, y, h = (
+                    x * m.width / 1000,
+                    w * m.width / 1000,
+                    y * m.height / 1000,
+                    h * m.height / 1000,
+                )
             x, y = max(0.0, x), max(0.0, y)
             w, h = min(w, m.width - x), min(h, m.height - y)
             if w < 20 or h < 20:
                 raise ComputerError("region is too small or outside the picture")
             left, top = m.left + x * m.scale, m.top + y * m.scale
             right, bottom = left + w * m.scale, top + h * m.scale
-        img = self.backend.capture((round(left), round(top), round(right), round(bottom)))
+        img = self.backend.capture(
+            (round(left), round(top), round(right), round(bottom))
+        )
         if len(rects) > 1:                                                # blank out the gaps between the window and its dialogs
             from PIL import Image
             clean = Image.new("RGB", img.size, (0, 0, 0))
             for rl, rt, rr, rb in rects:
-                box = (max(0, rl - round(left)), max(0, rt - round(top)), min(img.size[0], rr - round(left)), min(img.size[1], rb - round(top)))
+                box = (
+                    max(0, rl - round(left)),
+                    max(0, rt - round(top)),
+                    min(img.size[0], rr - round(left)),
+                    min(img.size[1], rb - round(top)),
+                )
                 if box[2] > box[0] and box[3] > box[1]:
                     clean.paste(img.crop(box), (box[0], box[1]))
             img = clean
         real_w, real_h = img.size
-        target_w = min(MAX_WIDTH, real_w * 3) if region is not None else min(MAX_WIDTH, real_w)
+        target_w = (
+            min(MAX_WIDTH, real_w * 3)
+            if region is not None
+            else min(MAX_WIDTH, real_w)
+        )
         pic_w = max(1, int(target_w))
         pic_h = max(1, round(real_h * pic_w / real_w))
         if (pic_w, pic_h) != img.size:
@@ -415,7 +516,11 @@ class Computer:
         key = (win.hwnd, union)
         if self.expect_change and self._thumb and self._thumb[0] == key:
             from PIL import ImageChops
-            changed = sum(1 for v in ImageChops.difference(self._thumb[1], small).getdata() if v > 24) / (96 * 96)
+            changed = sum(
+                1
+                for value in ImageChops.difference(self._thumb[1], small).getdata()
+                if value > 24
+            ) / (96 * 96)
             notes.append("WARNING: the screen did NOT change after the last action. If you expected a change, the action probably "
                          "missed or was ignored: do not assume it worked; re-aim and try again." if changed < 0.002 else
                          f"The screen changed ({changed:.0%} of the window).")
@@ -432,7 +537,19 @@ class Computer:
             img = draw_marker(img, self.marker, left, top, scale)
             notes.append("The green circle marks where the last click landed: if it is not on the thing you meant, aim again.")
             self.marker = []
-        self.mapping = Mapping(win.hwnd, union, left, top, scale, pic_w, pic_h, cols, rows, use_grid, tuple(rects))
+        self.mapping = Mapping(
+            win.hwnd,
+            union,
+            left,
+            top,
+            scale,
+            pic_w,
+            pic_h,
+            cols,
+            rows,
+            use_grid,
+            tuple(rects),
+        )
         folder.mkdir(parents=True, exist_ok=True)
         self.shot_counter += 1
         path = folder / f"screen_{self.shot_counter:04d}.png"
@@ -450,7 +567,9 @@ class Computer:
         return path, text
 
     # ------------------------------------------------------------------ positions
-    def point(self, x=None, y=None, cell=None) -> tuple[float, float]:
+    def point(
+        self, x: float | None = None, y: float | None = None, cell: str | None = None
+    ) -> tuple[float, float]:
         """A picture position (x,y or a grid cell like 'C4') -> real screen coordinates. Checks it is inside the window,
         that the picture is still current, and that nothing else is on top of that spot."""
         m = self.mapping
@@ -505,7 +624,15 @@ class Computer:
         self.backend.sleep(self.settle)                   # let the app react before the next picture
 
     # ------------------------------------------------------------------ actions (each returns a one-line description)
-    def click(self, x=None, y=None, cell=None, button: str = "left", double: bool = False) -> str:
+    def click(
+        self,
+        x: float | None = None,
+        y: float | None = None,
+        cell: str | None = None,
+        button: str = "left",
+        double: bool = False,
+    ) -> str:
+        """Click an approved window using coordinates from its latest picture."""
         self._ready()
         if button not in screenctl.MOUSE:
             raise ComputerError("button must be left, right or middle")
@@ -550,7 +677,14 @@ class Computer:
         self._after()
         return what
 
-    def scroll(self, clicks: int, x=None, y=None, cell=None) -> str:
+    def scroll(
+        self,
+        clicks: int,
+        x: float | None = None,
+        y: float | None = None,
+        cell: str | None = None,
+    ) -> str:
+        """Scroll within an approved window and return the updated picture."""
         self._ready()
         try:
             clicks = int(clicks)
@@ -582,6 +716,7 @@ class Computer:
         return win
 
     def type_text(self, text: str, window: str | None = None) -> str:
+        """Type text into the focused approved window."""
         text = str(text)
         if not text or len(text) > MAX_TYPE:
             raise ComputerError(f"text must be 1 to {MAX_TYPE} characters")
@@ -605,7 +740,8 @@ class Computer:
         self._after()
         return what
 
-    def press(self, keys, window: str | None = None) -> str:
+    def press(self, keys: str | list[str], window: str | None = None) -> str:
+        """Press validated keys in an approved window."""
         combos = parse_keys(keys)
         win = self._keys_ready(window)
         self._spend()
@@ -627,6 +763,7 @@ class Computer:
         return what
 
     def focus(self, title: str | None) -> str:
+        """Bring an approved window to the foreground and return its picture."""
         self._ready()
         win = self.pick(title)
         self._spend()
@@ -636,7 +773,7 @@ class Computer:
         return f"'{clean_title(win.title)}' is in front"
 
 
-def computer_for(ws) -> Computer:
+def computer_for(ws: Workspace) -> Computer:
     """The session's Computer (created on first use, OFF). It lives on the workspace, so a new session starts OFF."""
     comp = getattr(ws, "computer", None)
     if comp is None:

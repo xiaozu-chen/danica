@@ -12,7 +12,9 @@ All text is escaped before it reaches reportlab, so page text can never become m
 
 import os
 import textwrap
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 from xml.sax.saxutils import escape
 
 from PIL import Image
@@ -44,7 +46,7 @@ def is_danica_file(path: Path) -> bool:
         return False
     return False
 
-def image_resolver(ws, md_path: Path):
+def image_resolver(ws: Any, md_path: Path) -> Callable[[str], Path]:
     """image_for(rel) for the generators: the real path of a picture a Markdown file mentions,
     or DocError (which the generator turns into a warning). Looks in the workspace first, then
     next to the Markdown file. Same rules as <present>: inside the workspace, a real PNG/JPEG.
@@ -95,7 +97,8 @@ def _rule(paragraph) -> None:
 
 
 def build_docx(blocks: list[dict], out: Path, *, title: str, meta_title: str,
-               sources: list[tuple[str, str, str]], page: str, image_for) -> list[str]:
+               sources: list[tuple[str, str, str]], page: str,
+               image_for: Callable[[str], Path | None]) -> list[str]:
     """Write a Word file. Returns warnings (for example images that could not be added)."""
     try:
         from docx import Document
@@ -136,7 +139,10 @@ def build_docx(blocks: list[dict], out: Path, *, title: str, meta_title: str,
                 for level, label, runs in labelled(b):
                     p = doc.add_paragraph()
                     pf = p.paragraph_format
-                    pf.left_indent, pf.first_line_indent = Inches(0.3 + 0.3 * level), Inches(-0.25)
+                    pf.left_indent, pf.first_line_indent = (
+                        Inches(0.3 + 0.3 * level),
+                        Inches(-0.25),
+                    )
                     pf.tab_stops.add_tab_stop(pf.left_indent)      # the text lines up after the marker
                     pf.space_after = Pt(2)
                     p.add_run(label + "\t")
@@ -169,7 +175,10 @@ def build_docx(blocks: list[dict], out: Path, *, title: str, meta_title: str,
                 try:
                     path = image_for(b["path"])
                     width_px = _image_size(path)[0]
-                    doc.add_picture(str(path), width=Inches(min(6.0, max(2.0, width_px / 96))))
+                    doc.add_picture(
+                        str(path),
+                        width=Inches(min(6.0, max(2.0, width_px / 96))),
+                    )
                     doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
                     if b["alt"]:
                         caption = doc.add_paragraph()
@@ -243,15 +252,24 @@ def _markup(runs, mono: str) -> str:
 
 
 def build_pdf(blocks: list[dict], out: Path, *, title: str, meta_title: str,
-              sources: list[tuple[str, str, str]], page: str, image_for) -> list[str]:
+              sources: list[tuple[str, str, str]], page: str,
+              image_for: Callable[[str], Path | None]) -> list[str]:
     """Write a PDF. Returns warnings (for example images that could not be added)."""
     try:
         from reportlab.lib import colors
         from reportlab.lib.pagesizes import A4, LETTER
         from reportlab.lib.styles import ParagraphStyle
         from reportlab.lib.units import cm
-        from reportlab.platypus import (HRFlowable, Image as RLImage, Paragraph, Preformatted,
-                                        SimpleDocTemplate, Spacer, Table, TableStyle)
+        from reportlab.platypus import (
+            HRFlowable,
+            Image as RLImage,
+            Paragraph,
+            Preformatted,
+            SimpleDocTemplate,
+            Spacer,
+            Table,
+            TableStyle,
+        )
     except ImportError:
         raise DocError("PDF files need the reportlab package (pip install reportlab)")
 
@@ -291,7 +309,9 @@ def build_pdf(blocks: list[dict], out: Path, *, title: str, meta_title: str,
             story.append(Paragraph(_markup(b["runs"], mono), base))
         elif t in ("ul", "ol"):
             for level, label, runs in labelled(b):
-                story.append(Paragraph(_markup(runs, mono), list_style(level), bulletText=label))
+                story.append(
+                    Paragraph(_markup(runs, mono), list_style(level), bulletText=label)
+                )
         elif t == "code":
             lines: list[str] = []
             for line in b["text"].split("\n"):                   # wrap long lines so they stay on the page

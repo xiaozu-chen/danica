@@ -19,7 +19,7 @@ that owns the terminal (Textual) must therefore only call them from a worker thr
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol
 
 TAG_COLORS = {
     "ERROR":   {"color": "#E03E3E", "symbol": "[ ✗ ]"},   # U+2717
@@ -32,6 +32,8 @@ TAG_WIDTH = max(map(len, TAG_COLORS))   # updates itself if you add a longer lab
 
 
 class UI(Protocol):
+    """Define the callbacks used by the agent to communicate with a user."""
+
     def log(self, level: str, text: str) -> None:
         """A one-line status badge: level is error / warning / ok / fail / info."""
 
@@ -54,7 +56,7 @@ class UI(Protocol):
     def ask_text(self, title: str, default: str = "") -> str | None:
         """Blocking one-line text question. None if dismissed."""
 
-    def show(self, renderable) -> None:
+    def show(self, renderable: Any) -> None:
         """Display a rich/structured renderable (frontends may degrade it to text)."""
 
 
@@ -66,6 +68,7 @@ class RichUI:
         self.console = console or Console()
 
     def log(self, level: str, text: str) -> None:
+        """Display a status message in the terminal."""
         from rich.markup import escape
         key = level.upper()
     
@@ -79,10 +82,12 @@ class RichUI:
         self.console.print(f"[bold #000000 on {color}] {label} [/]::{escape(str(text))}", highlight=False)
 
     def say(self, text: str, style: str | None = None) -> None:
+        """Display a short user facing message."""
         self.console.print(text, style=style, markup=False, highlight=False)
 
     def confirm(self, title: str, body: str = "", detail: str = "",
                 yes: str = "Yes", no: str = "No") -> bool:
+        """Ask the user to confirm an action."""
         from prompt_toolkit import prompt
         self.log("warning", title)
         if body:
@@ -96,6 +101,7 @@ class RichUI:
 
     def permission(self, tool: str, summary: str, tier: str, reason: str,
                    can_remember: bool) -> str:
+        """Ask the user to approve a permission request."""
         from prompt_toolkit import prompt
         self.say(f"Permission needed ({tier}): {reason}", style="bold yellow")
         self.log("warning", summary)
@@ -114,6 +120,7 @@ class RichUI:
 
     def choose(self, title: str, body: str, options: list[tuple[str, str]],
                detail: str = "") -> str | None:
+        """Ask the user to choose from labeled options."""
         from prompt_toolkit import prompt
         self.log("warning", title)
         if body:
@@ -131,11 +138,13 @@ class RichUI:
                 return answer
 
     def ask_text(self, title: str, default: str = "") -> str | None:
+        """Prompt the user for a text response."""
         from prompt_toolkit import prompt
         try:
             return prompt(f"{title} > ", default=default).strip()
         except (EOFError, KeyboardInterrupt):
             return None
 
-    def show(self, renderable) -> None:
+    def show(self, renderable: Any) -> None:
+        """Render a Rich object in the terminal."""
         self.console.print(renderable)

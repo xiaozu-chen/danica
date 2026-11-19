@@ -2,12 +2,14 @@
 
 from danica.knowledge import KnowledgeError, render_hits
 from danica.tools.registry import tool
+from danica.workspace import Workspace
 
 
 @tool("knowledge_search", "Search user-indexed local Markdown, Obsidian, and PDF sources. Cite passages with their [K...] id.",
       {"query": {"type": "string", "description": "Terms or a question to search for"},
        "limit": {"type": "integer", "default": 6, "description": "Maximum passages (1-12)"}})
-def knowledge_search(ws, query: str, limit: int = 6) -> str:
+def knowledge_search(ws: Workspace, query: str, limit: int = 6) -> str:
+    """Search user-indexed local Markdown, Obsidian, and PDF sources."""
     index = getattr(ws, "knowledge_index", None)
     if index is None:
         return "ERROR: local knowledge search is unavailable in this session."

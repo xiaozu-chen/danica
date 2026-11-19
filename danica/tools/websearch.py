@@ -127,6 +127,7 @@ def _clean_results(raw: list[dict], limit: int) -> list[tuple[str, str, str]]:
     },
 )
 def web_search(ws: Workspace, query: str, count: int = 5) -> str:
+    """Search the web."""
     query = " ".join(str(query).split())
     if not query:
         return "ERROR: the query is empty"

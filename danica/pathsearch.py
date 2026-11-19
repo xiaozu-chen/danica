@@ -11,18 +11,32 @@ import os
 
 
 def find_program(name: str) -> str | None:
-    """The full path of a program, or None. Honors PATHEXT (so "mmdc" finds mmdc.cmd)."""
+    """Return a program's full path, or ``None`` if it is not found.
+
+    Honor ``PATHEXT`` on Windows so a name such as ``mmdc`` can match
+    ``mmdc.cmd``.
+    """
     has_suffix = bool(os.path.splitext(name)[1])
-    exts = [""] if has_suffix else [e.lower() for e in os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(";") if e]
-    cwd = os.path.normcase(os.path.abspath(os.getcwd()))
+    extensions = (
+        [""]
+        if has_suffix
+        else [
+            extension.lower()
+            for extension in os.environ.get(
+                "PATHEXT", ".COM;.EXE;.BAT;.CMD"
+            ).split(";")
+            if extension
+        ]
+    )
+    current_directory = os.path.normcase(os.path.abspath(os.getcwd()))
     for entry in os.environ.get("PATH", "").split(os.pathsep):
         entry = entry.strip().strip('"')
         if not entry or not os.path.isabs(entry):
             continue                                   # "." and relative folders mean "the current directory"
-        if os.path.normcase(os.path.abspath(entry)) == cwd:
+        if os.path.normcase(os.path.abspath(entry)) == current_directory:
             continue
-        for ext in exts:
-            candidate = os.path.join(entry, name + ext)
+        for extension in extensions:
+            candidate = os.path.join(entry, name + extension)
             if os.path.isfile(candidate):
                 return candidate
     return None

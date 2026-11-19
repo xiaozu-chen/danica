@@ -24,6 +24,8 @@ MAX_UNFETCHED = 3     # how many unfetched URLs to list (keeps the notice short)
 
 @dataclass
 class CitationReport:
+    """Store citation validation results for a response."""
+
     cited: list[str] = field(default_factory=list)            # valid source ids, first-cited first
     invalid: list[str] = field(default_factory=list)          # citations that point to nothing
     unfetched_urls: list[str] = field(default_factory=list)   # URLs in the answer never fetched

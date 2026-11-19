@@ -35,6 +35,7 @@ import json
 import os
 import re
 import unicodedata
+from typing import Any
 from html import escape
 from pathlib import Path
 
@@ -75,7 +76,7 @@ def _index(answer, options: list[str], where: str) -> int:
     raise InteractiveError(f"{where}: the answer must be an option number (0 = first) or exactly one of the options")
 
 
-def validate_quiz(data) -> dict:
+def validate_quiz(data: dict[str, Any]) -> dict[str, Any]:
     """Check a quiz spec and return a cleaned copy. Raises InteractiveError with a fix-it message."""
     if not isinstance(data, dict):
         raise InteractiveError('the file must hold one JSON object: {"title": "...", "questions": [...]}')
@@ -96,8 +97,14 @@ def validate_quiz(data) -> dict:
         raw = q.get("answer")
         if kind in ("choice", "multi"):
             options = q.get("options")
-            if not isinstance(options, list) or not 2 <= len(options) <= MAX_OPTIONS or any(
-                    isinstance(o, (dict, list)) or not str(o).strip() for o in options):
+            if (
+                not isinstance(options, list)
+                or not 2 <= len(options) <= MAX_OPTIONS
+                or any(
+                    isinstance(option, (dict, list)) or not str(option).strip()
+                    for option in options
+                )
+            ):
                 raise InteractiveError(f'{where} needs "options": 2 to {MAX_OPTIONS} non-empty texts')
             item["options"] = [_t(o, MAX_OPT) for o in options]
             if len({o.lower() for o in item["options"]}) != len(item["options"]):
@@ -121,7 +128,12 @@ def validate_quiz(data) -> dict:
         else:                                                   # text
             if raw is not None:
                 accepted = raw if isinstance(raw, list) else [raw]
-                accepted = [_t(a, MAX_OPT) for a in accepted if not isinstance(a, (dict, list)) and str(a).strip()]
+                accepted = [
+                    _t(answer, MAX_OPT)
+                    for answer in accepted
+                    if not isinstance(answer, (dict, list))
+                    and str(answer).strip()
+                ]
                 if not accepted:
                     raise InteractiveError(f'{where}: a text answer must be a text (or a list of accepted texts)')
                 item["answer"] = accepted
@@ -138,7 +150,7 @@ def validate_quiz(data) -> dict:
     return {"kind": "quiz", "title": _t(data.get("title", "Quiz"), MAX_TITLE) or "Quiz", "mode": mode, "questions": out}
 
 
-def validate_cards(data) -> dict:
+def validate_cards(data: dict[str, Any]) -> dict[str, Any]:
     """Check a flash card spec and return a cleaned copy."""
     if not isinstance(data, dict):
         raise InteractiveError('the file must hold one JSON object: {"title": "...", "cards": [...]}')

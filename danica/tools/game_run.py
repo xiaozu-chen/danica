@@ -30,8 +30,11 @@ def _check_actions(actions, frames: int) -> str | None:
             return f"ERROR: action {n} needs exactly one of: {', '.join(ACTION_KINDS)}"
         if a["frame"] > frames:
             return f"ERROR: action {n} is at frame {a['frame']} but the run only has {frames} frames"
-        if kinds[0] in ("click", "move") and not (isinstance(a[kinds[0]], list) and len(a[kinds[0]]) == 2
-                                                  and all(isinstance(v, (int, float)) for v in a[kinds[0]])):
+        if kinds[0] in ("click", "move") and not (
+            isinstance(a[kinds[0]], list)
+            and len(a[kinds[0]]) == 2
+            and all(isinstance(v, (int, float)) for v in a[kinds[0]])
+        ):
             return f"ERROR: action {n}: {kinds[0]} must be [x, y], for example [120, 80]"
         if "hold" in a and (not isinstance(a["hold"], int) or not 1 <= a["hold"] <= 600):
             return f"ERROR: action {n}: hold is a number of frames from 1 to 600"
@@ -68,8 +71,18 @@ def _check_actions(actions, frames: int) -> str | None:
         "out": {"type": "string", "description": "Picture to save, for example shots/game.png", "default": "shots/game.png"},
     },
 )
-def game_run(ws: Workspace, game: str, frames: int = 120, actions: list | None = None, shots: list | None = None,
-             probes: list | None = None, out: str = "shots/game.png") -> str:
+def game_run(
+    ws: Workspace,
+    game: str,
+    frames: int = 120,
+    actions: list | None = None,
+    shots: list | None = None,
+    probes: list | None = None,
+    out: str = "shots/game.png",
+) -> str:
+    """Run a pygame game HEADLESS (no window opens), play it with scripted input,
+        and see it.
+    """
     actions, shots, probes = actions or [], shots or [], probes or []
     # ---- the game file
     path = ws.resolve(game)
@@ -88,14 +101,20 @@ def game_run(ws: Workspace, game: str, frames: int = 120, actions: list | None =
     bad = _check_actions(actions, frames)
     if bad:
         return bad
-    if not isinstance(shots, list) or not all(isinstance(s, int) and 1 <= s <= frames for s in shots):
+    if not isinstance(shots, list) or not all(
+        isinstance(shot, int) and 1 <= shot <= frames for shot in shots
+    ):
         return f"ERROR: shots must be frame numbers between 1 and {frames}"
     shots = sorted(set(shots))
     if len(shots) > gamerun.MAX_SHOTS:
         return f"ERROR: at most {gamerun.MAX_SHOTS} pictures per run"
     if not shots:                                                  # default: three evenly spread, the last one at the end
         shots = sorted({max(1, frames // 3), max(1, 2 * frames // 3), frames})
-    if not isinstance(probes, list) or len(probes) > gamerun.MAX_PROBES or not all(isinstance(p, str) and 0 < len(p) <= 200 for p in probes):
+    if (
+        not isinstance(probes, list)
+        or len(probes) > gamerun.MAX_PROBES
+        or not all(isinstance(probe, str) and 0 < len(probe) <= 200 for probe in probes)
+    ):
         return f"ERROR: probes must be at most {gamerun.MAX_PROBES} short expressions (strings)"
     # ---- where the picture goes
     target = ws.resolve(out)
@@ -109,7 +128,9 @@ def game_run(ws: Workspace, game: str, frames: int = 120, actions: list | None =
         if re.fullmatch(rf"{re.escape(target.stem)}_f\d{{4}}\.png", old.name):
             old.unlink(missing_ok=True)
 
-    result = gamerun.run(path, target, frames=frames, actions=actions, shots=shots, probes=probes)
+    result = gamerun.run(
+        path, target, frames=frames, actions=actions, shots=shots, probes=probes
+    )
     if result.get("error") and not result.get("status"):          # the run itself failed: no report exists
         log = f"\nThe game printed:\n{result['log']}" if result.get("log") else ""
         return f"ERROR: {result['error']}{log}"

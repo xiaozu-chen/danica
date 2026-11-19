@@ -121,6 +121,7 @@ def check_png(data: bytes) -> None:
 # ----------------------------------------------------------------- finding them
 
 def find_dot() -> str | None:
+    """Find the configured Graphviz executable, if available."""
     configured = str(CONFIG["diagrams"]["dot_path"]).strip()
     if configured:
         return configured if Path(configured).is_file() else None
@@ -136,6 +137,7 @@ def find_dot() -> str | None:
 
 
 def find_mmdc() -> str | None:
+    """Find the configured Mermaid CLI executable, if available."""
     configured = str(CONFIG["diagrams"]["mmdc_path"]).strip()
     if configured:
         return configured if Path(configured).is_file() else None
@@ -183,6 +185,7 @@ def to_dot(spec: dict) -> str:
 
 
 def graphviz_png(spec: dict) -> bytes:
+    """Render a validated diagram specification with Graphviz."""
     dot = find_dot()
     if not dot:
         raise DiagramError("Graphviz (dot) was not found. Install it, or set [diagrams] dot_path in config.toml")
@@ -245,6 +248,7 @@ def validate_mermaid(source: str) -> str:
 
 
 def mermaid_png(source: str) -> bytes:
+    """Render validated Mermaid source to a PNG image."""
     text = validate_mermaid(source)
     mmdc = find_mmdc()
     if not mmdc:
@@ -270,6 +274,7 @@ def mermaid_png(source: str) -> bytes:
 # ----------------------------------------------------------------------- status
 
 def status_lines() -> list[str]:
+    """Describe diagram engine configuration and availability."""
     cfg = CONFIG["diagrams"]
     lines = [f"diagram engine setting: {cfg['engine']} (auto = Graphviz if found, else the built-in drawing)",
              f"confinement (Job Object): {'on' if cfg['confine'] else 'off'}"]
@@ -279,7 +284,7 @@ def status_lines() -> list[str]:
             lines.append(f"{label}: not found")
             continue
         try:
-            code, out, err = run([path, flag], tempfile.gettempdir(), timeout=60)
+            _, out, err = run([path, flag], tempfile.gettempdir(), timeout=60)
             version = (err.strip() or out.decode("utf-8", errors="replace").strip()).splitlines()[0][:70]
             lines.append(f"{label}: {path} ({version})")
         except DiagramError as e:

@@ -93,6 +93,11 @@ def _save(ws: Workspace, text: str) -> str:
     },
 )
 def todo(ws: Workspace, action: str, content: str = "", item: str | int = "") -> str:
+    """Your scratchpad plan (TODO.md). action 'set' replaces it with markdown: a
+        goal line plus a checklist of '- [ ] step' lines. action 'done' ticks off
+        checklist items by number (item '2' or '1,2,3'); tick each step right after
+        you finish it. action 'clear' deletes the plan. action 'show' prints it.
+    """
     if ws.todo_path is None:
         return "ERROR: there is no TODO.md in this session"
 

@@ -18,6 +18,8 @@ NAME_RX = re.compile(r"^[a-z0-9][a-z0-9._-]{0,79}$")
 
 @dataclass(frozen=True)
 class Skill:
+    """Describe a skill available to the model."""
+
     name: str
     description: str
     path: Path
@@ -131,6 +133,9 @@ def skills_prompt(root: Path | None = None) -> tuple[str, list[str]]:
     {"name": {"type": "string", "description": "Exact skill name from the global skills catalog"}},
 )
 def load_skill(ws: Workspace, name: str) -> str:
+    """Load the full instructions for a relevant skill from Danica's global,
+        user-managed skills folder.
+    """
     try:
         body = skill_body(name)
     except (OSError, UnicodeError, ValueError) as e:

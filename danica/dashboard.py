@@ -9,6 +9,7 @@ tables hold at most 10 rows.
 """
 
 import io
+from typing import Any
 
 from danica.charts import ChartError, _draw, _draw_table, _plt, _text
 from danica.charts import validate as validate_chart
@@ -18,7 +19,7 @@ FONT_SCALE = {1: 1.0, 2: 0.85, 3: 0.7}          # panel fonts shrink as columns 
 WIDTH_IN, KPI_H, PANEL_H = 12.0, 1.4, 4.2       # inches: the picture is 1200 pixels wide
 
 
-def validate(data) -> dict:
+def validate(data: dict[str, Any]) -> dict[str, Any]:
     """Check a dashboard spec and return a cleaned copy. Raises ChartError with a fix-it message."""
     if not isinstance(data, dict):
         raise ChartError('the file must hold one JSON object, like {"title": "...", "panels": [...]}')
@@ -49,7 +50,11 @@ def validate(data) -> dict:
     columns = data.get("columns")
     if columns is None:
         columns = 2 if len(clean_panels) > 1 else 1
-    if isinstance(columns, bool) or not isinstance(columns, int) or columns not in (1, 2, 3):
+    if (
+        isinstance(columns, bool)
+        or not isinstance(columns, int)
+        or columns not in (1, 2, 3)
+    ):
         raise ChartError('"columns" must be 1, 2 or 3')
     return {"title": _text(data.get("title", ""), 120), "columns": columns, "kpis": kpis, "panels": clean_panels}
 
@@ -81,8 +86,15 @@ def render(spec: dict) -> bytes:
             fig.text(0.5, 1 - 0.45 / total, spec["title"], ha="center", va="center", fontsize=20, weight="bold")
         y = title_h
         if kpis:
-            grid = fig.add_gridspec(1, len(kpis), left=0.04, right=0.96, top=1 - y / total,
-                                    bottom=1 - (y + KPI_H - 0.25) / total, wspace=0.12)
+            grid = fig.add_gridspec(
+                1,
+                len(kpis),
+                left=0.04,
+                right=0.96,
+                top=1 - y / total,
+                bottom=1 - (y + KPI_H - 0.25) / total,
+                wspace=0.12,
+            )
             for i, k in enumerate(kpis):
                 _tile(fig.add_subplot(grid[0, i]), k)
             y += KPI_H

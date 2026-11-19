@@ -112,6 +112,8 @@ class _Record:
 
 @dataclass
 class Verdict:
+    """Describe the loop guard's response to a completed tool call."""
+
     note: str = ""          # append to THIS call's result (level 1)
     reminder: str = ""      # send as a harness reminder before the next model turn (level 2)
     stop: str = ""          # end the request with this message (level 4)
@@ -119,6 +121,8 @@ class Verdict:
 
 @dataclass
 class LoopGuard:
+    """Detect repeated tool calls and guide the agent out of loops."""
+
     history: list[_Record] = field(default_factory=list)
     blocked: dict[str, str] = field(default_factory=dict)       # sig -> label of a blocked call
     fired: set[str] = field(default_factory=set)                # reminders already sent
@@ -181,7 +185,9 @@ class LoopGuard:
                                              "(the content changes a little each time)", "path:" + pkey, str(n))
             if n > PATH_REMIND_AT[kind] - 1:              # a file rewritten this often is NOT progress
                 self.total += 1
-                self.history.append(_Record(sig, name, _hash(_norm_output(result)), len(result), label))
+                self.history.append(
+                    _Record(sig, name, _hash(_norm_output(result)), len(result), label)
+                )
                 del self.history[:-WINDOW]
                 return Verdict(reminder=path_reminder)
         if name in PROGRESS_TOOLS and not failed and sig not in self.seen_progress:
@@ -273,7 +279,9 @@ class LoopGuard:
             if len(sigs) < need:
                 break
             tail = sigs[-need:]
-            if len(set(tail[:p])) > 1 and all(tail[i] == tail[i % p] for i in range(need)):
+            if len(set(tail[:p])) > 1 and all(
+                tail[i] == tail[i % p] for i in range(need)
+            ):
                 return p
         return 0
 

@@ -16,8 +16,11 @@ Core tools (files, shell, search, web, todo, memory, ask_user, skills, delegate,
 """
 
 import re
+from collections.abc import Iterable
+from typing import Any
 
 from danica.config import CONFIG
+from danica.workspace import Workspace
 
 GROUPS: dict[str, dict] = {
     "screen": {"tools": ["screen_windows", "screen_shot", "screen_click", "screen_drag", "screen_type", "screen_key",
@@ -48,10 +51,11 @@ WORDS = {group: re.compile(spec["words"], re.I) for group, spec in GROUPS.items(
 
 
 def enabled() -> bool:
+    """Return whether lazy tool group loading is enabled."""
     return bool((CONFIG.get("tools") or {}).get("lazy", True))
 
 
-def active(ws) -> set:
+def active(ws: Workspace) -> set[str]:
     """The groups switched on for this session (stored on the workspace, so a new session starts with none)."""
     groups = getattr(ws, "tool_groups", None)
     if groups is None:
@@ -62,7 +66,7 @@ def active(ws) -> set:
     return groups
 
 
-def activate(ws, groups) -> list[str]:
+def activate(ws: Workspace, groups: Iterable[str]) -> list[str]:
     """Switch groups on. Returns the names that were new."""
     on = active(ws)
     new = [g for g in groups if g in GROUPS and g not in on]
@@ -70,26 +74,28 @@ def activate(ws, groups) -> list[str]:
     return new
 
 
-def from_text(ws, text: str) -> list[str]:
+def from_text(ws: Workspace, text: str) -> list[str]:
     """Switch on the groups a request talks about. Returns the new ones."""
     return activate(ws, [g for g, rx in WORDS.items() if rx.search(text or "")])
 
 
-def from_tool(ws, name: str) -> None:
+def from_tool(ws: Workspace, name: str) -> None:
     """The model used a tool of a group that was off (it knew it from a skill): switch the group on."""
     group = OWNER.get(name)
     if group:
         activate(ws, [group])
 
 
-def from_history(ws, messages) -> None:
+def from_history(ws: Workspace, messages: Iterable[dict[str, Any]]) -> None:
     """A resumed conversation: groups its tool calls used stay on, so the start of the prompt matches what was cached."""
     for m in messages:
         for call in m.get("tool_calls") or []:
             from_tool(ws, (call.get("function") or {}).get("name", ""))
 
 
-def select(schemas: list[dict], ws) -> list[dict]:
+def select(
+    schemas: list[dict[str, Any]], ws: Workspace
+) -> list[dict[str, Any]]:
     """The schemas to send: everything outside a group, plus the groups that are on. Same order every time."""
     if not enabled():
         return schemas
@@ -97,10 +103,12 @@ def select(schemas: list[dict], ws) -> list[dict]:
     return [s for s in schemas if OWNER.get(s["function"]["name"]) in (None, *on)]
 
 
-def hidden_names(schemas: list[dict], ws) -> list[str]:
+def hidden_names(schemas: list[dict[str, Any]], ws: Workspace) -> list[str]:
+    """Return tool names whose groups are currently inactive."""
     on = active(ws)
     return [s["function"]["name"] for s in schemas if OWNER.get(s["function"]["name"]) not in (None, *on)]
 
 
 def describe() -> str:
+    """Describe the available lazy loaded tool groups."""
     return "; ".join(f"{g} ({spec['about']})" for g, spec in GROUPS.items())

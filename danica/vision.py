@@ -26,6 +26,7 @@ from pathlib import Path
 from PIL import Image
 
 from danica.config import CONFIG
+from danica.workspace import Workspace
 
 MAX_SIDE = 1024                # longest side after shrinking (pixels)
 MAX_FILE_BYTES = 12_000_000    # refuse bigger files outright
@@ -62,6 +63,7 @@ def refresh() -> bool:
 
 
 def available() -> bool:
+    """Return whether the configured model server supports images."""
     return bool(STATE["vision"])
 
 
@@ -146,7 +148,7 @@ def prepare(messages: list[dict], root: Path | None = None) -> list[dict]:
                     path = Path(rel)
                     if not path.is_absolute() and root is not None:
                         path = root / rel
-                    uri, w, h = load_data_uri(path)
+                    uri, _, _ = load_data_uri(path)
                     parts.append({"type": "image_url", "image_url": {"url": uri}})
                     # Say so in words: a small model otherwise goes looking for the file with its tools
                     where = f" (saved in the workspace as {rel})" if not Path(rel).is_absolute() else ""
@@ -173,7 +175,7 @@ def extra_tokens(messages: list[dict]) -> int:
     return _count_images(messages) * IMAGE_TOKENS if available() else 0
 
 
-def take_pending(ws) -> list[str]:
+def take_pending(ws: Workspace) -> list[str]:
     """The pictures view_image queued during this step (and empty the queue)."""
     queue = list(getattr(ws, "pending_images", None) or [])
     ws.pending_images = []

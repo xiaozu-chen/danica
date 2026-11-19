@@ -46,6 +46,7 @@ class AskScreen(ModalScreen):
         return option["label"] + (f"  -  {option['description']}" if option.get("description") else "")
 
     def compose(self) -> ComposeResult:
+        """Compose the user question dialog."""
         many = len(self.questions) > 1
         with Vertical(classes="ask-box"):
             yield Static(Text("Danica has " + ("some questions" if many else "a question")
@@ -63,6 +64,7 @@ class AskScreen(ModalScreen):
                 yield Button("Skip  (Esc)", id="skip")
 
     def on_mount(self) -> None:
+        """Focus the first answer field after mounting."""
         first = self.query("RadioSet, SelectionList")
         if first:
             first.first().focus()
@@ -81,12 +83,15 @@ class AskScreen(ModalScreen):
         return out
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle dialog button actions."""
         event.stop()
         self.dismiss(self.answers() if event.button.id == "send" else None)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Advance or submit a typed answer."""
         event.stop()                       # Enter in a text box sends everything
         self.dismiss(self.answers())
 
     def action_skip(self) -> None:
+        """Skip the remaining questions."""
         self.dismiss(None)

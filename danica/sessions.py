@@ -84,7 +84,9 @@ def repair(messages: list[dict]) -> tuple[list[dict], int]:
     return out, fixed
 
 
-def rebuild(records: list[dict], system_message: dict) -> tuple[list[dict], str, int, int]:
+def rebuild(
+    records: list[dict], system_message: dict
+) -> tuple[list[dict], str, int, int]:
     """Replay records. Returns (messages, narrative, compactions, repairs_made)."""
     messages = [system_message]
     narrative, compactions = "", 0
@@ -107,13 +109,22 @@ def rebuild(records: list[dict], system_message: dict) -> tuple[list[dict], str,
     return messages, narrative, compactions, fixed
 
 
-def list_sessions(sessions_dir: Path = SESSIONS_DIR, limit: int = MAX_LIST) -> list[dict]:
+def list_sessions(
+    sessions_dir: Path = SESSIONS_DIR, limit: int = MAX_LIST
+) -> list[dict]:
     """Newest first. Sessions without any user request are skipped."""
     sessions_dir = Path(sessions_dir)
     if not sessions_dir.exists():
         return []
-    folders = sorted((d for d in sessions_dir.iterdir() if d.is_dir() and ID_RX.fullmatch(d.name)),
-                     key=lambda d: d.name, reverse=True)
+    folders = sorted(
+        (
+            directory
+            for directory in sessions_dir.iterdir()
+            if directory.is_dir() and ID_RX.fullmatch(directory.name)
+        ),
+        key=lambda directory: directory.name,
+        reverse=True,
+    )
     found = []
     for folder in folders[:200]:           # never scan thousands of folders
         path = folder / "transcript.jsonl"
@@ -176,13 +187,20 @@ def all_session_ids(sessions_dir: Path = SESSIONS_DIR) -> list[str]:
     sessions_dir = Path(sessions_dir)
     if not sessions_dir.exists():
         return []
-    return sorted((d.name for d in sessions_dir.iterdir() if d.is_dir() and ID_RX.fullmatch(d.name)), reverse=True)
+    return sorted(
+        (
+            directory.name
+            for directory in sessions_dir.iterdir()
+            if directory.is_dir() and ID_RX.fullmatch(directory.name)
+        ),
+        reverse=True,
+    )
 
 
 def folder_size(path: Path) -> int:
     """Total bytes under a folder. Links are counted as links, never followed."""
     total = 0
-    for dirpath, dirnames, filenames in os.walk(path, followlinks=False):
+    for dirpath, _, filenames in os.walk(path, followlinks=False):
         for name in filenames:
             try:
                 total += os.lstat(os.path.join(dirpath, name)).st_size
@@ -273,7 +291,10 @@ def delete_session(sessions_dir: Path, sid: str) -> bool:
     folder = sessions_dir / sid
     if not folder.is_dir():
         return False
-    if folder.is_symlink() or Path(os.path.realpath(folder)) != Path(os.path.realpath(sessions_dir)) / sid:
+    if folder.is_symlink() or (
+        Path(os.path.realpath(folder))
+        != Path(os.path.realpath(sessions_dir)) / sid
+    ):
         raise ValueError(f"{sid} is a link, not a real session folder: left alone")
     shutil.rmtree(folder, onerror=_unlock)
     return not folder.exists()

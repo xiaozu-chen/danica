@@ -1,0 +1,1 @@
+"""Danica local assistant package."""

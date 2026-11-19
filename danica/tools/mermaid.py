@@ -24,6 +24,9 @@ from danica.workspace import Workspace
     },
 )
 def mermaid(ws: Workspace, file: str) -> str:
+    """Draw a diagram as a PNG image from Mermaid text you wrote with write_file
+        (for example diagrams/login.mmd).
+    """
     p = ws.resolve(file)
     if p.suffix.lower() not in (".mmd", ".mermaid"):
         return "ERROR: the file must end in .mmd (write the Mermaid text with write_file first)"

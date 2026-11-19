@@ -19,10 +19,13 @@ TAG_RX = re.compile(r'<present\s+file\s*=\s*"([^"\n<>]{1,260})"\s*/?>')
 
 
 class PresentFilter:
+    """Filter repeated presentation events while a result is shown."""
+
     def __init__(self) -> None:
         self.buf = ""
 
     def feed(self, text: str) -> list[tuple[str, str]]:
+        """Separate safe text from complete presentation tags in a stream chunk."""
         self.buf += text
         out: list[tuple[str, str]] = []
         while True:

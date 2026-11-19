@@ -1,3 +1,5 @@
+"""Run the Danica terminal interface as a module."""
+
 from danica import perf
 from danica.tui.app import main
 

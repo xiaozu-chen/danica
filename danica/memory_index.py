@@ -97,6 +97,8 @@ def query_terms(text: str, max_terms: int = 12) -> list[str]:
 
 @dataclass
 class Hit:
+    """Represent one result from the memory search index."""
+
     uuid: str
     scope: str
     summary: str
@@ -107,6 +109,7 @@ class Hit:
 
     @property
     def id(self) -> str:
+        """Return the short identifier shown in search results."""
         return self.uuid[:8]
 
 
@@ -119,7 +122,15 @@ def _confidence(page: Page) -> float:
 
 def _digest(page: Page, owner: str) -> str:
     """Fingerprint of everything that goes into the text index, to spot changed pages."""
-    parts = (page.scope, owner, page.title, page.summary, page.body, page.source, page.confidence)
+    parts = (
+        page.scope,
+        owner,
+        page.title,
+        page.summary,
+        page.body,
+        page.source,
+        page.confidence,
+    )
     return hashlib.sha256("\x00".join(parts).encode("utf-8")).hexdigest()
 
 
@@ -167,7 +178,14 @@ def _shred(path: Path) -> None:
 
 
 class MemoryIndex:
-    def __init__(self, path: Path, embedder: Embedder | None = None, min_similarity: float = 0.50):
+    """Build and query the local index of memory notes."""
+
+    def __init__(
+        self,
+        path: Path,
+        embedder: Embedder | None = None,
+        min_similarity: float = 0.50,
+    ):
         self.path = Path(path)
         self.embedder = embedder              # None = keyword search only
         self.min_similarity = min_similarity
@@ -233,8 +251,19 @@ class MemoryIndex:
                 owner = store.owner(p.scope)
                 fingerprint = _digest(p, owner)
                 row = db.execute("SELECT id, hash FROM facts WHERE uuid=?", (p.uuid,)).fetchone()
-                values = (p.scope, owner, p.title, p.summary, p.body, p.source, _confidence(p),
-                          p.created, p.updated, str(p.path), fingerprint)
+                values = (
+                    p.scope,
+                    owner,
+                    p.title,
+                    p.summary,
+                    p.body,
+                    p.source,
+                    _confidence(p),
+                    p.created,
+                    p.updated,
+                    str(p.path),
+                    fingerprint,
+                )
                 if row is None:
                     cur = db.execute(
                         "INSERT INTO facts(uuid, scope, owner, title, summary, body, source, confidence, "
@@ -280,12 +309,19 @@ class MemoryIndex:
         with self._conn() as db:
             db.execute("DELETE FROM facts_vec WHERE model != ?", (model,))   # a swapped model: start over
             have = dict(db.execute("SELECT uuid, hash FROM facts_vec").fetchall())
-        todo = [(uid, text, h) for uid, (text, h) in wanted.items() if have.get(uid) != h]
+        todo = [
+            (uid, text, digest)
+            for uid, (text, digest) in wanted.items()
+            if have.get(uid) != digest
+        ]
 
         for i in range(0, len(todo), EMBED_BATCH):
             batch = todo[i:i + EMBED_BATCH]
             vectors = self.embedder.embed_documents([text for _, text, _ in batch])   # network: no db open
-            rows = [(uid, model, len(vec), h, _pack(vec)) for (uid, _, h), vec in zip(batch, vectors)]
+            rows = [
+                (uid, model, len(vector), digest, _pack(vector))
+                for (uid, _, digest), vector in zip(batch, vectors)
+            ]
             with self._conn() as db:
                 db.executemany("INSERT OR REPLACE INTO facts_vec(uuid, model, dim, hash, vec) "
                                "VALUES (?,?,?,?,?)", rows)
@@ -324,11 +360,21 @@ class MemoryIndex:
             fts_rows = db.execute(fts_sql, [match] + params + [CANDIDATES]).fetchall()
             vec_rows = []
             if qvec is not None:
-                vec_rows = db.execute(vec_sql, [_pack(qvec), self.embedder.model_name, len(qvec)]
-                                      + params + [CANDIDATES]).fetchall()
+                vec_rows = db.execute(
+                    vec_sql,
+                    [_pack(qvec), self.embedder.model_name, len(qvec)]
+                    + params
+                    + [CANDIDATES],
+                ).fetchall()
         return fts_rows, vec_rows
 
-    def recall(self, store: MemoryStore, query: str, count: int = 5, max_terms: int = 12) -> list[Hit]:
+    def recall(
+        self,
+        store: MemoryStore,
+        query: str,
+        count: int = 5,
+        max_terms: int = 12,
+    ) -> list[Hit]:
         """The best-matching notes among the open scopes, best first. [] if nothing matches.
         Sets self.mode / self.note / self.nearest to describe what happened."""
         self.mode, self.note, self.nearest = "keyword", "", None
@@ -435,7 +481,9 @@ class MemoryIndex:
                "AND (1.0 - vec_distance_cosine(va.vec, vb.vec)) >= ? "
                "ORDER BY sim DESC LIMIT ?")
         with self._conn(vectors=True) as db:
-            rows = db.execute(sql, [model, model] + params + [threshold, limit]).fetchall()
+            rows = db.execute(
+                sql, [model, model] + params + [threshold, limit]
+            ).fetchall()
         return [(float(sim), a, b) for a, b, sim in rows]
 
     def purge(self, uuids: list[str]) -> list[int]:

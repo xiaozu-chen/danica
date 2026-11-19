@@ -5,30 +5,28 @@ widgets.py - The things that appear in the transcript, plus the prompt, busy lin
 from __future__ import annotations
 
 import difflib
+import random
 import time
 from datetime import datetime
 from pathlib import Path
-import random
+from typing import Any
 
 from rich import box
 from rich.console import Group
 from rich.panel import Panel
 from rich.style import Style
 from rich.syntax import Syntax
-from rich.text import Span
 from rich.table import Table
-from rich.text import Text
-from textual.binding import Binding
-from textual.message import Message
-from textual.widgets import Markdown, OptionList, Static, TextArea
-from textual.widgets.option_list import Option
+from rich.text import Span, Text
 from textual.containers import Vertical
+from textual.message import Message
 from textual.widgets import Markdown, OptionList, RichLog, Static, TextArea
+from textual.widgets.option_list import Option
 
 from danica.config import APP_DIR
 from danica.partial_json import partial_fields
 
-from danica.ui import TAG_COLORS, TAG_WIDTH
+from danica.ui import TAG_COLORS
 
 ACCENT = "#ffffff"
 HISTORY_PATH = APP_DIR / "history.txt"
@@ -44,6 +42,8 @@ TIPS_LABEL = [
 # ----------------------------------------------------------------------------- transcript
 
 class UserMessage(Static):
+    """Render a user message in the conversation transcript."""
+
     def __init__(self, text: str) -> None:
         t = Text()
         t.append("> ", style=f"bold {ACCENT}")
@@ -60,9 +60,11 @@ class AssistantMessage(Markdown):
         self._dirty = False
 
     def on_mount(self) -> None:
+        """Set up streaming state after the message widget mounts."""
         self.set_interval(0.08, self._flush)
 
     def append(self, text: str) -> None:
+        """Append streamed assistant text to the message."""
         self._buf += text
         self._dirty = True
 
@@ -72,6 +74,7 @@ class AssistantMessage(Markdown):
             self.update(self._buf)
 
     def finish(self) -> None:
+        """Finalize the assistant message after streaming ends."""
         if self.is_attached:
             self._dirty = True
             self._flush()
@@ -88,14 +91,17 @@ class ThinkingBlock(Static):
         self.expanded = False
 
     def append(self, text: str) -> None:
+        """Append streamed reasoning text to the block."""
         self.buf += text
         self._paint()
 
     def finish(self) -> None:
+        """Finalize the reasoning block after streaming ends."""
         self.done = True
         self._paint()
 
     def on_click(self) -> None:
+        """Toggle the expanded reasoning display."""
         self.expanded = not self.expanded
         self._paint()
 
@@ -128,8 +134,18 @@ def highlighted(code: str, lexer: str) -> Text:
             style = span.style
             if isinstance(style, str):
                 style = Style.parse(style)
-            spans.append(Span(span.start, span.end, Style(color=style.color, bold=style.bold,
-                                                          italic=style.italic, underline=style.underline)))
+            spans.append(
+                Span(
+                    span.start,
+                    span.end,
+                    Style(
+                        color=style.color,
+                        bold=style.bold,
+                        italic=style.italic,
+                        underline=style.underline,
+                    ),
+                )
+            )
         plain = Text(raw.plain, spans=spans)
     except Exception:
         plain = Text(code)
@@ -143,7 +159,7 @@ def highlighted(code: str, lexer: str) -> Text:
     return out
 
 
-def edit_pair(args) -> tuple[str, str] | None:
+def edit_pair(args: Any) -> tuple[str, str] | None:
     """Which two argument names hold the old and new text of an edit (None if not an edit)."""
     if isinstance(args, dict):
         for old, new in EDIT_PAIRS:
@@ -152,7 +168,7 @@ def edit_pair(args) -> tuple[str, str] | None:
     return None
 
 
-def content_key(args) -> str | None:
+def content_key(args: Any) -> str | None:
     """The argument holding a whole file's text (a write), if there is one."""
     if isinstance(args, dict) and isinstance(args.get("path"), str):
         for key in CONTENT_KEYS:
@@ -161,7 +177,8 @@ def content_key(args) -> str | None:
     return None
 
 
-def summarize_args(args, hide: tuple = ()) -> str:
+def summarize_args(args: Any, hide: tuple[str, ...] = ()) -> str:
+    """Format tool arguments for concise display."""
     if not isinstance(args, dict):
         return str(args)[:120]
     parts = []
@@ -275,7 +292,10 @@ class ToolCall(Static):
                 lexer = Syntax.guess_lexer(path, code) if path else "text"
             except Exception:
                 lexer = "text"
-            return Group(highlighted(shown, lexer), *filter(None, [self._more(len(lines) - limit)]))
+            return Group(
+                highlighted(shown, lexer),
+                *filter(None, [self._more(len(lines) - limit)]),
+            )
         if self.command is not None:
             return Text("$ " + self.command, style="#c0caf5")
         return None
@@ -308,6 +328,7 @@ class ToolCall(Static):
     # -- behaviour ----------------------------------------------------------------------
 
     def on_mount(self) -> None:
+        """Initialize the tool call display after mounting."""
         if self.streaming:                  # redraw at most 10x/second, however fast tokens arrive
             self._timer = self.set_interval(0.1, self._tick)
 
@@ -328,7 +349,7 @@ class ToolCall(Static):
             self._timer.stop()
             self._timer = None
 
-    def finalize(self, args) -> None:
+    def finalize(self, args: Any) -> None:
         """The arguments are complete: switch to the real, parsed ones."""
         self._stop_streaming()
         self._set_args(args)
@@ -341,15 +362,18 @@ class ToolCall(Static):
             self.result = "ERROR: interrupted"
             self.update(self._build())
 
-    def set_result(self, text) -> None:
+    def set_result(self, text: str) -> None:
+        """Attach a tool result to the displayed call."""
         self.result = str(text)
         self.update(self._build())
 
     def toggle(self) -> None:
+        """Expand or collapse the tool call details."""
         self.expanded = not self.expanded
         self.update(self._build())
 
     def on_click(self) -> None:
+        """Toggle the tool call details when clicked."""
         self.toggle()
 
 
@@ -375,12 +399,16 @@ class Say(Static):
 
 
 class Citations(Static):
+    """Render citation links and validation details."""
+
     def __init__(self, text: str) -> None:
         super().__init__(Text(text, style="yellow" if "WARNING" in text else "green"),
                          classes="citations")
 
 
 class ArtifactsList(Static):
+    """Render the files produced or changed by a request."""
+
     def __init__(self, found) -> None:
         from rich.style import Style
         t = Text("Files from this request:", style="dim")
@@ -424,6 +452,7 @@ class ArtifactsList(Static):
 def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.4.0",
                   open_mode: bool = False) -> Panel:
     # Left column content
+    """Build the welcome panel with session tips and recent activity."""
     left = Text(justify="center")
     left.append("Welcome back boss!\n\n", style="bold")
     left.append("""
@@ -555,14 +584,17 @@ class PromptInput(TextArea):
     # `value` mirrors Input's API so the rest of the app reads the same either way
     @property
     def value(self) -> str:
+        """Return or update the current prompt text."""
         return self.text
 
     @value.setter
     def value(self, text: str) -> None:
+        """Return or update the current prompt text."""
         self.load_text(text)
         self.move_cursor(self.document.end)
 
     def remember(self, text: str) -> None:
+        """Save a submitted prompt to input history."""
         self._pos = None
         if not self.prompt_history or self.prompt_history[-1] != text:
             self.prompt_history.append(text)
@@ -641,6 +673,7 @@ class CommandPopup(OptionList):
         self.matches: list[str] = []
 
     def show_matches(self, matches: list[tuple[str, str]]) -> None:
+        """Display commands matching the current prompt prefix."""
         self.matches = [name for name, _ in matches]
         self.clear_options()
         width = max(len(name) for name, _ in matches) + 2
@@ -653,24 +686,30 @@ class CommandPopup(OptionList):
         self.display = True
 
     def hide(self) -> None:
+        """Hide the command completion popup."""
         self.matches = []
         self.display = False
 
     def current(self) -> str | None:
+        """Return the currently selected command completion."""
         index = self.highlighted
-        return self.matches[index] if index is not None and 0 <= index < len(self.matches) else None
+        if index is None or not 0 <= index < len(self.matches):
+            return None
+        return self.matches[index]
 
 class SubagentPane(Vertical):
     """Right-hand half of the split screen: a live view of the running subagent.
     head = status, log = finished lines, live = the line being streamed right now.
     All methods run on the UI thread."""
 
-    def compose(self):
+    def compose(self) -> Any:
+        """Compose the delegated worker activity pane."""
         yield Static("", id="sub-head")
         yield RichLog(id="sub-log", wrap=True, markup=False, highlight=False)
         yield Static("", id="sub-live")
 
     def on_mount(self) -> None:
+        """Prepare the activity pane after it is mounted."""
         self.border_title = "Subagent"
         self._text = ""                                   # streamed text not yet a full line
 
@@ -690,7 +729,8 @@ class SubagentPane(Vertical):
         self._text = ""
         self._live()
 
-    def handle(self, child_id: str, kind: str, data) -> None:
+    def handle(self, child_id: str, kind: str, data: Any) -> None:
+        """Update the activity pane from a worker event."""
         from danica.subagents import describe_event
         log = self._log()
         if kind == "start":
@@ -722,6 +762,8 @@ class SubagentPane(Vertical):
                 log.write(Text(described[1], style=described[0]))
 
 class BusyLine(Static):
+    """Render an animated status line while the agent is working."""
+
     FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
     def __init__(self, **kwargs) -> None:
@@ -732,15 +774,18 @@ class BusyLine(Static):
         self._timer = None
 
     def on_mount(self) -> None:
+        """Initialize the animation when the status line mounts."""
         self._timer = self.set_interval(0.1, self._tick, pause=True)
 
     def start(self, label: str) -> None:
+        """Start the working status animation."""
         self._label, self._t0, self._i = label, time.monotonic(), 0
         if self._timer:
             self._timer.resume()
         self._tick()
 
     def stop(self) -> None:
+        """Stop the working status animation."""
         if self._timer:
             self._timer.pause()
         self.update("")
@@ -755,4 +800,6 @@ class BusyLine(Static):
 
 
 class StatusBar(Static):
+    """Render session, model, and request status in the footer."""
+
     pass

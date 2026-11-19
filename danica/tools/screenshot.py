@@ -34,8 +34,20 @@ from danica.workspace import Workspace
                              "required": ["do"]}},
     },
 )
-def screenshot(ws: Workspace, target: str, out: str, width: int = 1280, full_page: bool = False,
-               steps: list | None = None) -> str:
+def screenshot(
+    ws: Workspace,
+    target: str,
+    out: str,
+    width: int = 1280,
+    full_page: bool = False,
+    steps: list | None = None,
+) -> str:
+    """Take a screenshot of a web page you built and see it (and any console
+        errors). target is ONE of: a folder (for example dist, a built app), an
+        .html file (for example site/index.html), or a dev-server address
+        (http://localhost:5173). out is the picture to save, for example
+        shots/home.png. width 320-1920 (390 = phone, 1280 = desktop).
+    """
     steps = steps or []
     if not isinstance(steps, list) or len(steps) > shot.MAX_STEPS:
         return f"ERROR: steps must be a list of at most {shot.MAX_STEPS} actions"
@@ -69,7 +81,9 @@ def screenshot(ws: Workspace, target: str, out: str, width: int = 1280, full_pag
         return guarded
     path.parent.mkdir(parents=True, exist_ok=True)
     width = max(320, min(int(width), 1920))
-    result = shot.capture(where, path, width=width, full_page=bool(full_page), steps=steps)
+    result = shot.capture(
+        where, path, width=width, full_page=bool(full_page), steps=steps
+    )
     if not result.get("ok"):
         return f"ERROR: {result.get('error', 'screenshot failed')}"
     shown = ws.display(path)

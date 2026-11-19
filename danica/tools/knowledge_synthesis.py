@@ -2,13 +2,17 @@
 
 from danica.knowledge import KnowledgeError
 from danica.tools.registry import tool
+from danica.workspace import Workspace
 
 
 @tool("knowledge_synthesize",
       "Create a cited answer from indexed local knowledge using context-bounded map/reduce synthesis.",
       {"query": {"type": "string", "description": "A synthesis question"},
        "limit": {"type": "integer", "default": 24, "description": "Maximum passages to consider (1-32)"}})
-def knowledge_synthesize(ws, query: str, limit: int = 24) -> str:
+def knowledge_synthesize(ws: Workspace, query: str, limit: int = 24) -> str:
+    """Create a cited answer from indexed local knowledge using context-bounded
+        map/reduce synthesis.
+    """
     index = getattr(ws, "knowledge_index", None)
     if index is None:
         return "ERROR: local knowledge synthesis is unavailable in this session."

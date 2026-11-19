@@ -45,10 +45,12 @@ LAST: dict = {"what": "", "ms": 0, "error": "", "at": 0.0}      # the latest cal
 
 
 def settings() -> dict:
+    """Return classifier settings merged with their defaults."""
     return {**DEFAULTS, **(CONFIG.get("classifier") or {})}
 
 
 def base_url() -> str:
+    """Return the classifier endpoint without a trailing slash."""
     return (settings()["url"] or CONFIG["server"]["base_url"]).rstrip("/")
 
 
@@ -90,6 +92,7 @@ def status(refresh: bool = False) -> tuple[bool, str]:
 
 
 def ready() -> bool:
+    """Return whether the classifier service is ready to handle requests."""
     return status()[0]
 
 
@@ -118,8 +121,15 @@ def _parse_args(message: dict) -> dict | None:
     return None
 
 
-def call_tool(what: str, system: str, user: str, name: str, description: str, parameters: dict,
-              timeout: float | None = None) -> tuple[dict | None, str]:
+def call_tool(
+    what: str,
+    system: str,
+    user: str,
+    name: str,
+    description: str,
+    parameters: dict,
+    timeout: float | None = None,
+) -> tuple[dict | None, str]:
     """Ask the model to call the ONE tool `name`. Returns (arguments, "") or (None, why_not).
     The caller still validates the values: this only returns a dict the model produced."""
     ok, why = status()
@@ -151,7 +161,12 @@ def call_tool(what: str, system: str, user: str, name: str, description: str, pa
                 error = "the model did not call the tool"
     except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
         error = f"the classifier request failed ({type(exc).__name__})"
-    LAST.update(what=what, ms=int((time.time() - started) * 1000), error=error, at=time.time())
+    LAST.update(
+        what=what,
+        ms=int((time.time() - started) * 1000),
+        error=error,
+        at=time.time(),
+    )
     return (args, "") if args is not None else (None, error)
 
 

@@ -6,6 +6,7 @@ viewer_widgets.py - Widgets for the split-screen file viewer and the clickable <
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from rich.style import Style
 from rich.syntax import Syntax
@@ -20,7 +21,13 @@ class PresentLink(Static):
     """What <present file="..."/> shows now: ONE clickable line instead of a picture. Ctrl+click
     (Windows Terminal) opens the interactive HTML viewer in the browser."""
 
-    def __init__(self, label: str, target: Path, what: str, save_index: int | None = None) -> None:
+    def __init__(
+        self,
+        label: str,
+        target: Path,
+        what: str,
+        save_index: int | None = None,
+    ) -> None:
         t = Text("  \u25a3 ", style=ACCENT)
         t.append(f"{what}: {label}", style="bold")
         try:
@@ -41,15 +48,19 @@ class ArtifactPane(Vertical):
     Shown by /open <n> (text and code files), hidden by /close or Ctrl+E. Only ever DISPLAYS text:
     nothing is run, and pictures/office files are not rendered (/open sends those to their app)."""
 
-    def compose(self):
+    def compose(self) -> Any:
+        """Compose the artifact preview pane."""
         yield Static("", id="view-head")
         with VerticalScroll(id="view-scroll"):
             yield Static("", id="view-body")
 
     def on_mount(self) -> None:
+        """Load the initial artifact preview after mounting."""
         self.border_title = "Viewer"
 
-    def show_file(self, rel: str, path: Path, text: str, cut: bool, left_out: int) -> None:
+    def show_file(
+        self, rel: str, path: Path, text: str, cut: bool, left_out: int
+    ) -> None:
         """Fill the pane. `text` is already tidied (artifacts.tidy_for_view)."""
         try:
             lexer = Syntax.guess_lexer(str(path), text) if text else "text"

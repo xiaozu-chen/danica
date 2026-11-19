@@ -96,7 +96,9 @@ def _shrink_arguments(call: dict) -> bool:
     return changed
 
 
-def prune_messages(messages: list[dict], keep_recent: int, min_chars: int) -> tuple[int, int]:
+def prune_messages(
+    messages: list[dict], keep_recent: int, min_chars: int
+) -> tuple[int, int]:
     """Prune in place. Returns (items_changed, estimated_tokens_saved)."""
     tool_idx = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
     if len(tool_idx) <= keep_recent:

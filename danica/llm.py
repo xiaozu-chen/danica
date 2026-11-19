@@ -9,7 +9,7 @@ import contextlib
 import json
 import threading
 import time
-from typing import Iterator
+from typing import Any, Iterator
 
 import httpx
 
@@ -65,7 +65,8 @@ def local_http() -> httpx.Client:
 
 
 @contextlib.contextmanager
-def local_client():
+def local_client() -> Iterator[httpx.Client]:
+    """Return the shared HTTP client for the local model server."""
     yield local_http()
 
 
@@ -185,10 +186,17 @@ def _stream_chat(
                             yield {"type": "tool_delta", "index": index, "text": frag}
 
     now = time.perf_counter() - t0
-    perf.record_call(label=label, first=first if first is not None else now, total=now, thinking=thinking,
-                     prompt_tokens=usage.get("prompt_tokens", 0), completion_tokens=usage.get("completion_tokens", 0),
-                     cache_n=timings.get("cache_n"), prompt_n=timings.get("prompt_n"),
-                     tools_chars=len(json.dumps(tools)) if tools else 0)
+    perf.record_call(
+        label=label,
+        first=first if first is not None else now,
+        total=now,
+        thinking=thinking,
+        prompt_tokens=usage.get("prompt_tokens", 0),
+        completion_tokens=usage.get("completion_tokens", 0),
+        cache_n=timings.get("cache_n"),
+        prompt_n=timings.get("prompt_n"),
+        tools_chars=len(json.dumps(tools)) if tools else 0,
+    )
     if include_usage and finish:           # a new piece type: only callers that asked for usage (the agent loop) get it
         yield {"type": "finish", "reason": finish}
 
@@ -204,7 +212,7 @@ def _stream_chat(
         yield {"type": "tool_calls", "calls": calls}
 
 
-def stream_chat(*args, **kwargs) -> Iterator[dict]:
+def stream_chat(*args: Any, **kwargs: Any) -> Iterator[dict]:
     """Stream a chat completion (see _stream_chat). After a connection error the shared client is dropped so the next
     call starts clean (for example after llama-server was restarted)."""
     try:

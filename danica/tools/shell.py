@@ -58,6 +58,7 @@ def _cap(text: str) -> str:
     },
 )
 def run_shell(ws: Workspace, command: str, timeout: int = DEFAULT_TIMEOUT) -> str:
+    """Run a Windows PowerShell command in the workspace folder."""
     timeout = min(max(1, timeout), MAX_TIMEOUT)
 
     # Force UTF-8 output from PowerShell itself, then run the model's command

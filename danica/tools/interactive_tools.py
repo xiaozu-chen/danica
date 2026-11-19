@@ -14,7 +14,13 @@ The success text starts with "OUTPUT: saved ..." (the same wording the other fil
 import json
 
 from danica.flowgen import FlowError, render as render_flow, validate as validate_flow
-from danica.interactive import (InteractiveError, MAX_SPEC_BYTES, validate_cards, validate_quiz, write_page)
+from danica.interactive import (
+    InteractiveError,
+    MAX_SPEC_BYTES,
+    validate_cards,
+    validate_quiz,
+    write_page,
+)
 from danica.secret_scan import is_sensitive_path
 from danica.tools.files import _write_guard
 from danica.tools.registry import tool
@@ -61,6 +67,10 @@ def _done(shown: str, size: int, what: str) -> str:
     {"file": {"type": "string", "description": "Path of the JSON data file, for example quizzes/capitals.json"}},
 )
 def quiz(ws: Workspace, file: str) -> str:
+    """Make an interactive quiz page (questions, a Submit button, a score with
+        explanations, and Copy/Download results) from a JSON file you wrote with
+        write_file (for example quizzes/capitals.json).
+    """
     p, data = _load(ws, file)
     if p is None:
         return data
@@ -87,6 +97,10 @@ def quiz(ws: Workspace, file: str) -> str:
     {"file": {"type": "string", "description": "Path of the JSON data file, for example cards/spanish.json"}},
 )
 def flashcards(ws: Workspace, file: str) -> str:
+    """Make an interactive flash card page (flip, got it / again, shuffle, review
+        missed) from a JSON file you wrote with write_file (for example
+        cards/spanish.json).
+    """
     p, data = _load(ws, file)
     if p is None:
         return data
@@ -120,6 +134,7 @@ def flashcards(ws: Workspace, file: str) -> str:
     {"file": {"type": "string", "description": "Path of the JSON data file, for example flows/login.json"}},
 )
 def flowchart(ws: Workspace, file: str) -> str:
+    """Draw a flow chart from shapes placed on a GRID."""
     p, data = _load(ws, file)
     if p is None:
         return data
@@ -149,7 +164,10 @@ def _clean_questions(raw):
         if not isinstance(q, dict) or not str(q.get("question", "")).strip():
             return None, f'question {n} needs a "question" text'
         options = q.get("options")
-        if not isinstance(options, list) or not MIN_OPTIONS <= len(options) <= MAX_OPTIONS:
+        if (
+            not isinstance(options, list)
+            or not MIN_OPTIONS <= len(options) <= MAX_OPTIONS
+        ):
             return None, f'question {n} needs "options": {MIN_OPTIONS} to {MAX_OPTIONS} short choices (the user can also type their own answer)'
         clean = []
         for o in options:
@@ -177,7 +195,10 @@ def _clean_questions(raw):
                                             "multi": {"type": "boolean", "description": "true = the user may pick several options"}},
                              "required": ["question", "options"]}}},
 )
-def ask_user(ws: Workspace, questions) -> str:
+def ask_user(ws: Workspace, questions: list[dict[str, object]]) -> str:
+    """Ask the USER 1 to 4 short clarifying questions in a dialog and wait for the
+        answers.
+    """
     cleaned, problem = _clean_questions(questions)
     if cleaned is None:
         return f"ERROR: {problem}"

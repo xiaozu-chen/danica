@@ -20,6 +20,7 @@ import io
 import math
 import re
 import textwrap
+from typing import Any
 
 from danica.charts import ChartError as DiagramError
 from danica.charts import _plt, _text
@@ -37,7 +38,7 @@ GAP_ACROSS, GAP_ALONG = 0.5, 0.9             # spacing in inches (data units) be
 
 # --------------------------------------------------------------- validation
 
-def validate(data) -> dict:
+def validate(data: dict[str, Any]) -> dict[str, Any]:
     """Check a spec and return a cleaned copy. Raises DiagramError with a fix-it message."""
     if not isinstance(data, dict):
         raise DiagramError('the file must hold one JSON object, like {"nodes": [...], "edges": [...]}')
@@ -92,7 +93,9 @@ def validate(data) -> dict:
 
 # ------------------------------------------------------------------- layout
 
-def assign_layers(ids: list[str], edges: list[tuple[str, str]]) -> tuple[dict[str, int], set[tuple[str, str]]]:
+def assign_layers(
+    ids: list[str], edges: list[tuple[str, str]]
+) -> tuple[dict[str, int], set[tuple[str, str]]]:
     """(layer of every node, the set of back edges). A back edge closes a cycle; it is ignored
     for layering and drawn as a curved arrow."""
     out: dict[str, list[str]] = {i: [] for i in ids}
@@ -133,7 +136,11 @@ def assign_layers(ids: list[str], edges: list[tuple[str, str]]) -> tuple[dict[st
     return layer, back
 
 
-def order_layers(ids: list[str], layer: dict[str, int], dag_edges: list[tuple[str, str]]) -> list[list[str]]:
+def order_layers(
+    ids: list[str],
+    layer: dict[str, int],
+    dag_edges: list[tuple[str, str]],
+) -> list[list[str]]:
     """Nodes grouped by layer, ordered inside each layer to reduce crossings: a few sweeps
     that sort each node by the average position of its neighbours (barycenter)."""
     depth = max(layer.values()) + 1
@@ -147,13 +154,21 @@ def order_layers(ids: list[str], layer: dict[str, int], dag_edges: list[tuple[st
     def positions() -> dict[str, float]:
         return {n: (k + 0.5) / len(row) for row in rows for k, n in enumerate(row)}
 
+    def average_position(
+        node: str, neighbors: dict[str, list[str]], pos: dict[str, float]
+    ) -> float:
+        adjacent = neighbors[node]
+        if adjacent:
+            return sum(pos[neighbor] for neighbor in adjacent) / len(adjacent)
+        return pos[node]
+
     for _ in range(4):
         for l in range(1, depth):                    # top to bottom: follow the parents
             pos = positions()
-            rows[l].sort(key=lambda n: sum(pos[p] for p in preds[n]) / len(preds[n]) if preds[n] else pos[n])
+            rows[l].sort(key=lambda node: average_position(node, preds, pos))
         for l in range(depth - 2, -1, -1):           # bottom to top: follow the children
             pos = positions()
-            rows[l].sort(key=lambda n: sum(pos[s] for s in succs[n]) / len(succs[n]) if succs[n] else pos[n])
+            rows[l].sort(key=lambda node: average_position(node, succs, pos))
     return rows
 
 
@@ -173,7 +188,14 @@ def node_size(node: dict) -> tuple[list[str], float, float]:
     return lines, w, h
 
 
-def place(spec: dict):
+def place(
+    spec: dict[str, Any],
+) -> tuple[
+    dict[str, tuple[float, float]],
+    dict[str, tuple[list[str], float, float]],
+    dict[str, int],
+    set[tuple[str, str]],
+]:
     """Positions for every node. Returns (pos, sizes, layer, back): pos[id] = (x, y) of the
     centre, sizes[id] = (lines, w, h)."""
     nodes = {n["id"]: n for n in spec["nodes"]}
@@ -193,7 +215,11 @@ def place(spec: dict):
         cross = -(sum(c_len) + GAP_ACROSS * (len(row) - 1)) / 2
         for i, c in zip(row, c_len):
             centre_across, centre_along = cross + c / 2, along + extent / 2
-            pos[i] = (centre_across, -centre_along) if down else (centre_along, -centre_across)
+            pos[i] = (
+                (centre_across, -centre_along)
+                if down
+                else (centre_along, -centre_across)
+            )
             cross += c + GAP_ACROSS
         along += extent + GAP_ALONG
     return pos, sizes, layer, back
@@ -253,10 +279,18 @@ def render(spec: dict) -> bytes:
             if node["shape"] == "oval":
                 patch = Ellipse((x, y), w, h, **style)
             elif node["shape"] == "diamond":
-                patch = Polygon([(x, y + h / 2), (x + w / 2, y), (x, y - h / 2), (x - w / 2, y)], closed=True, **style)
+                vertices = [
+                    (x, y + h / 2),
+                    (x + w / 2, y),
+                    (x, y - h / 2),
+                    (x - w / 2, y),
+                ]
+                patch = Polygon(vertices, closed=True, **style)
             else:
                 box = "round,pad=0,rounding_size=0.18" if node["shape"] == "round" else "square,pad=0"
-                patch = FancyBboxPatch((x - w / 2, y - h / 2), w, h, boxstyle=box, **style)
+                patch = FancyBboxPatch(
+                    (x - w / 2, y - h / 2), w, h, boxstyle=box, **style
+                )
             ax.add_patch(patch)
             ax.text(x, y, "\n".join(lines), ha="center", va="center", fontsize=font, color="#222222", zorder=3)
 

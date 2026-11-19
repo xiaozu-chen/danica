@@ -25,6 +25,12 @@ from danica.workspace import Workspace
     },
 )
 def dev_server(ws: Workspace, action: str, folder: str = "", script: str = "dev", id: str = "") -> str:
+    """Run a web project's dev server in the BACKGROUND (never use run_shell for
+        `npm run dev`: it never exits and hangs). action: start (folder = the
+        project folder with package.json; script = dev or preview), status, logs
+        (id) or stop (id, or empty for all). start waits until the server answers
+        and returns its address, for example http://127.0.0.1:5173/.
+    """
     try:
         if action == "start":
             path = ws.resolve(folder or ".")

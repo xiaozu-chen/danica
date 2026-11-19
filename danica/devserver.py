@@ -41,6 +41,8 @@ class DevServerError(Exception):
 
 @dataclass
 class Server:
+    """Track a project development server process and its output log."""
+
     id: str
     folder: Path
     script: str
@@ -69,9 +71,17 @@ def _env() -> dict[str, str]:
     return env
 
 
-def _spawn(argv: list[str], cwd: Path, log_file) -> tuple[subprocess.Popen, object | None]:
+def _spawn(
+    argv: list[str], cwd: Path, log_file
+) -> tuple[subprocess.Popen, object | None]:
     """Start confined. Windows: inside a Job Object (fails closed). Elsewhere (tests / Linux): its own process group."""
-    kwargs = dict(cwd=cwd, env=_env(), stdin=subprocess.DEVNULL, stdout=log_file, stderr=subprocess.STDOUT)
+    kwargs = dict(
+        cwd=cwd,
+        env=_env(),
+        stdin=subprocess.DEVNULL,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+    )
     if os.name == "nt":
         from danica.config import CONFIG
         from danica.sandbox import Job, SandboxError
@@ -101,6 +111,7 @@ def _kill(server: Server) -> None:
 
 
 def stop_all() -> None:
+    """Stop all development servers started by this process."""
     for server in list(SERVERS.values()):
         try:
             _kill(server)
@@ -128,7 +139,8 @@ def _tail(text: str, lines: int = LOG_TAIL_LINES) -> str:
 def _answers(url: str) -> bool:
     """True if something answers HTTP at url (any status): the server is really ready, not just printing."""
     try:
-        urllib.request.build_opener(urllib.request.ProxyHandler({})).open(url, timeout=2).close()
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        opener.open(url, timeout=2).close()
         return True
     except urllib.error.HTTPError:
         return True
@@ -143,6 +155,7 @@ def _alive(server: Server) -> bool:
 # ------------------------------------------------------------------ the four actions
 
 def start(folder: Path, script: str = "dev") -> Server:
+    """Start a project development server and wait for its local address."""
     if script not in SCRIPTS:
         raise DevServerError(f"script must be one of: {', '.join(SCRIPTS)}")
     if not (folder / "package.json").is_file():
@@ -197,6 +210,7 @@ def stop(sid: str = "") -> list[str]:
 
 
 def describe() -> list[str]:
+    """Describe all development servers managed by this process."""
     lines = []
     for server in SERVERS.values():
         state = f"running at {server.url}" if _alive(server) else "STOPPED (it exited by itself)"
@@ -205,6 +219,7 @@ def describe() -> list[str]:
 
 
 def logs(sid: str) -> str:
+    """Return the recent log output for a managed development server."""
     server = SERVERS.get(sid)
     if server is None:
         raise DevServerError(f"no dev server called '{sid}' (running: {', '.join(SERVERS) or 'none'})")

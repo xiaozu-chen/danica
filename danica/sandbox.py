@@ -13,6 +13,7 @@ Say this plainly in the UI (see /sandbox).
 import ctypes
 import subprocess
 from ctypes import wintypes
+from typing import Any
 
 # --- Win32 constants (values from the Windows SDK headers) ---
 _LIMIT_ACTIVE_PROCESS = 0x00000008          # enforce ActiveProcessLimit
@@ -95,10 +96,17 @@ _ntdll = ctypes.WinDLL("ntdll")
 
 _k32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
 _k32.CreateJobObjectW.restype = wintypes.HANDLE
-_k32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+_k32.SetInformationJobObject.argtypes = [
+    wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD
+]
 _k32.SetInformationJobObject.restype = wintypes.BOOL
-_k32.QueryInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID,
-                                           wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+_k32.QueryInformationJobObject.argtypes = [
+    wintypes.HANDLE,
+    ctypes.c_int,
+    wintypes.LPVOID,
+    wintypes.DWORD,
+    ctypes.POINTER(wintypes.DWORD),
+]
 _k32.QueryInformationJobObject.restype = wintypes.BOOL
 _k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
 _k32.AssignProcessToJobObject.restype = wintypes.BOOL
@@ -136,8 +144,12 @@ class Job:
             raise
 
     def _set_info(self, info_class: int, struct) -> None:
-        if not _k32.SetInformationJobObject(self.handle, info_class,
-                                            ctypes.byref(struct), ctypes.sizeof(struct)):
+        if not _k32.SetInformationJobObject(
+            self.handle,
+            info_class,
+            ctypes.byref(struct),
+            ctypes.sizeof(struct),
+        ):
             raise _fail("could not apply sandbox limits")
 
     def _configure(self, memory_mb: int, max_processes: int) -> None:
@@ -155,8 +167,11 @@ class Job:
 
     def _adopt(self, pid: int) -> None:
         """Put a SUSPENDED process into the job, then let it run."""
-        handle = _k32.OpenProcess(_PROCESS_SET_QUOTA | _PROCESS_TERMINATE | _PROCESS_SUSPEND_RESUME,
-                                  False, pid)
+        handle = _k32.OpenProcess(
+            _PROCESS_SET_QUOTA | _PROCESS_TERMINATE | _PROCESS_SUSPEND_RESUME,
+            False,
+            pid,
+        )
         if not handle:
             raise _fail("could not open the new process")
         try:
@@ -168,7 +183,7 @@ class Job:
         finally:
             _k32.CloseHandle(handle)
 
-    def popen(self, args: list[str], **kwargs) -> subprocess.Popen:
+    def popen(self, args: list[str], **kwargs: Any) -> subprocess.Popen:
         """Like subprocess.Popen, but the process is confined from its very first instruction.
         Starting it suspended closes the gap in which it could spawn children
         before the job existed."""
@@ -186,8 +201,13 @@ class Job:
     def active_processes(self) -> int:
         """How many processes are alive inside the job right now."""
         info = _Accounting()
-        if not _k32.QueryInformationJobObject(self.handle, _INFO_ACCOUNTING,
-                                              ctypes.byref(info), ctypes.sizeof(info), None):
+        if not _k32.QueryInformationJobObject(
+            self.handle,
+            _INFO_ACCOUNTING,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+            None,
+        ):
             raise _fail("could not query the job")
         return info.ActiveProcesses
 
@@ -197,6 +217,7 @@ class Job:
             _k32.TerminateJobObject(self.handle, 1)
 
     def close(self) -> None:
+        """Close the job handle and release sandbox resources."""
         if self.handle:
             _k32.CloseHandle(self.handle)   # KILL_ON_JOB_CLOSE also fires here
             self.handle = None

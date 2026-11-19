@@ -14,7 +14,7 @@ Only YOU approve windows. Danica sees only those windows and never types passwor
 
 from danica import screenctl, vision
 from danica.computer import ComputerError, blocked_reason, clean_title, computer_for
-from danica.tui.commands import COMMANDS, DESCRIPTIONS, command
+from danica.tui.commands import DESCRIPTIONS, command
 
 DESCRIPTIONS["/computer"] = "let Danica operate windows you approve: on | off | allow | deny | smooth | log"
 
@@ -35,13 +35,22 @@ def _status(app, comp) -> None:
 def _allow(app, comp, text: str) -> None:
     try:
         be = comp.backend
-        wins = [w for w in be.list_windows() if not blocked_reason(w) and w.rect[2] > w.rect[0]]
+        wins = [
+            w
+            for w in be.list_windows()
+            if not blocked_reason(w) and w.rect[2] > w.rect[0]
+        ]
     except (screenctl.ScreenError, ComputerError) as exc:
         app.ui.log("error", str(exc))
         return
     wins = [w for w in wins if w.hwnd not in comp.approvals]
     if text:
-        wins = [w for w in wins if text.lower() in w.title.lower() or text.lower() in w.process]
+        lowered = text.lower()
+        wins = [
+            w
+            for w in wins
+            if lowered in w.title.lower() or lowered in w.process
+        ]
     if not wins:
         app.ui.log("info", "no matching window is open (windows that look like a sign-in, shells and system tools are never listed)")
         return

@@ -49,6 +49,7 @@ def _int_list(values) -> list[int] | None:
       "List the mail folders (INBOX, Sent, ...) you can read. Read-only. If it says no mailbox is set up, tell the user to run /mail login.",
       {})
 def mail_folders(ws: Workspace) -> str:
+    """List the mail folders (INBOX, Sent, ...) you can read."""
     try:
         with mail.Mailbox() as box:
             names = box.folders()
@@ -75,6 +76,7 @@ def mail_folders(ws: Workspace) -> str:
        "limit": {"type": "integer", "default": 15, "description": "How many messages to show (1-40)"}})
 def mail_list(ws: Workspace, folder: str = "", unread_only: bool | None = None, days: int = 0, sender: str = "",
               subject: str = "", text: str = "", since: str = "", before: str = "", limit: int = 15) -> str:
+    """List email as a digest or a search."""
     try:
         limit = max(1, min(int(limit), MAX_LIST))
         days = max(0, int(days or 0))
@@ -123,6 +125,9 @@ def mail_list(ws: Workspace, folder: str = "", unread_only: bool | None = None, 
        "folder": {"type": "string", "default": "", "description": "Folder the uid belongs to (empty = default folder)"},
        "max_chars": {"type": "integer", "default": 6000, "description": "How much of the text to return (1000-20000)"}})
 def mail_read(ws: Workspace, uid: int, folder: str = "", max_chars: int = 6000) -> str:
+    """Read ONE email in full (cleaned text, sender, date, attachments, links
+        written so they can't be clicked, and the safety scan).
+    """
     ids = _int_list([uid])
     if not ids:
         return "ERROR: uid must be a positive number from mail_list"
@@ -168,6 +173,9 @@ def mail_read(ws: Workspace, uid: int, folder: str = "", max_chars: int = 6000) 
       {"uids": {"type": "array", "items": {"type": "integer"}, "default": [], "description": "Message uids (up to 25), or empty"},
        "folder": {"type": "string", "default": "", "description": "Folder name (empty = default folder)"}})
 def mail_scan(ws: Workspace, uids: list | None = None, folder: str = "") -> str:
+    """Safety-check email for phishing, spoofing and risky attachments (rules only,
+        no link is ever opened).
+    """
     ids = _int_list(uids or [])
     if ids is None or len(ids) > MAX_SCAN:
         return f"ERROR: uids must be up to {MAX_SCAN} positive numbers from mail_list"

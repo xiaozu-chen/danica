@@ -24,7 +24,7 @@ import httpx
 
 from danica.secret_scan import find_secrets
 from danica.tools.registry import tool
-from danica.web import (MAX_TEXT_CHARS, WebState, clean_text, html_to_text, render,
+from danica.web import (MAX_TEXT_CHARS, clean_text, html_to_text, render,
                         safe_attr, split_passages, host_of, state_for)
 from danica.workspace import Workspace
 from danica.config import CONFIG
@@ -190,7 +190,9 @@ def _decode(data: bytes, charset: str) -> str:
         return data.decode("utf-8", errors="replace")
 
 
-def _extract(data: bytes, ctype: str, charset: str, truncated: bool) -> tuple[str, str, list[str]]:
+def _extract(
+    data: bytes, ctype: str, charset: str, truncated: bool
+) -> tuple[str, str, list[str]]:
     """Return (clean_text, title, notes). Notes are written by us, not the page."""
     notes: list[str] = []
     title = ""
@@ -245,6 +247,9 @@ def _is_blocked(message: str) -> bool:
     },
 )
 def web_fetch(ws: Workspace, url: str, start: int = 1) -> str:
+    """Fetch a web page (HTML, text, JSON or PDF) and return its text as numbered
+        passages like [S1.3].
+    """
     state = state_for(ws)   # loads saved sources on first use, so ids stay stable after /resume
     url = str(url).strip()
     try:

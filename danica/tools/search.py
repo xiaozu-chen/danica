@@ -43,6 +43,7 @@ SCAN_SECONDS = 15                # either: wall-clock limit
 def glob_files(ws: Workspace, pattern: str, path: str = ".") -> str:
     # Reject patterns that could walk out of the folder BEFORE globbing.
     # (Results are also re-checked below; this is belt and braces.)
+    """Find files by name pattern, e.g. '**/*.py' or 'src/*.ts'."""
     p = Path(pattern)
     parts = pattern.replace("\\", "/").split("/")
     if p.is_absolute() or p.drive or ".." in parts:
@@ -56,7 +57,9 @@ def glob_files(ws: Workspace, pattern: str, path: str = ".") -> str:
     deadline = time.monotonic() + SCAN_SECONDS
     stopped = ""
     looked = 0                       # stays 0 when the folder is empty (the loop body never runs)
-    for looked, hit in enumerate(itertools.islice(base.glob(pattern), SCAN_MAX_ENTRIES), start=1):
+    for looked, hit in enumerate(
+        itertools.islice(base.glob(pattern), SCAN_MAX_ENTRIES), start=1
+    ):
         if time.monotonic() > deadline:
             stopped = f"stopped after {SCAN_SECONDS}s"
             break
@@ -102,6 +105,7 @@ def grep(
     include: str = "*",
     ignore_case: bool = False,
 ) -> str:
+    """Search file contents with a regular expression."""
     try:
         regex = re.compile(pattern, re.IGNORECASE if ignore_case else 0)
     except re.error as e:
@@ -120,8 +124,11 @@ def grep(
         for dirpath, dirnames, filenames in os.walk(target):
             # Editing dirnames in place stops os.walk from descending into them.
             # (Open Mode also never walks into a protected folder: AppData, Windows...)
-            dirnames[:] = sorted(d for d in dirnames
-                                 if d not in SKIP_DIRS and ws.contains(Path(dirpath) / d))
+            dirnames[:] = sorted(
+                d
+                for d in dirnames
+                if d not in SKIP_DIRS and ws.contains(Path(dirpath) / d)
+            )
             for name in sorted(filenames):
                 if fnmatch.fnmatch(name, include):
                     files.append(Path(dirpath) / name)

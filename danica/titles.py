@@ -17,10 +17,11 @@ If the server fails or returns rubbish, a plain fallback is made from the first 
 
 from __future__ import annotations
 
-import json
 import re
 import threading
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -41,13 +42,13 @@ _lock = threading.Lock()
 
 # ------------------------------------------------------------------ storage
 
-def _file(session) -> Path:
+def _file(session: str | Path) -> Path:
     """title.txt for a session id or a session folder."""
     folder = Path(session)
     return (folder if folder.is_absolute() else SESSIONS / str(session)) / "title.txt"
 
 
-def read_title(session) -> str:
+def read_title(session: str | Path) -> str:
     """The saved title ("" if none yet). Never raises."""
     try:
         return _file(session).read_text(encoding="utf-8").strip()[:MAX_TITLE]
@@ -55,7 +56,8 @@ def read_title(session) -> str:
         return ""
 
 
-def write_title(session, title: str) -> None:
+def write_title(session: Path | str, title: str) -> None:
+    """Write a bounded session title using an atomic file replacement."""
     path = _file(session)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name("title.txt.tmp")
@@ -86,7 +88,7 @@ def fallback_title(first_request: str) -> str:
 
 # ------------------------------------------------------------------ the worker
 
-def request_title(agent) -> str:
+def request_title(agent: Any) -> str:
     """Ask the model for a title. Blocking (a second or two). Returns "" on any failure."""
     base = CONFIG["server"]["base_url"]
     messages = list(agent._messages_for_model()) + [{"role": "user", "content": INSTRUCTION}]
@@ -109,7 +111,7 @@ def request_title(agent) -> str:
     return clean_title(content)
 
 
-def _tools_of(agent) -> list:
+def _tools_of(agent: Any) -> list[dict[str, Any]]:
     """The tool list the agent's own requests carry (so the server's cache matches); all tools for a bare agent."""
     pick = getattr(agent, "active_tools", None)
     if pick:
@@ -118,7 +120,7 @@ def _tools_of(agent) -> list:
     return tool_schemas()
 
 
-def first_request_text(agent) -> str:
+def first_request_text(agent: Any) -> str:
     """The user's first request in this session (for the fallback title)."""
     for m in agent.messages:
         if m.get("role") == "user" and isinstance(m.get("content"), str) and not m["content"].startswith("["):
@@ -126,7 +128,7 @@ def first_request_text(agent) -> str:
     return ""
 
 
-def start(agent, session_id: str, on_done) -> bool:
+def start(agent: Any, session_id: str, on_done: Callable[[str], None]) -> bool:
     """Make a title in the background if the session has none. on_done(title) is called from the
     worker thread. Returns True if a worker was started."""
     with _lock:

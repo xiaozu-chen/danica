@@ -9,6 +9,7 @@ from danica.subagents import run_worker_connection
 
 
 def main() -> int:
+    """Parse worker options and run the subagent connection."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", required=True)
     parser.add_argument("--port", required=True, type=int)

@@ -54,6 +54,8 @@ class UploadError(Exception):
 
 @dataclass
 class Stored:
+    """Describe a file or extracted archive stored for the current request."""
+
     rel: str                                    # workspace-relative path with forward slashes: uploads/report.pdf
     kind: str = "file"                          # "file" or "folder" (an unzipped zip)
     files: int = 1
@@ -92,6 +94,7 @@ def unique(path: Path) -> Path:
 
 
 def human(n: int) -> str:
+    """Format a byte count using a readable storage unit."""
     for unit in ("B", "KB", "MB", "GB"):
         if n < 1024 or unit == "GB":
             return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
@@ -100,6 +103,7 @@ def human(n: int) -> str:
 
 
 def uploads_dir(root: Path) -> Path:
+    """Create and return the upload directory under a request root."""
     folder = Path(root) / UPLOAD_DIR
     folder.mkdir(parents=True, exist_ok=True)
     return folder
@@ -160,7 +164,11 @@ def store_picture(root: Path, src: Path) -> str:
     folder = uploads_dir(root)
     size, digest = src.stat().st_size, None
     for existing in folder.iterdir():
-        if existing.is_file() and existing.suffix.lower() == src.suffix.lower() and existing.stat().st_size == size:
+        if (
+            existing.is_file()
+            and existing.suffix.lower() == src.suffix.lower()
+            and existing.stat().st_size == size
+        ):
             digest = digest or _sha256(src)
             if _sha256(existing) == digest:
                 return existing.relative_to(root).as_posix()
@@ -241,11 +249,21 @@ def extract_zip(root: Path, src: Path) -> Stored:
                             if written > MAX_FILE or total > MAX_UNZIPPED:     # counted as written: a zip's own size claims can lie
                                 raise UploadError(f"the zip unpacks to more than {human(MAX_UNZIPPED)}: stopped (it may be a zip bomb)")
                             out.write(chunk)
-                    if written > RATIO_FLOOR and info.compress_size and written / info.compress_size > MAX_RATIO:
+                    if (
+                        written > RATIO_FLOOR
+                        and info.compress_size
+                        and written / info.compress_size > MAX_RATIO
+                    ):
                         raise UploadError(f"'{parts[-1]}' unpacks to {written // max(1, info.compress_size)}x its packed size: stopped (it looks like a zip bomb)")
                 except UploadError:
                     raise
-                except (OSError, zipfile.BadZipFile, RuntimeError, NotImplementedError, EOFError) as exc:
+                except (
+                    OSError,
+                    zipfile.BadZipFile,
+                    RuntimeError,
+                    NotImplementedError,
+                    EOFError,
+                ) as exc:
                     target.unlink(missing_ok=True)
                     total -= written                                           # what this file added does not count
                     reason = "password protected" if isinstance(exc, RuntimeError) else "damaged or too long a path" if isinstance(exc, (OSError, zipfile.BadZipFile)) else "unsupported compression"

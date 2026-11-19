@@ -17,6 +17,7 @@ Spec formats (validate() explains mistakes in plain words):
 
 import io
 import unicodedata
+from typing import Any
 
 TYPES = ("bar", "line", "area", "pie", "donut", "hbar", "stacked", "scatter", "table")
 MAX_LABELS, MAX_SERIES, MAX_POINTS, MAX_PIE = 100, 8, 2000, 12
@@ -43,12 +44,16 @@ def _text(value, limit: int = MAX_TEXT) -> str:
 
 def _num(v) -> bool:
     """A real number (not text, not true/false, not NaN or infinite, not absurdly big)."""
-    return isinstance(v, (int, float)) and not isinstance(v, bool) and abs(v) < MAX_VALUE
+    return (
+        isinstance(v, (int, float))
+        and not isinstance(v, bool)
+        and abs(v) < MAX_VALUE
+    )
 
 
 # --------------------------------------------------------------- validation
 
-def validate(data) -> dict:
+def validate(data: dict[str, Any]) -> dict[str, Any]:
     """Check a spec and return a cleaned copy. Raises ChartError with a fix-it message."""
     if not isinstance(data, dict):
         raise ChartError('the file must hold one JSON object, like {"type": "bar", "labels": [...], "series": [...]}')
@@ -90,7 +95,12 @@ def validate(data) -> dict:
                 raise ChartError(f"too many points (limit {MAX_POINTS})")
             clean = []
             for p in points:
-                if not (isinstance(p, list) and len(p) == 2 and _num(p[0]) and _num(p[1])):
+                if not (
+                    isinstance(p, list)
+                    and len(p) == 2
+                    and _num(p[0])
+                    and _num(p[1])
+                ):
                     raise ChartError(f"series {i} has a point that is not [number, number]")
                 clean.append((float(p[0]), float(p[1])))
             out.append({"name": _text(s.get("name") or f"Series {i}"), "points": clean})

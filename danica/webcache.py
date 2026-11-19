@@ -45,10 +45,12 @@ import sqlite3
 import struct
 import threading
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 from danica.config import APP_DIR, CONFIG
@@ -208,6 +210,8 @@ def _parse_search(text: str) -> tuple[dict, list] | None:
 
 @dataclass
 class CachedPage:
+    """Store fetched page text and metadata in the local web cache."""
+
     url: str
     final_url: str
     title: str
@@ -218,11 +222,14 @@ class CachedPage:
 
     @property
     def age(self) -> float:
+        """Return the age of the cached page in seconds."""
         return time.time() - self.fetched_at
 
 
 @dataclass
 class CachedSearch:
+    """Store a cached web search result and its retrieval metadata."""
+
     query: str
     results: list          # [[title, url, snippet], ...]
     searched_at: float
@@ -230,11 +237,14 @@ class CachedSearch:
 
     @property
     def age(self) -> float:
+        """Return the age of the cached search in seconds."""
         return time.time() - self.searched_at
 
 
 @dataclass
 class CacheHit:
+    """Represent one page returned from a web cache search."""
+
     url: str
     title: str
     snippet: str
@@ -247,8 +257,16 @@ class CacheHit:
 # ------------------------------------------------------------------ the cache
 
 class WebCache:
-    def __init__(self, root: Path, embedder=None, max_pages: int = 400, half_life_days: float = 30.0,
-                 index_path: Path | None = None):
+    """Persist fetched pages and search results for reuse across sessions."""
+
+    def __init__(
+        self,
+        root: Path,
+        embedder=None,
+        max_pages: int = 400,
+        half_life_days: float = 30.0,
+        index_path: Path | None = None,
+    ):
         self.root = Path(root)
         self.index_path = Path(index_path) if index_path else self.root.with_name(self.root.name + "_index.db")
         self.embedder = embedder
@@ -370,7 +388,9 @@ class WebCache:
         self._backfill_vectors(db)
         return stats
 
-    def _index_page(self, db, meta: dict, passages: list[str], path: Path, mtime: float) -> None:
+    def _index_page(
+        self, db, meta: dict, passages: list[str], path: Path, mtime: float
+    ) -> None:
         url = str(meta["url"])
         try:
             fetched_at = _from_iso(str(meta["fetched_at"]))
@@ -490,7 +510,9 @@ class WebCache:
             return CachedPage(url, str(meta.get("final_url") or url), str(meta.get("title", "")),
                               passages, row[1], row[2], stale)
 
-    def put_page(self, url: str, final_url: str, title: str, passages: list[str]) -> str:
+    def put_page(
+        self, url: str, final_url: str, title: str, passages: list[str]
+    ) -> str:
         """Store a freshly fetched page as a .md file. Returns "new", "changed" or "unchanged".
         Unchanged (same SHA-256) only resets the clock in the file's frontmatter: the body (and any
         edits you made to it) is kept, and nothing is re-indexed or re-embedded."""
@@ -523,6 +545,7 @@ class WebCache:
     # ------------------------------------------------------------------ searches
 
     def get_search(self, query: str, allow_stale: bool = False) -> CachedSearch | None:
+        """Return a cached search result if it is fresh or stale results are allowed."""
         key = normalize_query(query)
         if not key:
             return None
@@ -544,6 +567,7 @@ class WebCache:
             return CachedSearch(str(parsed[0].get("query", query)), parsed[1], row[1], stale)
 
     def put_search(self, query: str, results: list) -> None:
+        """Store search results in the local cache."""
         key = normalize_query(query)
         if not key or not results:
             return                                   # never cache an empty answer
@@ -559,7 +583,13 @@ class WebCache:
     def search(self, query: str, limit: int = 5) -> list[CacheHit]:
         """Hybrid search over stored pages: keyword (BM25) + meaning (embeddings), merged with
         reciprocal-rank fusion, then multiplied by a recency decay."""
-        terms = list(dict.fromkeys(t.lower() for t in TERM_RX.findall(query) if len(t) > 1))[:12]
+        terms = list(
+            dict.fromkeys(
+                term.lower()
+                for term in TERM_RX.findall(query)
+                if len(term) > 1
+            )
+        )[:12]
         if not terms:
             return []
         limit = max(1, min(int(limit), 10))
@@ -628,6 +658,7 @@ class WebCache:
                 "ORDER BY last_hit DESC, fetched_at DESC LIMIT ?", (limit,))]
 
     def status(self) -> dict:
+        """Return counts and storage details for the local cache."""
         with self._lock, self._db() as db:
             pages = db.execute("SELECT COUNT(*), COALESCE(SUM(fetched_at + ttl < ?), 0) FROM web_pages",
                                (time.time(),)).fetchone()
@@ -669,7 +700,9 @@ def get_web_cache() -> WebCache | None:
     return _cache
 
 
-def safe_call(fn, *args, default=None):
+def safe_call(
+    fn: Callable[..., Any], *args: Any, default: Any = None
+) -> Any:
     """Run a cache operation. A broken cache (locked file, bad row) must never break a web tool:
     it just behaves like an empty cache."""
     try:

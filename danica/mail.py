@@ -82,10 +82,12 @@ def password() -> str | None:
 
 
 def set_password(value: str | None) -> None:
+    """Save a mailbox password in the configured credential store."""
     _SESSION["password"] = value or None
 
 
 def keyring_available() -> bool:
+    """Return whether a secure credential store is available."""
     try:
         import keyring  # noqa: F401
         return True
@@ -94,6 +96,7 @@ def keyring_available() -> bool:
 
 
 def keyring_save(user: str, value: str) -> bool:
+    """Save a mailbox password in the system credential store."""
     try:
         import keyring
         keyring.set_password(SERVICE, user, value)
@@ -103,6 +106,7 @@ def keyring_save(user: str, value: str) -> bool:
 
 
 def keyring_forget(user: str) -> None:
+    """Remove the saved mailbox password from the credential store."""
     try:
         import keyring
         keyring.delete_password(SERVICE, user)
@@ -178,6 +182,7 @@ def _utf7_decode(name: str) -> str:
 
 
 def imap_date(day: date) -> str:
+    """Convert a date to the format expected by IMAP searches."""
     return f"{day.day:02d}-{MONTHS[day.month - 1]}-{day.year}"
 
 
@@ -221,6 +226,7 @@ class Mailbox:
         self.close()
 
     def close(self) -> None:
+        """Close the IMAP connection if one is open."""
         conn, self.conn = self.conn, None
         if conn is not None:
             try:
@@ -245,7 +251,7 @@ class Mailbox:
         """Display names of the folders you can read."""
         if self._names is None:
             try:
-                kind, data = self.conn.list()
+                _, data = self.conn.list()
             except (imaplib.IMAP4.error, OSError, socket.timeout) as exc:
                 raise MailError(f"could not list folders ({type(exc).__name__})") from None
             names: dict[str, str] = {}
@@ -351,6 +357,8 @@ def apply_later(items: list["Parsed"], later: dict) -> list["Parsed"]:
 
 @dataclass
 class Parsed:
+    """Hold the normalized fields extracted from one email message."""
+
     uid: int = 0
     unread: bool = False
     size: int = 0
@@ -402,7 +410,8 @@ class _HtmlText(HTMLParser):
     def _off(self) -> tuple[bool, bool]:
         return (any(h for _, h, _ in self._stack), any(s for _, _, s in self._stack))
 
-    def handle_starttag(self, tag, attrs):
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        """Track visible content and links from an opening HTML tag."""
         a = {k: (v or "") for k, v in attrs}
         if tag in BLOCK_TAGS:
             self.parts.append("\n")
@@ -413,11 +422,15 @@ class _HtmlText(HTMLParser):
         if tag == "a" and a.get("href") and not any(self._off):
             self._href, self._anchor = a["href"].strip(), []
 
-    def handle_startendtag(self, tag, attrs):
+    def handle_startendtag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        """Track a self-closing HTML tag."""
         if tag in BLOCK_TAGS:
             self.parts.append("\n")
 
-    def handle_endtag(self, tag):
+    def handle_endtag(self, tag: str) -> None:
+        """Close the matching element and record its visible link text."""
         if tag in BLOCK_TAGS:
             self.parts.append("\n")
         if tag == "a" and self._href is not None:
@@ -428,7 +441,8 @@ class _HtmlText(HTMLParser):
                 del self._stack[i:]
                 break
 
-    def handle_data(self, data):
+    def handle_data(self, data: str) -> None:
+        """Collect visible text while counting hidden message content."""
         hidden, skip = self._off
         if skip:
             return

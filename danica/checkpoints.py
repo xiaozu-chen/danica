@@ -12,7 +12,6 @@ Folders listed in EXCLUDES are skipped, so they are neither saved nor restored.
 
 import os
 import re
-import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -38,6 +37,8 @@ class CheckpointError(Exception):
 
 
 class Checkpoints:
+    """Manage shadow-git snapshots used to undo workspace changes."""
+
     def __init__(self, ws: Workspace, git_dir: Path, disabled: bool = False):
         self.ws = ws
         self.git_dir = Path(git_dir)

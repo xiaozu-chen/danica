@@ -11,7 +11,6 @@ import json
 import math
 
 from danica import vision
-from rich.text import Text
 
 # Rough rule of thumb for code and English mixed: ~3.5 characters per token.
 CHARS_PER_TOKEN = 3.5
@@ -43,6 +42,8 @@ def breakdown(messages: list[dict]) -> dict[str, int]:
 
 
 class ContextTracker:
+    """Track estimated and server-reported context window usage."""
+
     def __init__(self, window: int):
         self.window = window
         # Exact prompt size from the last model call, and how many messages
@@ -69,6 +70,7 @@ class ContextTracker:
         return self.known_tokens + estimate_tokens(messages[self.known_count:])
 
     def fraction(self, messages: list[dict]) -> float:
+        """Return the estimated fraction of the context window in use."""
         return self.used(messages) / self.window
 
     def level(self, messages: list[dict]) -> str:

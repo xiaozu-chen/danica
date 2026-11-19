@@ -28,6 +28,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
 MAX_LOGS = 8
@@ -40,14 +41,33 @@ SETUP_HINT = "run: pip install playwright   then: playwright install chromium"
 
 # ------------------------------------------------------------------ the half Danica calls
 
-def capture(target: str, out: Path, width: int = 1280, height: int = 800, full_page: bool = False,
-            wait_ms: int = 400, timeout: int = 45, steps: list[dict] | None = None) -> dict:
+def capture(
+    target: str,
+    out: Path,
+    width: int = 1280,
+    height: int = 800,
+    full_page: bool = False,
+    wait_ms: int = 400,
+    timeout: int = 45,
+    steps: list[dict] | None = None,
+) -> dict:
     """{"ok": True, "width", "height", "logs": [...]} or {"ok": False, "error": "..."}. Never raises."""
-    args = {"target": target, "out": str(out), "width": width, "height": height,
-            "full_page": full_page, "wait_ms": wait_ms, "steps": steps or []}
+    args = {
+        "target": target,
+        "out": str(out),
+        "width": width,
+        "height": height,
+        "full_page": full_page,
+        "wait_ms": wait_ms,
+        "steps": steps or [],
+    }
     try:
-        done = subprocess.run([sys.executable, "-I", str(Path(__file__).resolve()), json.dumps(args)],
-                              capture_output=True, text=True, timeout=timeout)
+        done = subprocess.run(
+            [sys.executable, "-I", str(Path(__file__).resolve()), json.dumps(args)],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": f"the browser did not finish within {timeout}s (a page that never finishes loading?)"}
     except OSError as e:
@@ -69,16 +89,20 @@ def _locate(page, target: str):
     if target.startswith("css="):
         loc = page.locator(target[4:])
         return loc.first if loc.count() else None
-    for find in (lambda: page.get_by_role("button", name=target), lambda: page.get_by_role("link", name=target),
-                 lambda: page.get_by_label(target), lambda: page.get_by_placeholder(target),
-                 lambda: page.get_by_text(target)):
+    for find in (
+        lambda: page.get_by_role("button", name=target),
+        lambda: page.get_by_role("link", name=target),
+        lambda: page.get_by_label(target),
+        lambda: page.get_by_placeholder(target),
+        lambda: page.get_by_text(target),
+    ):
         loc = find()
         if loc.count():
             return loc.first
     return None
 
 
-def run_steps(page, steps: list[dict]) -> tuple[list[str], bool]:
+def run_steps(page: Any, steps: list[dict]) -> tuple[list[str], bool]:
     """Do the steps in order. Returns (one report line per step, all_ok). Stops at the first failure."""
     report: list[str] = []
     for n, step in enumerate(steps[:MAX_STEPS], start=1):
@@ -115,7 +139,11 @@ def run_steps(page, steps: list[dict]) -> tuple[list[str], bool]:
             page.wait_for_timeout(250)                   # let the page react before the next step
             report.append(f"{label}: ok")
         except Exception as exc:                          # the page decides what is possible: report, do not crash
-            reason = str(exc).strip().splitlines()[0][:140] if str(exc).strip() else type(exc).__name__
+            reason = (
+                str(exc).strip().splitlines()[0][:140]
+                if str(exc).strip()
+                else type(exc).__name__
+            )
             report.append(f"{label}: FAILED ({reason}); the remaining steps were skipped")
             return report, False
     return report, True
@@ -139,7 +167,9 @@ def _child(args: dict) -> dict:
     else:
         path = Path(target)
         folder, name = (path, "") if path.is_dir() else (path.parent, path.name)
-        handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(folder))
+        handler = functools.partial(
+            http.server.SimpleHTTPRequestHandler, directory=str(folder)
+        )
         handler.log_message = lambda *a, **k: None                   # type: ignore[attr-defined]
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
         threading.Thread(target=server.serve_forever, daemon=True).start()

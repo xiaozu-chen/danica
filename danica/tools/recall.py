@@ -24,6 +24,9 @@ BODY_CHARS = 400
     },
 )
 def recall(ws: Workspace, query: str, count: int = 5) -> str:
+    """Search the user's saved memory notes (their preferences, and facts about
+        them and their projects) by keywords.
+    """
     store = ws.memory
     if store is None or store.index is None:
         return "ERROR: memory is not available in this session"

@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import queue
 import threading
+from typing import Any
 
 from textual.message import Message
-from textual.widgets import RichLog
 
 class AgentEvent(Message):
     """One on_event(kind, data) call from the agent. Handled by DanicaApp.on_agent_event."""
@@ -43,6 +43,8 @@ class RequestDone(Message):
 
 
 class EventBridge:
+    """Forward agent events to the Textual application's message queue."""
+
     def __init__(self, app) -> None:
         self.app = app
 
@@ -59,6 +61,8 @@ class SubagentBridge:
         self.app.post_message(SubagentEvent(child_id, kind, data))
 
 class TextualUI:
+    """Implement agent UI callbacks through Textual messages and screens."""
+
     def __init__(self, app) -> None:
         self.app = app
 
@@ -94,12 +98,15 @@ class TextualUI:
     # --- danica.ui.UI -------------------------------------------------------------------
 
     def log(self, level: str, text: str) -> None:
+        """Send a log message to the Textual application."""
         self._call(self.app.add_notice, level, str(text))
 
     def say(self, text: str, style: str | None = None) -> None:
+        """Send a short message to the Textual application."""
         self._call(self.app.add_say, str(text), style)
 
-    def show(self, renderable) -> None:
+    def show(self, renderable: Any) -> None:
+        """Render content through the Textual application."""
         self._call(self.app.add_renderable, renderable)
 
     def _inline(self) -> bool:
@@ -109,6 +116,7 @@ class TextualUI:
 
     def confirm(self, title: str, body: str = "", detail: str = "",
                 yes: str = "Yes", no: str = "No") -> bool:
+        """Ask for confirmation through a modal screen."""
         if self._inline():
             from danica.tui import approval_menu
             answer = approval_menu.ask(self, {
@@ -121,6 +129,7 @@ class TextualUI:
 
     def permission(self, tool: str, summary: str, tier: str, reason: str,
                    can_remember: bool) -> str:
+        """Request permission through the approval screen."""
         if self._inline():
             from danica.tui import approval_menu
             options = [{"value": "once", "label": "Yes, once", "keys": ("1", "y")}]
@@ -138,6 +147,7 @@ class TextualUI:
 
     def choose(self, title: str, body: str, options: list[tuple[str, str]],
                detail: str = "") -> str | None:
+        """Request a choice through a modal screen."""
         if self._inline():
             from danica.tui import approval_menu
             answer = approval_menu.ask(self, {
@@ -150,11 +160,12 @@ class TextualUI:
         return answer if isinstance(answer, str) else None
 
     def ask_text(self, title: str, default: str = "", secret: bool = False) -> str | None:
+        """Request text input through a modal screen."""
         from danica.tui.modals import TextScreen
         answer = self._ask(TextScreen(title, default, secret))
         return answer if isinstance(answer, str) else None
 
-    def ask_screen(self, screen):
+    def ask_screen(self, screen: Any) -> Any:
         """Show a screen that dismisses with a value; block the worker thread until it does."""
         return self._ask(screen)
 

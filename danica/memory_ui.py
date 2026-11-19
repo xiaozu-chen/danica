@@ -8,6 +8,8 @@ forget confirmation BLOCK on the user: call from a worker/engine thread under th
 
 from __future__ import annotations
 
+from typing import Any
+
 from danica.capture import ProposalQueue, extract
 from danica.compaction import harvest
 from danica.config import CONFIG
@@ -18,7 +20,7 @@ USAGE = ("usage: /memory [list | add [scope] <text> | review | capture | search 
          "merge | forget <id> | show <id> | status | reindex | path]")
 
 
-def forget_note(store: MemoryStore, page, ui) -> bool:
+def forget_note(store: MemoryStore, page: Any, ui: Any) -> bool:
     """Forget one note for real and report every verification check. True if all passed."""
     report = forget(store, page)
     for name, ok, detail in report.checks:
@@ -34,7 +36,9 @@ def forget_note(store: MemoryStore, page, ui) -> bool:
     return report.ok
 
 
-def review_proposals(store: MemoryStore, queue: ProposalQueue, audit, ui) -> None:
+def review_proposals(
+    store: MemoryStore, queue: ProposalQueue, audit: Any, ui: Any
+) -> None:
     """/memory review: go through proposed notes one at a time."""
     items = queue.items()
     if not items:
@@ -72,7 +76,7 @@ def review_proposals(store: MemoryStore, queue: ProposalQueue, audit, ui) -> Non
         # anything else (s) leaves it in the queue
 
 
-def merge_notes(store: MemoryStore, audit, ui) -> None:
+def merge_notes(store: MemoryStore, audit: Any, ui: Any) -> None:
     """/memory merge: pairs of near-duplicate notes (same scope, almost the same meaning)."""
     if store.index is None:
         ui.log("info", "  Search is not available in this session")
@@ -113,7 +117,9 @@ def merge_notes(store: MemoryStore, audit, ui) -> None:
             audit.append("memory_forget", scope=old.scope, id=old.id, ok=ok, reason="merge")
 
 
-def handle_memory(text: str, store: MemoryStore, audit, in_project: bool, agent, ui) -> None:
+def handle_memory(
+    text: str, store: MemoryStore, audit: Any, in_project: bool, agent: Any, ui: Any
+) -> None:
     """The /memory command. Sub-commands: list, add, review, capture, show, forget (delete),
     merge, search, status, reindex, path."""
     parts = text.split(maxsplit=2)               # "/memory", the sub-command, then the rest

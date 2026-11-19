@@ -26,6 +26,10 @@ from danica.workspace import Workspace
     },
 )
 def dashboard(ws: Workspace, file: str) -> str:
+    """Draw a one-page dashboard (big-number tiles plus several charts and tables)
+        as ONE PNG image from a JSON file you wrote with write_file (for example
+        dashboards/q3.json).
+    """
     p = ws.resolve(file)
     if p.suffix.lower() != ".json":
         return "ERROR: the file must end in .json (write it with write_file first)"

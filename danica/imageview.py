@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 from PIL import Image, ImageDraw
+from rich.console import Console
 from rich.style import Style
 from rich.text import Text
 
@@ -137,7 +138,9 @@ def encode_sixel(img: Image.Image) -> str:
 
 # ----------------------------------------------------------------- showing
 
-def display(img: Image.Image, label: str, console, uri: str | None = None) -> None:
+def display(
+    img: Image.Image, label: str, console: Console, uri: str | None = None
+) -> None:
     """Show a picture according to the display mode. Never raises."""
     how = mode()
     if how == "sixel":
@@ -155,7 +158,7 @@ def display(img: Image.Image, label: str, console, uri: str | None = None) -> No
         console.print(label, style="dim", markup=False, highlight=False)
 
 
-def show_image(path: Path, label: str, console) -> None:
+def show_image(path: Path, label: str, console: Console) -> None:
     """Load a validated image file and display it."""
     try:
         img = load_image(path)

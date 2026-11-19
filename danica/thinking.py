@@ -7,8 +7,6 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-import httpx
-
 from danica import classifier
 from danica.config import APP_DIR, CONFIG
 from danica.secret_scan import redact
@@ -42,17 +40,22 @@ def parse_thinking_response(content: str) -> bool:
 
 @dataclass(frozen=True)
 class ThinkingDecision:
+    """Record a thinking-mode decision and how it was reached."""
+
     thinking: bool
     source: str
     error: str = ""
 
 
 class ThinkingClassifier:
+    """Choose whether a request should use the model's thinking mode."""
+
     def __init__(self, config: dict | None = None):
         self.config = config if config is not None else CONFIG["thinking"]
 
     @staticmethod
     def rules(text: str) -> bool:
+        """Return the deterministic thinking-mode decision for request text."""
         return bool(THINKING_RULES.search(text))
 
     def classify(self, text: str) -> ThinkingDecision:
@@ -68,8 +71,13 @@ class ThinkingClassifier:
         return ThinkingDecision(value, "main-model")
 
 
-def log_thinking_decision(text: str, decision: ThinkingDecision, path: Path | None = None,
-                          config: dict | None = None) -> None:
+def log_thinking_decision(
+    text: str,
+    decision: ThinkingDecision,
+    path: Path | None = None,
+    config: dict | None = None,
+) -> None:
+    """Write a redacted thinking mode decision to the configured log."""
     cfg = config if config is not None else CONFIG["thinking"]
     if not cfg.get("log_decisions", False):
         return

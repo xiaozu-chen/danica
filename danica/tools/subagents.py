@@ -2,11 +2,15 @@
 
 from danica.subagents import SubagentError
 from danica.tools.registry import tool
+from danica.workspace import Workspace
 
 
 @tool("delegate", "Delegate one bounded research or analysis subtask and receive a concise structured summary.",
       {"task": {"type": "string", "description": "A self-contained subtask brief"}})
-def delegate(ws, task: str) -> str:
+def delegate(ws: Workspace, task: str) -> str:
+    """Delegate one bounded research or analysis subtask and receive a concise
+        structured summary.
+    """
     supervisor = getattr(ws, "subagent_supervisor", None)
     if supervisor is None:
         return "ERROR: subagent delegation is unavailable in this session."

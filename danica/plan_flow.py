@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import Any, Callable
 
 from danica.config import CONFIG
-from danica.planner import PlanError, PlanFormatError, looks_big, reload_plan
+from danica.planner import Plan, PlanError, PlanFormatError, looks_big, reload_plan
 from danica.tools.todo import open_items, read_todo
 
 MAX_DRAFTS = 3          # plans drafted for one request (the first, plus replans)
@@ -24,7 +25,8 @@ def open_editor(path: Path) -> None:
     subprocess.Popen(["notepad.exe", str(path)])
 
 
-def plan_text(plan) -> str:
+def plan_text(plan: Plan) -> str:
+    """Render a plan goal, steps, notes, and optional file path."""
     lines = [f"Goal: {plan.goal}", ""]
     for i, step in enumerate(plan.steps, start=1):
         lines.append(f"  {i}. {step}")
@@ -35,7 +37,13 @@ def plan_text(plan) -> str:
     return "\n".join(lines)
 
 
-def plan_flow(request: str, agent, audit, ui, edit=open_editor) -> tuple[str, object]:
+def plan_flow(
+    request: str,
+    agent: Any,
+    audit: Any,
+    ui: Any,
+    edit: Callable[[Path], None] = open_editor,
+) -> tuple[str, Plan | None]:
     """Draft a plan (read-only), show it, and let the user approve, edit, replan or cancel.
     Returns ("run", plan) to run the request with the approved plan, ("run", None) to run it
     without one (drafting failed and the user said go ahead), or ("cancel", None)."""
@@ -96,7 +104,7 @@ def plan_flow(request: str, agent, audit, ui, edit=open_editor) -> tuple[str, ob
                     break                              # draft again with the feedback
 
 
-def ask_plan_first(why: str, ui) -> str:
+def ask_plan_first(why: str, ui: Any) -> str:
     """The offer for a big-looking request: "yes", "no" or "never" (for this session)."""
     answer = ui.choose(f"This looks like a multi-step task ({why})", "Draft a plan first?",
                        [("y", "Draft a plan"), ("n", "Just do it"), ("x", "Don't ask again this session")])
@@ -105,7 +113,9 @@ def ask_plan_first(why: str, ui) -> str:
     return "never" if answer == "x" else "no"
 
 
-def run_plan_mode(text: str, forced: bool, plan_auto: str, agent, audit, ui) -> tuple[str, object, str]:
+def run_plan_mode(
+    text: str, forced: bool, plan_auto: str, agent: Any, audit: Any, ui: Any
+) -> tuple[str, Plan | None, str]:
     """Decide whether this request gets a plan, and if so run the dialog.
     forced = the user asked (/plan). Returns (decision, plan, plan_auto): decision is "run" or
     "cancel", plan is None when the request runs without one, plan_auto may become "off"."""

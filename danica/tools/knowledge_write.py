@@ -4,6 +4,7 @@ from pathlib import Path
 
 from danica.knowledge import KnowledgeError
 from danica.tools.registry import tool
+from danica.workspace import Workspace
 
 
 def _default_vault(index) -> tuple[str, str]:
@@ -38,8 +39,9 @@ def _default_vault(index) -> tuple[str, str]:
                   "description": "Only if several folders are indexed: the vault folder the user chose. Otherwise leave empty."},
        "wikilinks": {"type": "array", "items": {"type": "string"}, "default": [],
                      "description": "Optional related-note names for [[wikilinks]]"}})
-def obsidian_write_preview(ws, path: str, title: str, body: str, folder: str = "",
+def obsidian_write_preview(ws: Workspace, path: str, title: str, body: str, folder: str = "",
                            wikilinks: list[str] | None = None) -> str:
+    """Create a preview for an Obsidian Markdown note in the user's indexed vault."""
     index = getattr(ws, "knowledge_index", None)
     if index is None:
         return "ERROR: local knowledge index is unavailable in this session."

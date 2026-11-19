@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import queue
 import threading
+from typing import Any, Callable
 
 from rich.text import Text
 from textual.containers import Vertical, VerticalScroll
@@ -36,7 +37,8 @@ _one_at_a_time = threading.Lock()          # subagents can ask too: one menu on 
 class _Choices(OptionList):
     """The options. Number / letter keys pick directly; everything else is the normal list behaviour."""
 
-    def on_key(self, event) -> None:
+    def on_key(self, event: Any) -> None:
+        """Handle direct key selection before default list navigation."""
         menu = self.parent
         if isinstance(menu, ApprovalMenu):
             value = menu.value_for_key(event.key)
@@ -71,7 +73,8 @@ class ApprovalMenu(Vertical):
         if spec.get("danger"):
             self.add_class("-danger")
 
-    def compose(self):
+    def compose(self) -> Any:
+        """Compose the permission approval dialog."""
         yield Static(Text(self.spec["title"]), classes="am-title")
         if self.spec.get("reason"):
             yield Static(Text(self.spec["reason"]), classes="am-reason")
@@ -90,13 +93,15 @@ class ApprovalMenu(Vertical):
         return label
 
     def on_mount(self) -> None:
+        """Focus the permission choices after mounting."""
         choices = self.query_one(_Choices)
         choices.highlighted = int(self.spec.get("default", 0))
         choices.focus()
 
     # -- answering ---------------------------------------------------------------------
 
-    def value_for_key(self, key: str):
+    def value_for_key(self, key: str) -> Any:
+        """Return the permission value for a pressed key."""
         if key == "escape":
             return self.spec["cancel"]
         for option in self.spec["options"]:
@@ -104,7 +109,8 @@ class ApprovalMenu(Vertical):
                 return option["value"]
         return self.NO_MATCH
 
-    def finish(self, value) -> None:
+    def finish(self, value: Any) -> None:
+        """Close the dialog with the selected permission value."""
         if self._finished:
             return
         self._finished = True
@@ -117,20 +123,26 @@ class ApprovalMenu(Vertical):
         self.on_done(value)
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        """Resolve the dialog when an option is selected."""
         event.stop()
         self.finish(self.spec["options"][int(event.option_id)]["value"])
 
-    def on_descendant_blur(self, event) -> None:
+    def on_descendant_blur(self, event: Any) -> None:
+        """Restore focus when a child control loses focus."""
         if not self._finished:                                # keep the keyboard until answered
-            self.call_after_refresh(lambda: None if self._finished else self.query_one(_Choices).focus())
+            self.call_after_refresh(
+                lambda: None
+                if self._finished
+                else self.query_one(_Choices).focus()
+            )
 
 
-def open_menu(app, spec: dict, on_done) -> None:
+def open_menu(app: Any, spec: dict, on_done: Callable[[Any], None]) -> None:
     """UI thread: show the menu just above the prompt."""
     app.mount(ApprovalMenu(spec, on_done), before=app.query_one("#prompt-box"))
 
 
-def ask(ui, spec: dict):
+def ask(ui: Any, spec: dict) -> Any:
     """Worker thread: show the menu and wait for the answer (None if the app closes meanwhile)."""
     if ui._on_ui_thread():
         raise RuntimeError("a blocking menu was opened from the UI thread; run that code in a worker thread")

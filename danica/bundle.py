@@ -18,6 +18,7 @@ class BundleError(Exception):
 
 
 def export_bundle(ws: Workspace, output: Path) -> dict:
+    """Create a ZIP of eligible workspace text files and report exclusions."""
     target = ws.resolve(str(output))
     if target.suffix.lower() != ".zip":
         raise BundleError("bundle output must use the .zip extension")
@@ -27,7 +28,9 @@ def export_bundle(ws: Workspace, output: Path) -> dict:
     total = 0
     skipped = []
     for path in ws.root.rglob("*"):
-        if not path.is_file() or any(part in IGNORED_DIRS for part in path.relative_to(ws.root).parts):
+        if not path.is_file() or any(
+            part in IGNORED_DIRS for part in path.relative_to(ws.root).parts
+        ):
             continue
         if path.is_symlink() or path.resolve() == target.resolve():
             continue

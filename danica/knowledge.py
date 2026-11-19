@@ -19,6 +19,7 @@ from pypdf import PdfReader
 
 from danica.embeddings import Embedder, EmbeddingError
 from danica.secret_scan import find_secrets, is_sensitive_path
+from danica.workspace import Workspace
 
 SUPPORTED = {".md", ".markdown", ".txt", ".pdf"}
 MAX_FILE_BYTES = 20 * 1024 * 1024
@@ -34,6 +35,8 @@ class KnowledgeError(Exception):
 
 @dataclass(frozen=True)
 class KnowledgeHit:
+    """Represent a matched item returned by a knowledge search."""
+
     id: str
     source: str
     heading: str
@@ -46,7 +49,10 @@ class KnowledgeHit:
 _CITATION_RX = re.compile(r"\[(K[0-9a-f]{10})\]")
 
 
-def verify_citations(answer: str, available: dict[str, KnowledgeHit]) -> tuple[list[str], list[str]]:
+def verify_citations(
+    answer: str, available: dict[str, KnowledgeHit]
+) -> tuple[list[str], list[str]]:
+    """Extract valid citation references and report unresolved ones."""
     cited = list(dict.fromkeys(_CITATION_RX.findall(answer)))
     valid = [ref for ref in cited if ref in available]
     invalid = [ref for ref in cited if ref not in available]
@@ -130,6 +136,8 @@ def _document_chunks(path: Path) -> list[tuple[str, str, str]]:
 
 
 class KnowledgeIndex:
+    """Index and search the configured local knowledge sources."""
+
     def __init__(self, path: Path, embedder: Embedder | None = None):
         self.path = Path(path)
         self.embedder = embedder
@@ -204,6 +212,7 @@ class KnowledgeIndex:
         self.embedding_note = ""
 
     def index_folder(self, folder: Path) -> dict:
+        """Index supported files beneath a folder and report the result."""
         root = Path(folder).expanduser().resolve()
         if not root.is_dir():
             raise KnowledgeError(f"folder does not exist: {root}")
@@ -214,7 +223,10 @@ class KnowledgeIndex:
             if any(part.startswith(".") for part in path.relative_to(root).parts):
                 continue
             resolved = path.resolve()
-            if not resolved.is_relative_to(root) or path.stat().st_size > MAX_FILE_BYTES:
+            if (
+                not resolved.is_relative_to(root)
+                or path.stat().st_size > MAX_FILE_BYTES
+            ):
                 continue
             source_files.append((resolved, path.relative_to(root).as_posix()))
         found = {rel for _, rel in source_files}
@@ -266,7 +278,14 @@ class KnowledgeIndex:
                 "embedding_note": self.embedding_note}
 
     def search(self, query: str, limit: int = 6) -> list[KnowledgeHit]:
-        terms = list(dict.fromkeys(t.lower() for t in TERM_RX.findall(query) if len(t) > 1))[:12]
+        """Search indexed passages and return the strongest matches."""
+        terms = list(
+            dict.fromkeys(
+                term.lower()
+                for term in TERM_RX.findall(query)
+                if len(term) > 1
+            )
+        )[:12]
         if not terms:
             return []
         limit = max(1, min(int(limit), 12))
@@ -304,7 +323,7 @@ class KnowledgeIndex:
                 item = ranked.setdefault(row[0], {"row": row[:6], "lexical": None, "semantic": None})
                 item["semantic"] = (rank, row[6])
             results = []
-            for key, item in ranked.items():
+            for item in ranked.values():
                 score = (1 / (60 + item["lexical"]) if item["lexical"] else 0)
                 score += (1 / (60 + item["semantic"][0]) if item["semantic"] else 0)
                 via = "both" if item["lexical"] and item["semantic"] else (
@@ -336,6 +355,7 @@ class KnowledgeIndex:
         return result
 
     def synthesize(self, query: str, limit: int = 24) -> tuple[str, list[KnowledgeHit]]:
+        """Synthesize a cited answer from bounded groups of matching passages."""
         hits = self.search(query, min(max(int(limit), 1), 32))
         if not hits:
             return "No matching local knowledge passages were found.", []
@@ -380,6 +400,7 @@ class KnowledgeIndex:
         return reduced, hits
 
     def start_watching(self, folder: Path, interval_seconds: int = 5) -> str:
+        """Watch an indexed folder for changes and refresh its index."""
         root = Path(folder).expanduser().resolve()
         self.index_folder(root)
         key = str(root)
@@ -403,6 +424,7 @@ class KnowledgeIndex:
         return key
 
     def stop_watching(self, folder: Path) -> bool:
+        """Stop watching a folder and report whether a watcher was active."""
         key = str(Path(folder).expanduser().resolve())
         with self._lock:
             item = self._watchers.pop(key, None)
@@ -416,6 +438,7 @@ class KnowledgeIndex:
         return True
 
     def close(self) -> None:
+        """Stop active watchers and release index resources."""
         for root, _ in list(self._watchers.values()):
             root.set()
         for _, thread in list(self._watchers.values()):
@@ -425,6 +448,7 @@ class KnowledgeIndex:
         self._watchers.clear()
 
     def status(self) -> dict:
+        """Return index counts, roots, watchers, and embedding status."""
         with self._lock, self._connect() as db:
             files, chunks = db.execute(
                 "SELECT (SELECT COUNT(*) FROM knowledge_files), "
@@ -437,10 +461,14 @@ class KnowledgeIndex:
                     "embedding_note": self.embedding_note}
 
     def roots(self) -> list[Path]:
+        """Return the currently indexed source folders."""
         with self._lock, self._connect() as db:
             return [Path(row[0]) for row in db.execute("SELECT root FROM knowledge_roots ORDER BY root")]
 
-    def recent_changes(self, days: int = 1, limit: int = 50) -> list[tuple[str, str, str]]:
+    def recent_changes(
+        self, days: int = 1, limit: int = 50
+    ) -> list[tuple[str, str, str]]:
+        """Return recently changed files grouped by indexed source."""
         days = max(1, min(int(days), 365))
         cutoff = time.time() - days * 86_400
         with self._lock, self._connect() as db:
@@ -452,6 +480,7 @@ class KnowledgeIndex:
             ).fetchall()
 
     def add_reminder(self, due_text: str, message: str) -> str:
+        """Validate and store a reminder for a future date and time."""
         try:
             due = datetime.fromisoformat(due_text)
         except ValueError as exc:
@@ -469,12 +498,14 @@ class KnowledgeIndex:
         return key
 
     def list_reminders(self) -> list[tuple[str, float, str]]:
+        """Return pending reminders ordered by their due time."""
         with self._lock, self._connect() as db:
             return db.execute(
                 "SELECT id,due,message FROM knowledge_reminders WHERE delivered IS NULL ORDER BY due"
             ).fetchall()
 
     def pop_due_reminders(self) -> list[tuple[str, str]]:
+        """Return due reminders and mark them as delivered."""
         now = time.time()
         with self._lock, self._connect() as db:
             rows = db.execute(
@@ -486,6 +517,7 @@ class KnowledgeIndex:
             return rows
 
     def graph_html(self) -> str:
+        """Build an HTML graph of indexed knowledge links."""
         with self._lock, self._connect() as db:
             rows = db.execute(
                 "SELECT root,path,MAX(heading) FROM knowledge_chunks GROUP BY root,path ORDER BY path"
@@ -536,6 +568,7 @@ function draw(){{
 document.querySelector('#filter').addEventListener('input',draw);draw();</script></html>"""
 
     def write_graph(self, output: Path) -> Path:
+        """Write the knowledge graph HTML to an output file."""
         output = Path(output)
         if output.suffix.lower() != ".html":
             raise KnowledgeError("knowledge graph output must be an .html file")
@@ -544,9 +577,10 @@ document.querySelector('#filter').addEventListener('input',draw);draw();</script
         return output
 
     def preview_obsidian_write(
-        self, ws, folder: Path, relative_path: str, title: str, body: str,
+        self, ws: Workspace, folder: Path, relative_path: str, title: str, body: str,
         wikilinks: list[str] | None = None,
     ) -> tuple[str, str, bool]:
+        """Create a reviewable preview without changing the vault file."""
         root = Path(folder).expanduser().resolve()
         if root not in self.roots() or not root.is_dir():
             raise KnowledgeError("write-back is limited to a folder explicitly indexed by the user")
@@ -577,7 +611,10 @@ document.querySelector('#filter').addEventListener('input',draw);draw();</script
         }
         return preview_id, content, target.exists()
 
-    def commit_obsidian_preview(self, ws, preview_id: str, overwrite: bool = False) -> Path:
+    def commit_obsidian_preview(
+        self, ws: Workspace, preview_id: str, overwrite: bool = False
+    ) -> Path:
+        """Validate and apply a preview after explicit user confirmation."""
         preview = ws.knowledge_previews.get(preview_id)
         if not preview:
             raise KnowledgeError("preview id is missing, expired, or belongs to another session")
@@ -605,6 +642,7 @@ document.querySelector('#filter').addEventListener('input',draw);draw();</script
 
 
 def render_hits(hits: list[KnowledgeHit]) -> str:
+    """Format knowledge search results with citation identifiers."""
     if not hits:
         return "No matching local knowledge passages were found."
     sections = []

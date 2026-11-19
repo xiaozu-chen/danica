@@ -23,6 +23,10 @@ MAX_PER_CALL = 2            # pictures queued by one model step (each costs cont
     {"path": {"type": "string", "description": "Path of the picture, for example shots/home.png"}},
 )
 def view_image(ws: Workspace, path: str) -> str:
+    """Look at a picture file (png, jpg, webp, gif) in the workspace: a screenshot
+        of a page or UI you built, a chart or diagram you made, or a picture the
+        user mentioned.
+    """
     if not available():
         return ("ERROR: this model cannot see pictures right now (the server has no vision projector). "
                 "Tell the user to start llama-server with --mmproj, or work without looking at the picture.")

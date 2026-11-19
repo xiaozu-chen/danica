@@ -12,6 +12,7 @@ Win32Backend.__init__ so that importing this file is harmless on other systems.
 import os
 import time
 from dataclasses import dataclass
+from typing import Any
 
 
 class ScreenError(Exception):
@@ -20,6 +21,8 @@ class ScreenError(Exception):
 
 @dataclass
 class Win:
+    """Describe a visible Windows window and its screen bounds."""
+
     hwnd: int
     title: str
     pid: int
@@ -94,11 +97,21 @@ class Win32Backend:
                         ("hwndFocus", wintypes.HWND), ("hwndCapture", wintypes.HWND), ("hwndMenuOwner", wintypes.HWND),
                         ("hwndMoveSize", wintypes.HWND), ("hwndCaret", wintypes.HWND), ("rcCaret", wintypes.RECT)]
 
-        self.INPUT, self.MOUSEINPUT, self.KEYBDINPUT, self.POINT, self.GUITHREADINFO = INPUT, MOUSEINPUT, KEYBDINPUT, POINT, GUITHREADINFO
+        (
+            self.INPUT,
+            self.MOUSEINPUT,
+            self.KEYBDINPUT,
+            self.POINT,
+            self.GUITHREADINFO,
+        ) = INPUT, MOUSEINPUT, KEYBDINPUT, POINT, GUITHREADINFO
         self.user32.GetAncestor.restype = wintypes.HWND
         self.user32.WindowFromPoint.restype = wintypes.HWND
         self.user32.GetForegroundWindow.restype = wintypes.HWND
-        self.user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        self.user32.GetWindowTextW.argtypes = [
+            wintypes.HWND,
+            wintypes.LPWSTR,
+            ctypes.c_int,
+        ]
         self.user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
         self.user32.SetCursorPos.argtypes = [ctypes.c_int, ctypes.c_int]
 
@@ -138,8 +151,14 @@ class Win32Backend:
         self.user32.GetWindowTextW(wt.HWND(hwnd), buf, n + 1)
         pid = wt.DWORD()
         self.user32.GetWindowThreadProcessId(wt.HWND(hwnd), ct.byref(pid))
-        return Win(int(hwnd), buf.value, int(pid.value), self._process_name(pid.value), self._rect(hwnd),
-                   bool(self.user32.IsIconic(wt.HWND(hwnd))))
+        return Win(
+            int(hwnd),
+            buf.value,
+            int(pid.value),
+            self._process_name(pid.value),
+            self._rect(hwnd),
+            bool(self.user32.IsIconic(wt.HWND(hwnd))),
+        )
 
     def list_windows(self) -> list[Win]:
         """Visible top-level windows with a title (hidden and 'cloaked' background windows are left out)."""
@@ -169,11 +188,13 @@ class Win32Backend:
         return found
 
     def get(self, hwnd: int) -> Win | None:
+        """Return window metadata if the handle is still valid."""
         if not self.user32.IsWindow(self.wt.HWND(hwnd)):
             return None
         return self._info(hwnd)
 
     def foreground(self) -> int:
+        """Return the handle of the foreground window."""
         return int(self.user32.GetForegroundWindow() or 0)
 
     def focus(self, hwnd: int) -> bool:
@@ -183,8 +204,8 @@ class Win32Backend:
             self.user32.ShowWindow(wt.HWND(hwnd), 9)                      # SW_RESTORE
         self.user32.SetForegroundWindow(wt.HWND(hwnd))
         if self.foreground() != hwnd:                                     # Windows sometimes refuses: borrow the front thread's input
-            ct = self.ct
-            front = self.user32.GetWindowThreadProcessId(wt.HWND(self.foreground()), None)
+            foreground = wt.HWND(self.foreground())
+            front = self.user32.GetWindowThreadProcessId(foreground, None)
             mine = self.kernel32.GetCurrentThreadId()
             self.user32.AttachThreadInput(mine, front, True)
             self.user32.SetForegroundWindow(wt.HWND(hwnd))
@@ -207,7 +228,7 @@ class Win32Backend:
         self.user32.GetWindowThreadProcessId(root, ct.byref(pid))
         return int(root), int(pid.value)
 
-    def capture(self, rect):
+    def capture(self, rect: tuple[int, int, int, int]) -> Any:
         """A Pillow image of a screen rectangle (left, top, right, bottom)."""
         try:
             from PIL import ImageGrab
@@ -217,16 +238,20 @@ class Win32Backend:
 
     # ------------------------------------------------------------------ mouse
     def cursor(self) -> tuple[int, int]:
+        """Return the cursor position in screen coordinates."""
         p = self.POINT()
         self.user32.GetCursorPos(self.ct.byref(p))
         return p.x, p.y
 
     def set_cursor(self, x: int, y: int) -> None:
+        """Move the cursor to screen coordinates."""
         self.user32.SetCursorPos(int(x), int(y))
 
     def _send(self, *items) -> None:
         arr = (self.INPUT * len(items))(*items)
-        if self.user32.SendInput(len(items), arr, self.ct.sizeof(self.INPUT)) != len(items):
+        if self.user32.SendInput(
+            len(items), arr, self.ct.sizeof(self.INPUT)
+        ) != len(items):
             raise ScreenError("Windows did not accept the input (an app running as administrator blocks it)")
 
     def _mouse(self, flags: int, data: int = 0):
@@ -235,9 +260,11 @@ class Win32Backend:
         return i
 
     def mouse_down(self, button: str = "left") -> None:
+        """Press a supported mouse button."""
         self._send(self._mouse(MOUSE[button][0]))
 
     def mouse_up(self, button: str = "left") -> None:
+        """Release a supported mouse button."""
         self._send(self._mouse(MOUSE[button][1]))
 
     def wheel(self, clicks: int) -> None:
@@ -251,7 +278,23 @@ class Win32Backend:
         return i
 
     def key(self, vk: int, up: bool) -> None:
-        extended = 0x0001 if vk in (0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2D, 0x2E) else 0
+        """Send a virtual key press or release."""
+        extended = (
+            0x0001
+            if vk in (
+                0x21,
+                0x22,
+                0x23,
+                0x24,
+                0x25,
+                0x26,
+                0x27,
+                0x28,
+                0x2D,
+                0x2E,
+            )
+            else 0
+        )
         self._send(self._key(vk, 0, extended | (0x0002 if up else 0)))
 
     def char(self, ch: str) -> None:
@@ -281,7 +324,7 @@ class Win32Backend:
 _BACKEND = None
 
 
-def get_backend():
+def get_backend() -> Any:
     """The backend in use: the real one on Windows (tests replace it with set_backend)."""
     global _BACKEND
     if _BACKEND is None:
@@ -289,6 +332,7 @@ def get_backend():
     return _BACKEND
 
 
-def set_backend(backend) -> None:
+def set_backend(backend: Any) -> None:
+    """Set the screen control backend used by later operations."""
     global _BACKEND
     _BACKEND = backend

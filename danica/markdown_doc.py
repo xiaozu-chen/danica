@@ -47,7 +47,10 @@ INLINE_RX = re.compile(
     r"|\[([^\]\n]+)\]\(([^)\s]+)\)")      # 4, 5: link label and address
 
 
-def parse_inline(text: str, style: frozenset = frozenset(), depth: int = 0) -> list[tuple[str, frozenset]]:
+def parse_inline(
+    text: str, style: frozenset = frozenset(), depth: int = 0
+) -> list[tuple[str, frozenset]]:
+    """Parse inline Markdown into text runs with formatting styles."""
     runs: list[tuple[str, frozenset]] = []
     pos = 0
 
@@ -214,6 +217,7 @@ def labelled(block: dict) -> list[tuple[int, str, list]]:
 
 
 def first_heading(blocks: list[dict]) -> str:
+    """Return the first heading text, or an empty string."""
     for b in blocks:
         if b["t"] == "h":
             return "".join(t for t, _ in b["runs"])[:120]

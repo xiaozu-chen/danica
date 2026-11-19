@@ -1,7 +1,10 @@
+"""Build the terminal help menu from registered command descriptions."""
+
+from typing import Any
+
 from rich import box
-from rich.panel import Panel
 from rich.columns import Columns
-from rich.console import Console
+from rich.panel import Panel
 from rich.text import Text
 
 HELP = [
@@ -20,7 +23,7 @@ HELP = [
     {"name": "Other", "commands": ["/ws", "/skills", "/agents [run <task> | peek|wait|kill <id>]", "/config", "/perf [tools]", "/classifier", "/dialogs", "/diagrams", "/help"]},
 ]
 
-def render_help_menu():
+def render_help_menu() -> Any:
     """Build the command reference as a Rich renderable (does not print)."""
     category_panels = []
     for section in HELP:

@@ -17,6 +17,7 @@ import re
 from danica import vision
 from danica.config import CONFIG
 from danica.tools.registry import run_tool
+from danica.workspace import Workspace
 
 MAX_PER_REQUEST = 3
 OUT_DIRS = ("dist", "build")
@@ -27,10 +28,11 @@ CD_RX = re.compile(r"(?:^|[;&|]\s*)(?:cd|sl|set-location|push-location)\s+(?:-pa
 
 
 def enabled() -> bool:
+    """Return whether automatic screenshots are enabled and available."""
     return bool(CONFIG.get("vision", {}).get("auto_screenshot", True)) and vision.available()
 
 
-def maybe(ws, command: str, result: str, used: int) -> tuple[str, bool]:
+def maybe(ws: Workspace, command: str, result: str, used: int) -> tuple[str, bool]:
     """(text to append to the shell result, whether a screenshot was taken). Never raises."""
     try:
         if used >= MAX_PER_REQUEST or not enabled():

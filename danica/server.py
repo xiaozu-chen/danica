@@ -89,8 +89,13 @@ class ServerMonitor(threading.Thread):
          "ctx_changed"  data = (old, new)   it answered with a different n_ctx (restarted with another -c)
     on_event runs on this thread, so it must only hand the event to the UI (post_message)."""
 
-    def __init__(self, get_url: Callable[[], str], on_event: Callable[[str, object], None],
-                 interval: float = 4.0, misses_needed: int = 2) -> None:
+    def __init__(
+        self,
+        get_url: Callable[[], str],
+        on_event: Callable[[str, object], None],
+        interval: float = 4.0,
+        misses_needed: int = 2,
+    ) -> None:
         super().__init__(name="server-monitor", daemon=True)
         self.get_url = get_url
         self.on_event = on_event
@@ -110,6 +115,7 @@ class ServerMonitor(threading.Thread):
         self._wake.set()
 
     def stop(self) -> None:
+        """Stop the managed model server process."""
         self._halt.set()
         self._wake.set()
 
@@ -120,6 +126,7 @@ class ServerMonitor(threading.Thread):
             pass                              # a failing callback must not kill the monitor
 
     def run(self) -> None:
+        """Start the server monitor loop until shutdown is requested."""
         misses = 0
         while not self._halt.is_set():
             try:
