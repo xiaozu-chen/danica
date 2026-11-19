@@ -1,0 +1,143 @@
+diff --git a/danica/computer.py b/danica/computer.py
+index 7dd20ba..08900d9 100644
+--- a/danica/computer.py
++++ b/danica/computer.py
+@@ -154,6 +154,24 @@ def draw_grid(img, cols: int, rows: int):
+     return Image.alpha_composite(base, layer).convert("RGB")
+ 
+ 
++def draw_ruler(img):
++    """Tick labels 0..1000 along the top and left edges, so a model that thinks in thousandths can read a position off the picture."""
++    from PIL import ImageDraw, ImageFont
++    d = ImageDraw.Draw(img)
++    try:
++        font = ImageFont.load_default(size=11)
++    except TypeError:
++        font = ImageFont.load_default()
++    w, h = img.size
++    for v in range(0, 1001, 100):
++        x, y = min(w - 1, round(v * w / 1000)), min(h - 1, round(v * h / 1000))
++        d.line([(x, 0), (x, 6)], fill=(255, 235, 0), width=1)
++        d.line([(0, y), (6, y)], fill=(255, 235, 0), width=1)
++        d.text((min(max(x + 2, 0), w - 26), 7), str(v), font=font, fill=(255, 235, 0), stroke_width=1, stroke_fill=(0, 0, 0))
++        d.text((8, min(max(y - 5, 0), h - 12)), str(v), font=font, fill=(255, 235, 0), stroke_width=1, stroke_fill=(0, 0, 0))
++    return img
++
++
+ @dataclass
+ class Computer:
+     """One per session (stored on the workspace). The tools and the /computer command both use it."""
+@@ -163,6 +181,7 @@ class Computer:
+     max_actions: int = 25
+     settle: float = 0.35
+     grid: bool = True
++    coords: str = "normalized"                        # x,y mean 0-1000 across the picture (what Qwen-VL models think in); "pixels" = picture pixels
+     approvals: dict = field(default_factory=dict)      # hwnd -> Approval
+     mapping: Mapping | None = None
+     actions: int = 0
+@@ -317,7 +336,9 @@ class Computer:
+             try:
+                 x, y, w, h = (float(v) for v in region)
+             except (TypeError, ValueError):
+-                raise ComputerError("region must be [x, y, width, height] in the last picture's pixels")
++                raise ComputerError("region must be [x, y, width, height] in the same units as positions (0-1000 across the picture)")
++            if self.coords == "normalized":                              # thousandths of the picture -> picture pixels
++                x, w, y, h = x * m.width / 1000, w * m.width / 1000, y * m.height / 1000, h * m.height / 1000
+             x, y = max(0.0, x), max(0.0, y)
+             w, h = min(w, m.width - x), min(h, m.height - y)
+             if w < 20 or h < 20:
+@@ -337,6 +358,8 @@ class Computer:
+         rows = max(3, min(12, round(cols * pic_h / pic_w)))
+         if use_grid:
+             img = draw_grid(img, cols, rows)
++            if self.coords == "normalized":
++                img = draw_ruler(img)
+         self.mapping = Mapping(win.hwnd, win.rect, left, top, (right - left) / pic_w, pic_w, pic_h, cols, rows, use_grid)
+         folder.mkdir(parents=True, exist_ok=True)
+         self.shot_counter += 1
+@@ -346,7 +369,9 @@ class Computer:
+             old.unlink(missing_ok=True)
+         text = (f"'{clean_title(win.title)}' {pic_w}x{pic_h}"
+                 + (f", grid {cols}x{rows} (cells A1..{chr(64 + cols)}{rows})" if use_grid else "")
+-                + ". Give positions as x,y in this picture or as a grid cell like C4.")
++                + (". Give positions as x,y from 0 to 1000 across the picture (0,0 = top-left, 1000,1000 = bottom-right; the ruler "
++                   "on the edges shows it) or as a grid cell like C4." if self.coords == "normalized" else
++                   ". Give positions as x,y in this picture's pixels or as a grid cell like C4."))
+         self._note(f"picture of '{clean_title(win.title)}'")
+         return path, text
+ 
+@@ -369,7 +394,12 @@ class Computer:
+             x, y = float(x), float(y)
+         except (TypeError, ValueError):
+             raise ComputerError("give x and y (numbers in the picture) or a cell like C4")
+-        if not (0 <= x < m.width and 0 <= y < m.height):
++        if self.coords == "normalized" and not cell:
++            if not (0 <= x <= 1000 and 0 <= y <= 1000):
++                raise ComputerError(f"({x:.0f}, {y:.0f}) is outside the picture: x and y go from 0 to 1000 (0,0 = top-left, "
++                                    "1000,1000 = bottom-right). Look at the ruler on the picture's edges, or use a grid cell like C4.")
++            x, y = min(x * m.width / 1000, m.width - 1), min(y * m.height / 1000, m.height - 1)      # thousandths -> picture pixels
++        elif not (0 <= x < m.width and 0 <= y < m.height):
+             raise ComputerError(f"({x:.0f}, {y:.0f}) is outside the picture, which is {m.width}x{m.height}")
+         rx, ry = m.left + x * m.scale, m.top + y * m.scale
+         win = self.window(m.hwnd)
+@@ -454,7 +484,7 @@ class Computer:
+             m = self.mapping
+             if not m:
+                 raise ComputerError("take a screen_shot first")
+-            x, y = m.width / 2, m.height / 2
++            x, y = (500, 500) if self.coords == "normalized" else (m.width / 2, m.height / 2)
+         rx, ry = self.point(x, y, cell)
+         self._front(self.window(self.mapping.hwnd))
+         self._spend()
+@@ -535,6 +565,7 @@ def computer_for(ws) -> Computer:
+         from danica.config import CONFIG
+         cfg = CONFIG.get("computer", {}) or {}
+         comp = Computer(smooth=bool(cfg.get("smooth", True)), max_actions=int(cfg.get("max_actions", 25)),
+-                        settle=float(cfg.get("settle", 0.35)), grid=bool(cfg.get("grid", True)))
++                        settle=float(cfg.get("settle", 0.35)), grid=bool(cfg.get("grid", True)),
++                        coords="pixels" if cfg.get("coords") == "pixels" else "normalized")
+         ws.computer = comp
+     return comp
+diff --git a/danica/config.py b/danica/config.py
+index c870729..d1ec3e9 100644
+--- a/danica/config.py
++++ b/danica/config.py
+@@ -58,7 +58,7 @@ DEFAULTS = {
+     "mail": {"host": "", "user": "", "port": 993, "folder": "INBOX", "ssl": True, "timeout": 20,
+              "max_list": 30, "snippet_chars": 240, "body_chars": 6000},
+     # computer use (computer.py): smooth = glide the mouse, max_actions = per request, settle = seconds to wait after an action
+-    "computer": {"smooth": True, "max_actions": 25, "settle": 0.35, "grid": True},
++    "computer": {"smooth": True, "max_actions": 25, "settle": 0.35, "grid": True, "coords": "normalized"},   # coords: "normalized" = x,y 0-1000, "pixels" = picture pixels
+     "mcp": {"servers": {}},
+     "hooks": {"before": [], "after": []},
+     "webcache": {
+diff --git a/danica/tools/computer_tools.py b/danica/tools/computer_tools.py
+index e830388..c0dc212 100644
+--- a/danica/tools/computer_tools.py
++++ b/danica/tools/computer_tools.py
+@@ -65,9 +65,9 @@ def screen_windows(ws: Workspace) -> str:
+ 
+ @tool("screen_shot",
+       "Take a picture of an approved window (nothing else on the screen is ever shown). It has a labelled grid: cells A1, "
+-      "B1... You can name a cell (cell=\"C4\") or use x,y in the picture. region=[x,y,width,height] (picture pixels) zooms "
+-      "into a part of the LAST full picture at higher detail, for small text or buttons; positions then refer to the zoomed "
+-      "picture. window = part of the title when several are approved.",
++      "B1... You can name a cell (cell=\"C4\") or use x,y from 0 to 1000 across the picture (0,0 = top-left, 1000,1000 = "
++      "bottom-right; a ruler on the edges shows it). region=[x,y,width,height] (same 0-1000 units) zooms into a part of the "
++      "LAST full picture at higher detail, for small text or buttons; positions then refer to the zoomed picture. window = part of the title when several are approved.",
+       {"window": {"type": "string", "default": "", "description": "Part of the window title (empty = the last/only approved window)"},
+        "region": {"type": "array", "items": {"type": "number"}, "default": [], "description": "[x, y, width, height] to zoom into"},
+        "grid": {"type": "boolean", "default": True, "description": "Draw the labelled grid"}})
+@@ -87,10 +87,10 @@ def _act(ws: Workspace, what, window: str = "") -> str:
+ 
+ 
+ @tool("screen_click",
+-      "Click in the approved window at a position from the LAST picture: x and y in the picture, or cell=\"C4\". "
++      "Click in the approved window at a position from the LAST picture: x and y from 0 to 1000 across the picture, or cell=\"C4\". "
+       "button = left (default), right or middle; double = true for a double click. The cursor glides there smoothly. "
+       "Returns a new picture: always look at it to check that it worked.",
+-      {"x": {"type": "number", "description": "x in the picture"}, "y": {"type": "number", "description": "y in the picture"},
++      {"x": {"type": "number", "description": "x, 0-1000 across the picture"}, "y": {"type": "number", "description": "y, 0-1000 down the picture"},
+        "cell": {"type": "string", "default": "", "description": "Grid cell like C4 (instead of x,y)"},
+        "button": {"type": "string", "default": "left", "description": "left, right or middle"},
+        "double": {"type": "boolean", "default": False, "description": "Double click"}})

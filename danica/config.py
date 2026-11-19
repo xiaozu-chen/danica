@@ -58,7 +58,7 @@ DEFAULTS = {
     "mail": {"host": "", "user": "", "port": 993, "folder": "INBOX", "ssl": True, "timeout": 20,
              "max_list": 30, "snippet_chars": 240, "body_chars": 6000},
     # computer use (computer.py): smooth = glide the mouse, max_actions = per request, settle = seconds to wait after an action
-    "computer": {"smooth": True, "max_actions": 25, "settle": 0.35, "grid": True},
+    "computer": {"smooth": True, "max_actions": 25, "settle": 0.35, "grid": True, "coords": "normalized"},   # coords: "normalized" = x,y 0-1000, "pixels" = picture pixels
     "mcp": {"servers": {}},
     "hooks": {"before": [], "after": []},
     "webcache": {

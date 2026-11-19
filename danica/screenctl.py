@@ -192,6 +192,10 @@ class Win32Backend:
         self.sleep(0.15)
         return self.foreground() == hwnd
 
+    def owner_of(self, hwnd: int) -> int:
+        """The window that owns this one (a dialog's owner), or 0."""
+        return int(self.user32.GetWindow(self.wt.HWND(hwnd), 4) or 0)                 # GW_OWNER
+
     def window_at(self, x: int, y: int) -> tuple[int, int] | None:
         """(top-level window, its process id) under a screen point, or None when there is no window there."""
         ct, wt = self.ct, self.wt

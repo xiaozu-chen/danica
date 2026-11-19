@@ -74,6 +74,7 @@ class Mapping:
     cols: int
     rows: int
     grid: bool
+    rects: tuple = ()                    # every rectangle in the picture: the window and the dialogs it owns
 
 
 def clean_title(title: str, limit: int = 80) -> str:
@@ -154,6 +155,40 @@ def draw_grid(img, cols: int, rows: int):
     return Image.alpha_composite(base, layer).convert("RGB")
 
 
+def draw_marker(img, points, left: float, top: float, scale: float):
+    """Green circle + cross where the last click landed, so the model can SEE whether it hit the button."""
+    from PIL import ImageDraw
+    d = ImageDraw.Draw(img)
+    w, h = img.size
+    for rx, ry in points:
+        x, y = (rx - left) / scale, (ry - top) / scale
+        if not (0 <= x < w and 0 <= y < h):
+            continue
+        for width, color in ((4, (0, 0, 0)), (2, (0, 255, 0))):          # black outline first, then green
+            d.ellipse([x - 14, y - 14, x + 14, y + 14], outline=color, width=width)
+            d.line([(x - 22, y), (x + 22, y)], fill=color, width=width)
+            d.line([(x, y - 22), (x, y + 22)], fill=color, width=width)
+    return img
+
+
+def draw_ruler(img):
+    """Tick labels 0..1000 along the top and left edges, so a model that thinks in thousandths can read a position off the picture."""
+    from PIL import ImageDraw, ImageFont
+    d = ImageDraw.Draw(img)
+    try:
+        font = ImageFont.load_default(size=11)
+    except TypeError:
+        font = ImageFont.load_default()
+    w, h = img.size
+    for v in range(0, 1001, 100):
+        x, y = min(w - 1, round(v * w / 1000)), min(h - 1, round(v * h / 1000))
+        d.line([(x, 0), (x, 6)], fill=(255, 235, 0), width=1)
+        d.line([(0, y), (6, y)], fill=(255, 235, 0), width=1)
+        d.text((min(max(x + 2, 0), w - 26), 7), str(v), font=font, fill=(255, 235, 0), stroke_width=1, stroke_fill=(0, 0, 0))
+        d.text((8, min(max(y - 5, 0), h - 12)), str(v), font=font, fill=(255, 235, 0), stroke_width=1, stroke_fill=(0, 0, 0))
+    return img
+
+
 @dataclass
 class Computer:
     """One per session (stored on the workspace). The tools and the /computer command both use it."""
@@ -163,11 +198,15 @@ class Computer:
     max_actions: int = 25
     settle: float = 0.35
     grid: bool = True
+    coords: str = "normalized"                        # x,y mean 0-1000 across the picture (what Qwen-VL models think in); "pixels" = picture pixels
     approvals: dict = field(default_factory=dict)      # hwnd -> Approval
     mapping: Mapping | None = None
     actions: int = 0
     log: list = field(default_factory=list)
     shot_counter: int = 0
+    marker: list = field(default_factory=list)         # real screen points of the last click/drag, drawn once on the next picture
+    expect_change: bool = False                        # an action just happened: the next picture should look different
+    _thumb: tuple | None = None
 
     # ------------------------------------------------------------------ state
     @property
@@ -274,12 +313,40 @@ class Computer:
         raise ComputerError("several windows are approved: say which one (window=...). Approved: "
                             + ", ".join(f"'{clean_title(w.title, 40)}'" for w in wins))
 
+    def _owned(self, hwnd: int, owner: int) -> bool:
+        """Is `hwnd` the window `owner` itself, or a dialog/popup that belongs to it (Save As, Open, a menu)?"""
+        for _ in range(6):
+            if hwnd == owner:
+                return True
+            hwnd = self.backend.owner_of(hwnd)
+            if not hwnd:
+                return False
+        return False
+
+    def _frame(self, win: Win) -> tuple[tuple, list]:
+        """(bounding rectangle, [rectangles]) of the approved window plus the dialogs it owns, so a Save As box that sits
+        partly outside the window is in the picture too. Other windows of the same program are NOT included."""
+        rects = [tuple(win.rect)]
+        for w in self.backend.list_windows():
+            if w.hwnd == win.hwnd or w.minimized or blocked_reason(w) or not self._owned(w.hwnd, win.hwnd):
+                continue
+            l, t, r, b = w.rect
+            if r - l >= 40 and b - t >= 30:
+                rects.append(tuple(w.rect))
+            if len(rects) >= 5:
+                break
+        union = (min(r[0] for r in rects), min(r[1] for r in rects), max(r[2] for r in rects), max(r[3] for r in rects))
+        if union[2] - union[0] > 4000 or union[3] - union[1] > 3000:          # absurdly large: just the window
+            return tuple(win.rect), [tuple(win.rect)]
+        return union, rects
+
     def _front(self, win: Win) -> Win:
-        """Make sure the approved window is the one in front (raising it if needed) and return it fresh."""
-        if win.minimized or self.backend.foreground() != win.hwnd:
+        """Make sure the approved window (or a dialog of it) is in front, raising it if needed, and return it fresh."""
+        fg = self.backend.foreground()
+        if win.minimized or not (fg == win.hwnd or self._owned(fg, win.hwnd)):
             if not self.backend.focus(win.hwnd):
-                other = self.backend.get(self.backend.foreground())
-                if not other or other.pid != win.pid:                      # a dialog of the same program in front is fine
+                fg = self.backend.foreground()
+                if not self._owned(fg, win.hwnd):
                     raise ComputerError(f"could not bring '{clean_title(win.title)}' to the front. Ask the user to click on it.")
         return self.window(win.hwnd)
 
@@ -293,7 +360,7 @@ class Computer:
             if hit is None:
                 continue
             seen += 1
-            same += hit[1] == win.pid
+            same += self._owned(hit[0], win.hwnd)
         return same / seen if seen else 1.0
 
     # ------------------------------------------------------------------ the picture
@@ -308,16 +375,19 @@ class Computer:
         if share < 0.8:
             raise ComputerError(f"'{clean_title(win.title)}' is partly hidden behind another program's window. Ask the user to "
                                 "move that window away; Danica never shows anything outside the approved window.")
-        l, t, r, b = win.rect
+        union, rects = self._frame(win)
+        l, t, r, b = union
         left, top, right, bottom = float(l), float(t), float(r), float(b)
         if region is not None:                                           # zoom: a part of the last picture
             m = self.mapping
-            if not m or m.hwnd != win.hwnd or m.rect != win.rect:
+            if not m or m.hwnd != win.hwnd or m.rect != union or m.rects != tuple(rects):
                 raise ComputerError("zoom needs a recent full picture of this window first: call screen_shot without region.")
             try:
                 x, y, w, h = (float(v) for v in region)
             except (TypeError, ValueError):
-                raise ComputerError("region must be [x, y, width, height] in the last picture's pixels")
+                raise ComputerError("region must be [x, y, width, height] in the same units as positions (0-1000 across the picture)")
+            if self.coords == "normalized":                              # thousandths of the picture -> picture pixels
+                x, w, y, h = x * m.width / 1000, w * m.width / 1000, y * m.height / 1000, h * m.height / 1000
             x, y = max(0.0, x), max(0.0, y)
             w, h = min(w, m.width - x), min(h, m.height - y)
             if w < 20 or h < 20:
@@ -325,6 +395,14 @@ class Computer:
             left, top = m.left + x * m.scale, m.top + y * m.scale
             right, bottom = left + w * m.scale, top + h * m.scale
         img = self.backend.capture((round(left), round(top), round(right), round(bottom)))
+        if len(rects) > 1:                                                # blank out the gaps between the window and its dialogs
+            from PIL import Image
+            clean = Image.new("RGB", img.size, (0, 0, 0))
+            for rl, rt, rr, rb in rects:
+                box = (max(0, rl - round(left)), max(0, rt - round(top)), min(img.size[0], rr - round(left)), min(img.size[1], rb - round(top)))
+                if box[2] > box[0] and box[3] > box[1]:
+                    clean.paste(img.crop(box), (box[0], box[1]))
+            img = clean
         real_w, real_h = img.size
         target_w = min(MAX_WIDTH, real_w * 3) if region is not None else min(MAX_WIDTH, real_w)
         pic_w = max(1, int(target_w))
@@ -332,12 +410,29 @@ class Computer:
         if (pic_w, pic_h) != img.size:
             from PIL import Image
             img = img.resize((pic_w, pic_h), Image.LANCZOS)
+        notes = []
+        small = img.convert("L").resize((96, 96))                          # did anything change since the last picture?
+        key = (win.hwnd, union)
+        if self.expect_change and self._thumb and self._thumb[0] == key:
+            from PIL import ImageChops
+            changed = sum(1 for v in ImageChops.difference(self._thumb[1], small).getdata() if v > 24) / (96 * 96)
+            notes.append("WARNING: the screen did NOT change after the last action. If you expected a change, the action probably "
+                         "missed or was ignored: do not assume it worked; re-aim and try again." if changed < 0.002 else
+                         f"The screen changed ({changed:.0%} of the window).")
+        self.expect_change, self._thumb = False, (key, small)
         use_grid = self.grid if grid is None else bool(grid)
         cols = 12 if region is None else 8
         rows = max(3, min(12, round(cols * pic_h / pic_w)))
         if use_grid:
             img = draw_grid(img, cols, rows)
-        self.mapping = Mapping(win.hwnd, win.rect, left, top, (right - left) / pic_w, pic_w, pic_h, cols, rows, use_grid)
+            if self.coords == "normalized":
+                img = draw_ruler(img)
+        scale = (right - left) / pic_w
+        if self.marker:
+            img = draw_marker(img, self.marker, left, top, scale)
+            notes.append("The green circle marks where the last click landed: if it is not on the thing you meant, aim again.")
+            self.marker = []
+        self.mapping = Mapping(win.hwnd, union, left, top, scale, pic_w, pic_h, cols, rows, use_grid, tuple(rects))
         folder.mkdir(parents=True, exist_ok=True)
         self.shot_counter += 1
         path = folder / f"screen_{self.shot_counter:04d}.png"
@@ -346,7 +441,11 @@ class Computer:
             old.unlink(missing_ok=True)
         text = (f"'{clean_title(win.title)}' {pic_w}x{pic_h}"
                 + (f", grid {cols}x{rows} (cells A1..{chr(64 + cols)}{rows})" if use_grid else "")
-                + ". Give positions as x,y in this picture or as a grid cell like C4.")
+                + (". Give positions as x,y from 0 to 1000 across the picture (0,0 = top-left, 1000,1000 = bottom-right; the ruler "
+                   "on the edges shows it) or as a grid cell like C4." if self.coords == "normalized" else
+                   ". Give positions as x,y in this picture's pixels or as a grid cell like C4.")
+                + (f" It also shows {len(rects) - 1} dialog window(s) of this program." if len(rects) > 1 else "")
+                + ("".join(" " + n for n in notes)))
         self._note(f"picture of '{clean_title(win.title)}'")
         return path, text
 
@@ -369,17 +468,23 @@ class Computer:
             x, y = float(x), float(y)
         except (TypeError, ValueError):
             raise ComputerError("give x and y (numbers in the picture) or a cell like C4")
-        if not (0 <= x < m.width and 0 <= y < m.height):
+        if self.coords == "normalized" and not cell:
+            if not (0 <= x <= 1000 and 0 <= y <= 1000):
+                raise ComputerError(f"({x:.0f}, {y:.0f}) is outside the picture: x and y go from 0 to 1000 (0,0 = top-left, "
+                                    "1000,1000 = bottom-right). Look at the ruler on the picture's edges, or use a grid cell like C4.")
+            x, y = min(x * m.width / 1000, m.width - 1), min(y * m.height / 1000, m.height - 1)      # thousandths -> picture pixels
+        elif not (0 <= x < m.width and 0 <= y < m.height):
             raise ComputerError(f"({x:.0f}, {y:.0f}) is outside the picture, which is {m.width}x{m.height}")
         rx, ry = m.left + x * m.scale, m.top + y * m.scale
         win = self.window(m.hwnd)
-        if win.rect != m.rect:
-            raise ComputerError("the window moved or changed size since the last picture: take a new screen_shot")
-        l, t, r, b = win.rect
-        if not (l <= rx < r and t <= ry < b):
+        union, rects = self._frame(win)
+        if union != m.rect or tuple(rects) != m.rects:
+            raise ComputerError("the window (or one of its dialogs) moved, resized, opened or closed since the last picture: "
+                                "take a new screen_shot")
+        if not any(l <= rx < r and t <= ry < b for l, t, r, b in rects):
             raise ComputerError("that position is outside the approved window")
         hit = self.backend.window_at(int(rx), int(ry))
-        if hit is not None and hit[1] != win.pid:
+        if hit is not None and not self._owned(hit[0], win.hwnd):
             raise ComputerError("another program's window is on top of that spot: nothing was clicked")
         return rx, ry
 
@@ -396,6 +501,7 @@ class Computer:
         be.set_cursor(round(rx), round(ry))
 
     def _after(self) -> None:
+        self.expect_change = True                         # the next picture is compared with the one before
         self.backend.sleep(self.settle)                   # let the app react before the next picture
 
     # ------------------------------------------------------------------ actions (each returns a one-line description)
@@ -412,6 +518,7 @@ class Computer:
             self.backend.sleep(0.04)
             self.backend.mouse_up(button)
             self.backend.sleep(0.07)
+        self.marker = [(rx, ry)]
         what = f"{'double-' if double else ''}{button} click at ({rx:.0f}, {ry:.0f}) in '{clean_title(win.title)}'"
         self._note(what)
         self._after()
@@ -437,6 +544,7 @@ class Computer:
             be.sleep(0.12)
         finally:
             be.mouse_up(button)                                         # ALWAYS release, even when Esc stopped it
+        self.marker = [(sx, sy), (ex, ey)]
         what = f"dragged ({sx:.0f}, {sy:.0f}) -> ({ex:.0f}, {ey:.0f}) in '{clean_title(win.title)}'"
         self._note(what)
         self._after()
@@ -454,7 +562,7 @@ class Computer:
             m = self.mapping
             if not m:
                 raise ComputerError("take a screen_shot first")
-            x, y = m.width / 2, m.height / 2
+            x, y = (500, 500) if self.coords == "normalized" else (m.width / 2, m.height / 2)
         rx, ry = self.point(x, y, cell)
         self._front(self.window(self.mapping.hwnd))
         self._spend()
@@ -535,6 +643,7 @@ def computer_for(ws) -> Computer:
         from danica.config import CONFIG
         cfg = CONFIG.get("computer", {}) or {}
         comp = Computer(smooth=bool(cfg.get("smooth", True)), max_actions=int(cfg.get("max_actions", 25)),
-                        settle=float(cfg.get("settle", 0.35)), grid=bool(cfg.get("grid", True)))
+                        settle=float(cfg.get("settle", 0.35)), grid=bool(cfg.get("grid", True)),
+                        coords="pixels" if cfg.get("coords") == "pixels" else "normalized")
         ws.computer = comp
     return comp
