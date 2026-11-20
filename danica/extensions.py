@@ -10,6 +10,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+from danica.frozen import module_cmd
 from danica.tools.registry import register_external_tool, tool_schemas
 
 MAX_EXTENSION_OUTPUT = 16_000
@@ -345,9 +346,7 @@ class ExtensionManager:
     ) -> str:
         """Run a local plugin tool with its workspace context."""
         command = [
-            sys.executable,
-            "-m",
-            "danica.extension_worker",
+            *module_cmd("danica.extension_worker"),      # packaged exe: Danica.exe --run-module ... (see frozen.py)
             "--module",
             str(module),
             "--tool",

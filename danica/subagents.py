@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, TYPE_CHECKING
 
 from danica.audit import AuditLog
+from danica.frozen import module_cmd
 from danica.workspace import Workspace
 
 if TYPE_CHECKING:
@@ -165,7 +166,7 @@ class SubagentSupervisor:
             child.listener = listener
             token = secrets.token_urlsafe(32)
             command = [
-                sys.executable, "-m", "danica.subagent_worker",
+                *module_cmd("danica.subagent_worker"),      # packaged exe: Danica.exe --run-module ... (see frozen.py)
                 "--host", "127.0.0.1", "--port", str(listener.getsockname()[1]),
                 "--token", token,
             ]

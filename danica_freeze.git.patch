@@ -1,0 +1,206 @@
+diff --git a/danica/extensions.py b/danica/extensions.py
+index 2c74180..f465276 100644
+--- a/danica/extensions.py
++++ b/danica/extensions.py
+@@ -10,6 +10,7 @@ import tomllib
+ from pathlib import Path
+ from typing import Any
+ 
++from danica.frozen import module_cmd
+ from danica.tools.registry import register_external_tool, tool_schemas
+ 
+ MAX_EXTENSION_OUTPUT = 16_000
+@@ -345,9 +346,7 @@ class ExtensionManager:
+     ) -> str:
+         """Run a local plugin tool with its workspace context."""
+         command = [
+-            sys.executable,
+-            "-m",
+-            "danica.extension_worker",
++            *module_cmd("danica.extension_worker"),      # packaged exe: Danica.exe --run-module ... (see frozen.py)
+             "--module",
+             str(module),
+             "--tool",
+diff --git a/danica/frozen.py b/danica/frozen.py
+new file mode 100644
+index 0000000..b28dc2c
+--- /dev/null
++++ b/danica/frozen.py
+@@ -0,0 +1,65 @@
++"""Packaged (.exe) support: how Danica starts its own helper processes.
++
++From source, helpers are started with `python -m danica.<module>`. In a PyInstaller build `sys.executable` is
++Danica.exe itself, not Python, so those commands would just open a second Danica. Every place that starts a helper
++asks THIS module for the command line, and `dispatch()` (called first thing in tui/__main__.py) makes the exe
++understand three private switches:
++
++    Danica.exe --run-module danica.subagent_worker <args...>   run a module as __main__   (subagents, plugins, screenshots, games)
++    Danica.exe --run-script C:\\path\\game.py                    run a .py file as __main__   (/play)
++    Danica.exe --run-code "print(1)"                           run a code string            (the file dialog)
++
++From source nothing changes: the commands are exactly the ones used before.
++"""
++
++from __future__ import annotations
++
++import sys
++from pathlib import Path
++
++FROZEN = bool(getattr(sys, "frozen", False))          # PyInstaller sets sys.frozen on the exe
++
++
++def module_cmd(module: str, script: Path | None = None, flags: tuple[str, ...] = ()) -> list[str]:
++    """Command that runs `module` as a program. From source: `python <flags> <script>` if a script path is given,
++    otherwise `python <flags> -m module`. Packaged: the exe's own --run-module switch (flags can't apply there)."""
++    if FROZEN:
++        return [sys.executable, "--run-module", module]
++    if script is not None:
++        return [sys.executable, *flags, str(script)]
++    return [sys.executable, *flags, "-m", module]
++
++
++def script_cmd(path: Path, flags: tuple[str, ...] = ()) -> list[str]:
++    """Command that runs one .py file (a game) as a program."""
++    if FROZEN:
++        return [sys.executable, "--run-script", str(path)]
++    return [sys.executable, *flags, str(path)]
++
++
++def code_cmd(code: str) -> list[str]:
++    """Command that runs a short piece of Python source."""
++    if FROZEN:
++        return [sys.executable, "--run-code", code]
++    return [sys.executable, "-c", code]
++
++
++def dispatch(argv: list[str]) -> None:
++    """If the exe was started as a helper (one of the private switches above), run that and exit. Otherwise return
++    and let the normal interface start. Only active in a packaged build, so `python -m danica.tui` is untouched."""
++    if not FROZEN or len(argv) < 3 or argv[1] not in ("--run-module", "--run-script", "--run-code"):
++        return
++    import runpy
++    switch, target, rest = argv[1], argv[2], argv[3:]
++    if switch == "--run-module":
++        sys.argv = [target, *rest]
++        runpy.run_module(target, run_name="__main__", alter_sys=True)
++    elif switch == "--run-script":
++        script = str(Path(target).resolve())
++        sys.path.insert(0, str(Path(script).parent))     # like `python game.py`: its own folder is importable
++        sys.argv = [script, *rest]
++        runpy.run_path(script, run_name="__main__")
++    else:
++        sys.argv = ["-c", *rest]
++        exec(compile(target, "<string>", "exec"), {"__name__": "__main__"})
++    raise SystemExit(0)
+diff --git a/danica/gamerun.py b/danica/gamerun.py
+index 27ff6d4..8788583 100644
+--- a/danica/gamerun.py
++++ b/danica/gamerun.py
+@@ -119,6 +119,7 @@ def run(
+     """Run `game` headless. Returns the child's result dict plus "log" (what the game printed); on a failure to even
+     run it, {"ok": False, "error": "..."}. Never raises. Pictures are saved as <out_base stem>_f0040.png."""
+     import importlib.util
++    from danica.frozen import module_cmd      # imported here: the child half of this file runs as a bare script
+     if importlib.util.find_spec("pygame") is None:
+         return {"ok": False, "error": "pygame is not installed. " + SETUP_HINT}
+     LAST["path"] = game
+@@ -138,7 +139,7 @@ def run(
+     try:
+         with open(log_path, "wb") as log_file:
+             # -I: ignore the user's site-packages tricks; -B: no .pyc files; -X utf8: printing any text can't crash
+-            proc, job = _spawn([sys.executable, "-I", "-B", "-X", "utf8", str(Path(__file__).resolve()),
++            proc, job = _spawn([*module_cmd("danica.gamerun", Path(__file__).resolve(), ("-I", "-B", "-X", "utf8")),
+                                 str(work / "args.json")], game.parent, log_file, _env())
+             timed_out = False
+             try:
+@@ -227,6 +228,7 @@ def play_log_path() -> Path:
+ def play(game: Path) -> subprocess.Popen:
+     """Start the game in a normal window. Not sandboxed: it is the user's own explicit command, like typing
+     `python game.py` themselves. Output goes to a log file. Replaces a game that is already open."""
++    from danica.frozen import script_cmd
+     stop_play()
+     log = play_log_path()
+     with open(log, "wb") as log_file:
+@@ -241,7 +243,7 @@ def play(game: Path) -> subprocess.Popen:
+             kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+         else:
+             kwargs["start_new_session"] = True
+-        proc = subprocess.Popen([sys.executable, "-X", "utf8", str(game)], **kwargs)
++        proc = subprocess.Popen(script_cmd(game, ("-X", "utf8")), **kwargs)
+     PLAYING.update(proc=proc, log=log, game=game)
+     LAST["path"] = game
+     return proc
+diff --git a/danica/shot.py b/danica/shot.py
+index 71968a9..3c5545c 100644
+--- a/danica/shot.py
++++ b/danica/shot.py
+@@ -61,9 +61,10 @@ def capture(
+         "wait_ms": wait_ms,
+         "steps": steps or [],
+     }
++    from danica.frozen import module_cmd      # imported here: the child half of this file runs as a bare script
+     try:
+         done = subprocess.run(
+-            [sys.executable, "-I", str(Path(__file__).resolve()), json.dumps(args)],
++            [*module_cmd("danica.shot", Path(__file__).resolve(), ("-I",)), json.dumps(args)],
+             capture_output=True,
+             text=True,
+             timeout=timeout,
+diff --git a/danica/subagents.py b/danica/subagents.py
+index f8638e7..8307064 100644
+--- a/danica/subagents.py
++++ b/danica/subagents.py
+@@ -13,6 +13,7 @@ from pathlib import Path
+ from typing import Any, Callable, TYPE_CHECKING
+ 
+ from danica.audit import AuditLog
++from danica.frozen import module_cmd
+ from danica.workspace import Workspace
+ 
+ if TYPE_CHECKING:
+@@ -165,7 +166,7 @@ class SubagentSupervisor:
+             child.listener = listener
+             token = secrets.token_urlsafe(32)
+             command = [
+-                sys.executable, "-m", "danica.subagent_worker",
++                *module_cmd("danica.subagent_worker"),      # packaged exe: Danica.exe --run-module ... (see frozen.py)
+                 "--host", "127.0.0.1", "--port", str(listener.getsockname()[1]),
+                 "--token", token,
+             ]
+diff --git a/danica/tui/__main__.py b/danica/tui/__main__.py
+index 92e6cdf..61e63b2 100644
+--- a/danica/tui/__main__.py
++++ b/danica/tui/__main__.py
+@@ -1,5 +1,10 @@
+ """Run the Danica terminal interface as a module."""
+ 
++import sys
++
++from danica import frozen
++frozen.dispatch(sys.argv)          # packaged exe started as a helper process (subagent, plugin, game...): run it and exit
++
+ from danica import perf
+ from danica.tui.app import main
+ 
+diff --git a/danica/uploads.py b/danica/uploads.py
+index 94ed4df..01cb017 100644
+--- a/danica/uploads.py
++++ b/danica/uploads.py
+@@ -32,6 +32,8 @@ import zipfile
+ from dataclasses import dataclass, field
+ from pathlib import Path
+ 
++from danica.frozen import code_cmd
++
+ UPLOAD_DIR = "uploads"
+ MAX_FILE = 200 * 1024 * 1024            # one file (or one file inside a zip)
+ MAX_UNZIPPED = 1024 * 1024 * 1024       # everything a zip unpacks to
+@@ -345,7 +347,7 @@ def pick_files(images_only: bool = False) -> list[Path]:
+         "print(files if isinstance(files, str) else '\\n'.join(files))\n"
+     )
+     try:
+-        done = subprocess.run([sys.executable, "-c", picker_code], capture_output=True, text=True, timeout=PICKER_TIMEOUT)
++        done = subprocess.run(code_cmd(picker_code), capture_output=True, text=True, timeout=PICKER_TIMEOUT)
+     except (OSError, subprocess.TimeoutExpired):
+         raise UploadError("the file dialog could not open. Type the path instead: /upload C:\\path\\to\\file")
+     if done.returncode != 0:

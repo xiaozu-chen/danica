@@ -32,6 +32,8 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from danica.frozen import code_cmd
+
 UPLOAD_DIR = "uploads"
 MAX_FILE = 200 * 1024 * 1024            # one file (or one file inside a zip)
 MAX_UNZIPPED = 1024 * 1024 * 1024       # everything a zip unpacks to
@@ -345,7 +347,7 @@ def pick_files(images_only: bool = False) -> list[Path]:
         "print(files if isinstance(files, str) else '\\n'.join(files))\n"
     )
     try:
-        done = subprocess.run([sys.executable, "-c", picker_code], capture_output=True, text=True, timeout=PICKER_TIMEOUT)
+        done = subprocess.run(code_cmd(picker_code), capture_output=True, text=True, timeout=PICKER_TIMEOUT)
     except (OSError, subprocess.TimeoutExpired):
         raise UploadError("the file dialog could not open. Type the path instead: /upload C:\\path\\to\\file")
     if done.returncode != 0:

@@ -119,6 +119,7 @@ def run(
     """Run `game` headless. Returns the child's result dict plus "log" (what the game printed); on a failure to even
     run it, {"ok": False, "error": "..."}. Never raises. Pictures are saved as <out_base stem>_f0040.png."""
     import importlib.util
+    from danica.frozen import module_cmd      # imported here: the child half of this file runs as a bare script
     if importlib.util.find_spec("pygame") is None:
         return {"ok": False, "error": "pygame is not installed. " + SETUP_HINT}
     LAST["path"] = game
@@ -138,7 +139,7 @@ def run(
     try:
         with open(log_path, "wb") as log_file:
             # -I: ignore the user's site-packages tricks; -B: no .pyc files; -X utf8: printing any text can't crash
-            proc, job = _spawn([sys.executable, "-I", "-B", "-X", "utf8", str(Path(__file__).resolve()),
+            proc, job = _spawn([*module_cmd("danica.gamerun", Path(__file__).resolve(), ("-I", "-B", "-X", "utf8")),
                                 str(work / "args.json")], game.parent, log_file, _env())
             timed_out = False
             try:
@@ -227,6 +228,7 @@ def play_log_path() -> Path:
 def play(game: Path) -> subprocess.Popen:
     """Start the game in a normal window. Not sandboxed: it is the user's own explicit command, like typing
     `python game.py` themselves. Output goes to a log file. Replaces a game that is already open."""
+    from danica.frozen import script_cmd
     stop_play()
     log = play_log_path()
     with open(log, "wb") as log_file:
@@ -241,7 +243,7 @@ def play(game: Path) -> subprocess.Popen:
             kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         else:
             kwargs["start_new_session"] = True
-        proc = subprocess.Popen([sys.executable, "-X", "utf8", str(game)], **kwargs)
+        proc = subprocess.Popen(script_cmd(game, ("-X", "utf8")), **kwargs)
     PLAYING.update(proc=proc, log=log, game=game)
     LAST["path"] = game
     return proc

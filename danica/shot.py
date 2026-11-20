@@ -61,9 +61,10 @@ def capture(
         "wait_ms": wait_ms,
         "steps": steps or [],
     }
+    from danica.frozen import module_cmd      # imported here: the child half of this file runs as a bare script
     try:
         done = subprocess.run(
-            [sys.executable, "-I", str(Path(__file__).resolve()), json.dumps(args)],
+            [*module_cmd("danica.shot", Path(__file__).resolve(), ("-I",)), json.dumps(args)],
             capture_output=True,
             text=True,
             timeout=timeout,
