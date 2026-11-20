@@ -20,7 +20,7 @@ INTRO = (
     "A local-first, CLI-only agentic assistant for coding, research, presentations, notes and productivity.\n\n"
     "Start llama-server with a model first, for example:\n"
     "  [yellow]llama-server -m your-model.gguf -c 65536 --jinja --port 8080[/yellow]\n\n"
-    "Having a trouble? Visit llama.cpp / llama-server documentation:\n"
+    "Having trouble connecting? See the llama-server documentation:\n"
     "  [cyan]https://llama.app/docs/serve[/cyan]\n\n"
     "Recommended model: Qwen3.5 family\n\n"
     "then press Start.\n"
@@ -29,8 +29,8 @@ INTRO = (
 
 _FORM_CSS = """
 {S} { align: center middle; }
-{S} {BOX} { width: 80%; min-width: 60; max-width: 100; height: auto;
-            padding: 1 3; background: ansi_default; }
+{S} {BOX} { width: 90%; min-width: 0; max-width: 100; height: auto;
+            padding: 1 3; background: #191d27; border: round #39445f; }
 {S} .heading { text-style: bold; margin-top: 1; }
 {S} #status { height: auto; margin: 1 0; text-wrap: wrap; }
 {S} .buttons { height: auto; }

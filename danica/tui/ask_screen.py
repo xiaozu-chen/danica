@@ -25,16 +25,17 @@ class AskScreen(ModalScreen):
 
     DEFAULT_CSS = """
     AskScreen { align: center middle; background: black 60%; }
-    AskScreen .ask-box { width: 80%; min-width: 60; max-width: 110; height: auto; max-height: 92%;
-                         padding: 1 2; background: #313131; border: round #ffffff; }
+    AskScreen .ask-box { width: 90%; min-width: 0; max-width: 96; height: auto; max-height: 92%;
+                         padding: 1 2; background: #191d27; border: round #39445f; }
     AskScreen .ask-scroll { height: auto; max-height: 26; margin-bottom: 1; }
-    AskScreen .ask-q { text-style: bold; margin-top: 1; }
+    AskScreen .ask-q { text-style: bold; margin-top: 1; color: #c0caf5; }
     AskScreen .ask-q:first-child { margin-top: 0; }
-    AskScreen RadioSet, AskScreen SelectionList { height: auto; max-height: 9; background: #222222; border: none; padding: 0 1; }
+    AskScreen RadioSet, AskScreen SelectionList { height: auto; max-height: 9; background: #141720; border: none; padding: 0 1; }
     AskScreen Input { margin-top: 0; }
     AskScreen .ask-buttons { height: auto; }
-    AskScreen .ask-buttons Button { width: 1fr; min-width: 0; margin-right: 2; background: #3f3f3f; }
+    AskScreen .ask-buttons Button { width: 1fr; min-width: 0; margin-right: 2; background: #252b3a; }
     AskScreen .ask-buttons Button:last-of-type { margin-right: 0; }
+    AskScreen .ask-buttons Button:focus { background: #343d54; text-style: bold; }
     """
 
     def __init__(self, questions: list[dict]) -> None:

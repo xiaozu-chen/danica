@@ -9,22 +9,15 @@ import tomllib # built into Python 3.11+, read-only TOML parser
 import re
 from pathlib import Path
 from rich.console import Console
-from rich.markup import escape
+from danica.ui import TAG_COLORS as UI_TAG_COLORS, format_log
 
 # Danica's home folder (matches the on-disk layout in PROJECT.md)
 APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / "Danica"
 CONFIG_PATH = APP_DIR / "config.toml"
 SKILLS_DIR = APP_DIR / "skills"
-
-TAG_COLORS = {
-    "ERROR": "#E03E3E",     # Clear, vibrant red
-    "WARNING": "#E5C158",   # Brighter golden yellow
-    "OK": "#4CAF50",        # Clear emerald green
-    "FAIL": "#E67E22",      # Rich orange
-    "INFO": "#F5F6FA",      # Bright clean white
-    "THINKING": "#808080",  # Unchanged neutral gray
-}
-TAG_WIDTH = max(map(len, TAG_COLORS))   # updates itself if you add a longer label
+TAG_COLORS = {status: tag["color"] for status, tag in UI_TAG_COLORS.items()}
+TAG_COLORS["THINKING"] = "#808080"
+TAG_WIDTH = max(map(len, TAG_COLORS))
 
 DEFAULTS = {
     "server": {"base_url": "http://127.0.0.1:8080"},
@@ -74,11 +67,8 @@ DEFAULTS = {
 
 console = Console()
 
-def _log(status, text):
-    key = status.upper()
-    color = TAG_COLORS.get(key, "white")
-    label = f"{key:^{TAG_WIDTH}}"
-    console.print(f"[bold #000000 on {color}] {label} [/]::{escape(str(text))}", highlight=False)
+def _log(status: str, text: str) -> None:
+    console.print(format_log(status, str(text)), highlight=False)
 
 def refresh_context_size() -> int:
     """Ask llama-server for n_ctx again (it may have been restarted with a different -c)."""

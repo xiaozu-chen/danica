@@ -1,14 +1,14 @@
 Screen {
     layout: vertical;
     background: ansi_default;
-    color: #ffffff;
-    
+    color: #d8deeb;
 }
 
 /* ---- transcript ---- */
 #transcript {
     height: 1fr;
-    padding: 0 2;
+    padding: 1 2;
+    background: transparent;
     scrollbar-size-vertical: 1;
     scrollbar-color: #5e5e5e;
     scrollbar-background: #353535;
@@ -17,13 +17,13 @@ Screen {
 }
 
 .welcome { margin: 1 0 0 0; }
-.user { margin: 1 0 0 0; color: #ffffff; }
+.user { margin: 1 0 0 0; padding: 0 1; color: #e6eaf2; background: #171b26; border-left: heavy #7aa2f7; }
 .notice { margin: 1 0 0 0; }
 .say { margin: 1 0 0 0; }
 .citations { margin: 1 0 0 0; }
 .artifacts { margin: 1 0 0 0; }
-.thinking { margin: 1 0 0 0; color: #858585; }
-.toolcall { margin: 1 0 0 0; }
+.thinking { margin: 1 0 0 0; padding: 0 1; color: #9aa4bf; }
+.toolcall { margin: 1 0 0 0; padding: 0 1; background: #141720; border-left: round #39445f; }
 
 AssistantMessage {
     margin: 1 0 0 0;
@@ -41,12 +41,13 @@ AssistantMessage {
     height: auto;
     margin: 0 1;
     padding: 0 1;
-    border: round #ffffff;
+    border: round #39445f;
+    background: transparent;
 }
 
 #caret {
     width: 2;
-    color: #ffffff;
+    color: #7aa2f7;
     text-style: bold;
 }
 
@@ -77,8 +78,8 @@ AssistantMessage {
     max-height: 10;
     margin: 0 1;
     padding: 0;
-    background: #272727;
-    border: round #5c5c5c;
+    background: #191d27;
+    border: round #39445f;
     outline: none;
     scrollbar-size-vertical: 1;
     scrollbar-color: #5e5e5e;
@@ -87,14 +88,16 @@ AssistantMessage {
     scrollbar-color-active: #5a5a5a;
 }
 
-#popup > .option-list--option-highlighted { background: #555555; }
+#popup > .option-list--option-highlighted { background: #343d54; }
 
 #caret { height: 1; }
 
 #status {
-    height: 1;
+    height: 2;
     padding: 0 2;
-    color: #d6d6d6;
+    color: #a9b4c8;
+    background: transparent;
+    border-top: solid #2b3040;
 }
 
 /* ---- dialogs ---- */
@@ -105,16 +108,16 @@ PermissionScreen, ConfirmScreen, ChoiceScreen, TextScreen {
 
 .dialog {
     width: 80%;
-    min-width: 84;             /* room for three buttons side by side */
-    max-width: 110;
+    min-width: 0;
+    max-width: 96;
     height: auto;
     max-height: 90%;           /* was 50%: it clipped the bottom of tall dialogs */
     padding: 1 2;
-    background: #313131;
-    border: round #ffffff;
+    background: #191d27;
+    border: round #39445f;
 }
 
-.dialog.warn { border: round #ffbf5f; }
+.dialog.warn { border: round #e0af68; }
 
 .dialog-title { text-style: bold; margin-bottom: 1; }
 .dialog-reason { margin-bottom: 1; }
@@ -123,7 +126,7 @@ PermissionScreen, ConfirmScreen, ChoiceScreen, TextScreen {
     height: auto;
     max-height: 12;            /* was 18: keeps the buttons on screen on short terminals */
     margin-bottom: 1;
-    background: #222222;
+    background: #141720;
     padding: 0 1;
     overflow-y: auto;          /* long commands scroll instead of pushing the buttons away */
 }
@@ -134,11 +137,11 @@ PermissionScreen, ConfirmScreen, ChoiceScreen, TextScreen {
     width: 1fr;                /* equal shares of the row, so every button fits */
     min-width: 0;
     margin-right: 2;
-    background: #3f3f3f;       /* slightly lighter than the dialog so buttons are visible */
+    background: #252b3a;
 }
 
 .dialog-buttons Button:last-of-type { margin-right: 0; }
-.dialog-buttons Button:focus { background: #5e5e5e; text-style: bold; }
+.dialog-buttons Button:focus { background: #343d54; text-style: bold; }
 
 /* ---- split screen: chat | subagent pane ---- */
 #main { height: 1fr; }
@@ -153,4 +156,6 @@ PermissionScreen, ConfirmScreen, ChoiceScreen, TextScreen {
 #sub-head { height: 1; padding: 0 1; }
 #sub-log  { height: 1fr; padding: 0 1; background: transparent; scrollbar-size-vertical: 1; }
 #sub-live { height: auto; max-height: 3; padding: 0 1; }
+
+#agents-pane, #viewer-pane { border: round #39445f; background: #141720; }
 

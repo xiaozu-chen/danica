@@ -55,16 +55,16 @@ class ApprovalMenu(Vertical):
     NO_MATCH = object()
 
     DEFAULT_CSS = """
-    ApprovalMenu { height: auto; max-height: 22; margin: 0 1; padding: 0 1; background: #272727; border: round #d7a84a; }
+    ApprovalMenu { height: auto; max-height: 22; margin: 0 1; padding: 0 1; background: #191d27; border: round #e0af68; }
     ApprovalMenu.-danger { border: round #e0556a; }
-    ApprovalMenu .am-title { height: auto; text-style: bold; color: #ffff00; }
-    ApprovalMenu.-danger .am-title { color: #ff6b6b; }
-    ApprovalMenu .am-reason { height: auto; color: #b8b8b8; }
-    ApprovalMenu .am-body { height: auto; max-height: 8; margin: 0 0 0 0; }
+    ApprovalMenu .am-title { height: auto; text-style: bold; color: #e0af68; }
+    ApprovalMenu.-danger .am-title { color: #f7768e; }
+    ApprovalMenu .am-reason { height: auto; color: #a9b4c8; }
+    ApprovalMenu .am-body { height: auto; max-height: 8; margin: 0; background: #141720; }
     ApprovalMenu .am-body Static { color: #ffffff; }
-    ApprovalMenu .am-choices { height: auto; max-height: 8; background: #272727; border: none; padding: 0; }
-    ApprovalMenu .am-choices > .option-list--option-highlighted { background: #3b4261; }
-    ApprovalMenu .am-hint { height: 1; color: #808080; }
+    ApprovalMenu .am-choices { height: auto; max-height: 8; background: #191d27; border: none; padding: 0; }
+    ApprovalMenu .am-choices > .option-list--option-highlighted { background: #343d54; }
+    ApprovalMenu .am-hint { height: 1; color: #7f8aa3; }
     """
 
     def __init__(self, spec: dict, on_done) -> None:

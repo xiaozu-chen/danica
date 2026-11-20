@@ -21,21 +21,55 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from rich.text import Text
+
 TAG_COLORS = {
-    "ERROR":   {"color": "#E03E3E", "symbol": "[ ✗ ]"},   # U+2717
-    "WARNING": {"color": "#E5C158", "symbol": "[ ▲ ]"},   # U+25B2
-    "OK":      {"color": "#4CAF50", "symbol": "[ ✓ ]"},   # U+2713
-    "FAIL":    {"color": "#E67E22", "symbol": "[ — ]"},   # U+2014
-    "INFO":    {"color": "#F5F6FA", "symbol": "[ i ]"},   # plain ASCII
+    "ERROR": {"color": "#f7768e", "label": "ERROR"},
+    "WARNING": {"color": "#e0af68", "label": "WARN"},
+    "OK": {"color": "#9ece6a", "label": "OK"},
+    "FAIL": {"color": "#f7768e", "label": "FAIL"},
+    "INFO": {"color": "#7aa2f7", "label": "INFO"},
 }
-TAG_WIDTH = max(map(len, TAG_COLORS))   # updates itself if you add a longer label
+TAG_WIDTH = max(len(tag["label"]) for tag in TAG_COLORS.values())
+
+_LEVEL_ALIASES = {"WARN": "WARNING", "SUCCESS": "OK"}
+
+
+def format_log(level: str, message: str) -> Text:
+    """Format a log entry with a colored level badge and aligned continuation lines."""
+    key = level.strip().upper()
+    key = _LEVEL_ALIASES.get(key, key)
+    tag = TAG_COLORS.get(
+        key, {"color": "#a9b4c8", "label": (key[:TAG_WIDTH] or "LOG")}
+    )
+    lines = str(message).strip().splitlines() or [""]
+    first = lines[0].strip()
+
+    aliases = [name for name, target in _LEVEL_ALIASES.items() if target == key]
+    for prefix in (key, *aliases):
+        if first.upper().startswith(prefix + ":"):
+            first = first[len(prefix) + 1 :].lstrip()
+            break
+
+    output = Text()
+    output.append(
+        f" {tag['label']:^{TAG_WIDTH}} ",
+        style=f"bold #101218 on {tag['color']}",
+    )
+    output.append("  ", style="#566078")
+    output.append(first, style="#d8deeb")
+    continuation_indent = " " * (TAG_WIDTH + 2)
+    for line in lines[1:]:
+        output.append("\n" + continuation_indent + "| ", style="#566078")
+        output.append(line, style="#d8deeb")
+    return output
 
 
 class UI(Protocol):
     """Define the callbacks used by the agent to communicate with a user."""
 
     def log(self, level: str, text: str) -> None:
-        """A one-line status badge: level is error / warning / ok / fail / info."""
+        """Display a status entry with a level badge and plain-text details."""
 
     def say(self, text: str, style: str | None = None) -> None:
         """Plain text output (command results). Never interpreted as markup."""
@@ -69,17 +103,7 @@ class RichUI:
 
     def log(self, level: str, text: str) -> None:
         """Display a status message in the terminal."""
-        from rich.markup import escape
-        key = level.upper()
-    
-        # Retrieve the dictionary for the level, fallback to white/empty if not found
-        tag_info = TAG_COLORS.get(key, {"color": "white", "symbol": ""})
-    
-        # Extract the individual string values correctly
-        color = tag_info["color"]
-        label = tag_info["symbol"]
-    
-        self.console.print(f"[bold #000000 on {color}] {label} [/]::{escape(str(text))}", highlight=False)
+        self.console.print(format_log(level, text), highlight=False)
 
     def say(self, text: str, style: str | None = None) -> None:
         """Display a short user facing message."""

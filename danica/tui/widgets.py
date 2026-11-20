@@ -26,16 +26,16 @@ from textual.widgets.option_list import Option
 from danica.config import APP_DIR
 from danica.partial_json import partial_fields
 
-from danica.ui import TAG_COLORS
+from danica.ui import format_log
 
-ACCENT = "#ffffff"
+ACCENT = "#7aa2f7"
 HISTORY_PATH = APP_DIR / "history.txt"
 
 TIPS_LABEL = [
-    "Maybe ask danica to code or something",
-    "/help if you're lost :)",
-    "Talk.",
-    "...No tips",
+    "Type a request to get started",
+    "/help lists commands and keyboard shortcuts",
+    "Use Ctrl+J to add a line without sending",
+    "Use /new to start a fresh session",
 ]
 
 
@@ -378,17 +378,10 @@ class ToolCall(Static):
 
 
 class Notice(Static):
-    """The coloured badge from the old _write_log: ' WARNING ' ::message"""
+    """Render a consistently formatted status log entry."""
 
     def __init__(self, level: str, text: str) -> None:
-        key = level.upper()
-        tag = TAG_COLORS.get(key, {"color": "white", "symbol": ""})
-        color = tag["color"]
-        symbol = tag["symbol"]
-        t = Text()
-        t.append(f" {symbol} ", style=f"{color}")
-        t.append(":: " + text, style=f"{color}")
-        super().__init__(t, classes="notice")
+        super().__init__(format_log(level, text), classes="notice")
 
 
 class Say(Static):
@@ -426,48 +419,43 @@ class ArtifactsList(Static):
         super().__init__(t, classes="artifacts")
 
 
-# def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.3.2") -> Panel:
-#     left = Text(justify="center")
-#     left.append("Welcome back!\n\n", style="bold")
-#     left.append("  /\\_/\\ \n ( o.o )\n  > ^ <\n\n", style=ACCENT)
-#     left.append(f"project: {project_name}\n" if project_name else "chat mode\n", style="dim")
-#     left.append(ws_label, style="dim")
-
-#     right = Text()
-#     right.append("Tips for getting started\n", style=f"bold {ACCENT}")
-#     right.append("/help      list every command\n")
-#     right.append("/new       fresh session\n")
-#     right.append("/think     toggle thinking\n")
-#     right.append("Ctrl+O     expand tool output\n")
-#     right.append("\n")
-#     right.append("Esc/Ctrl+C stops a task · Ctrl+D quits", style="dim")
-
-#     body = Table(box=box.SQUARE, show_edge=False, show_header=False, padding=(0, 2), expand=True)
-#     body.add_column(ratio=2, justify="center", vertical="middle")
-#     body.add_column(ratio=3, vertical="middle")
-#     body.add_row(left, right)
-#     return Panel(body, title=f" Danica v{version} ", title_align="left",
-#                  border_style=ACCENT, box=box.ASCII3, padding=(1, 1))
+"""
+⣇⣿⠘⣿⣿⣿⡿⡿⣟⣟⢟⢟⢝⠵⡝⣿⡿⢂⣼⣿⣷⣌⠩⡫⡻⣝⠹⢿⣿⣷
+⡆⣿⣆⠱⣝⡵⣝⢅⠙⣿⢕⢕⢕⢕⢝⣥⢒⠅⣿⣿⣿⡿⣳⣌⠪⡪⣡⢑⢝⣇
+⡆⣿⣿⣦⠹⣳⣳⣕⢅⠈⢗⢕⢕⢕⢕⢕⢈⢆⠟⠋⠉⠁⠉⠉⠁⠈⠼⢐⢕⢽
+⡗⢰⣶⣶⣦⣝⢝⢕⢕⠅⡆⢕⢕⢕⢕⢕⣴⠏⣠⡶⠛⡉⡉⡛⢶⣦⡀⠐⣕⢕
+⡝⡄⢻⢟⣿⣿⣷⣕⣕⣅⣿⣔⣕⣵⣵⣿⣿⢠⣿⢠⣮⡈⣌⠨⠅⠹⣷⡀⢱⢕
+⡝⡵⠟⠈⢀⣀⣀⡀⠉⢿⣿⣿⣿⣿⣿⣿⣿⣼⣿⢈⡋⠴⢿⡟⣡⡇⣿⡇⡀⢕
+⡝⠁⣠⣾⠟⡉⡉⡉⠻⣦⣻⣿⣿⣿⣿⣿⣿⣿⣿⣧⠸⣿⣦⣥⣿⡇⡿⣰⢗⢄
+⠁⢰⣿⡏⣴⣌⠈⣌⠡⠈⢻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣬⣉⣉⣁⣄⢖⢕⢕⢕
+⡀⢻⣿⡇⢙⠁⠴⢿⡟⣡⡆⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣵⣵⣿
+⡻⣄⣻⣿⣌⠘⢿⣷⣥⣿⠇⣿⣿⣿⣿⣿⣿⠛⠻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+⣷⢄⠻⣿⣟⠿⠦⠍⠉⣡⣾⣿⣿⣿⣿⣿⣿⢸⣿⣦⠙⣿⣿⣿⣿⣿⣿⣿⣿⠟
+⡕⡑⣑⣈⣻⢗⢟⢞⢝⣻⣿⣿⣿⣿⣿⣿⣿⠸⣿⠿⠃⣿⣿⣿⣿⣿⣿⡿⠁⣠
+⡝⡵⡈⢟⢕⢕⢕⢕⣵⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣶⣿⣿⣿⣿⣿⠿⠋⣀⣈⠙
+⡝⡵⡕⡀⠑⠳⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠿⠛⢉⡠⡲⡫⡪⡪⡣ 
+"""
 
 def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.4.0",
                   open_mode: bool = False) -> Panel:
-    # Left column content
     """Build the welcome panel with session tips and recent activity."""
     left = Text(justify="center")
-    left.append("Welcome back boss!\n\n", style="bold")
+    left.append("Welcome to Danica\n\n", style=f"bold {ACCENT}")
     left.append("""
-⠀⠀⠀⠀⠀⠀⢀⡴⢲⡄⠀⠀⠀⢀⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⢀⡞⠀⠀⡇⠀⢀⡴⠋⠁⢸⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⣸⠁⠀⠀⡇⣠⠟⠀⠀⠀⣼⣠⣤⣤⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⣿⠀⢠⢤⡿⠃⣀⠀⢀⡞⠉⠁⠀⠀⠈⠙⠶⡄⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⣻⣰⡏⣼⢁⡴⠋⣰⠋⠀⠀⠀⠀⠀⠀⠀⠀⠹⡄⣀⡀⠀⠀⠀
-⠀⠀⠀⢀⡾⠋⠉⠁⠀⠙⠁⠞⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢹⡈⢷⠀⠀⠀⠀
-⠀⠀⠀⣼⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠄⠀⠀⠀⠀⠀⠀⠀⢀⣧⡾⠁⠀⠀⠀
-⠀⠀⠀⡏⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠄⠀⠀⠀⠀⠀⠀⠀⣾⠃⠀⠀⠀⠀⠀
-⠀⠀⠀⣹⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⠁⠀⠀⡀⠀⠀⢰⡾⠋⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⢻⡇⣀⡀⠀⠺⣿⠇⠀⣀⣤⣄⣀⣠⣬⣥⣤⠾⠛⠁⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠉⠛⠓⠂⠤⠤⠖⠊⠉⠉⠉⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-""", style="bold red" if open_mode else ACCENT)
+⣿⠛⠛⠛⠛⠻⡆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠛⢛⣿⠋⢀⡾⠃⠀⠀⠀⠀⢀⣤⣤⠤⠤⣤⣤⣀⣀⣀⣠⠶⡶⣤⣀⣠⠾⡷⣦⣀⣤⣤⡤⠤⠦⢤⣤⣄⡀⠀⢠⡶⢶⡄⠀⠀
+⢠⡟⠁⣴⣿⢤⡄⣴⢶⠶⡆⠈⢷⡀⠀⠀⠀⠀⢀⣭⣫⠵⠥⠽⣄⣝⠵⢍⣘⣄⠳⣤⣀⠀⠀⢀⡤⠊⣽⠁⠀⠸⣇⠀⢿⠀⠀
+⠸⢷⣴⣤⡤⠾⠇⣽⠋⠼⣷⠀⠈⢷⡄⢀⣤⡶⠋⠀⣀⡄⠤⠀⡲⡆⠀⠀⠈⠙⡄⠘⢮⢳⡴⠯⣀⢠⡏⠀⠀⠀⢻⠀⢸⠇⠀
+⠀⠀⠀⠀⠀⠀⠀⠙⠛⠋⠉⢀⣴⠟⠉⢯⡞⡠⢲⠉⣼⠀⠀⡰⠁⡇⢀⢷⠀⣄⢵⠀⠈⡟⢄⠀⠀⠙⢷⣤⣤⣤⡿⢢⡿⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⠟⠑⠊⠁⡼⣌⢠⢿⢸⢸⡀⢰⠁⡸⡇⡸⣸⢰⢈⠘⡄⠀⢸⠀⢣⡀⠀⠈⢮⢢⣏⣤⡾⠃⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⢰⣯⣴⠞⡠⣼⠁⡘⣾⠏⣿⢇⣳⣸⣞⣀⢱⣧⣋⣞⡜⢳⡇⠀⢸⠀⢆⢧⠀⠰⣄⢏⢧⣾⠁⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⢹⡏⢰⠁⡻⠀⡟⡏⠉⠀⣀⠀⠀⠀⠀⣀⠁⠀⠉⠛⢽⠇⠀⣼⡆⠈⡆⠃⠀⡏⠻⣾⣽⣇⡀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⠁⡇⠀⡇⡄⣿⠷⠿⠿⠛⠀⠀⠀⠀⠛⠻⠿⠿⠿⡜⢀⡴⡟⢸⣸⡼⠀⠀⡇⠀⡞⡆⢻⠙⢦⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⡶⢀⣼⣿⣬⣽⠧⠬⠇⠀⠀⠀⠀⠀⠀⢞⣯⣭⢺⣔⣪⣾⣤⠺⡇⢳⠀⢠⣧⡾⠛⠛⠻⠶⠞⠁
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⠷⢿⠟⠉⡀⠈⢦⡀⠀⠀⣠⠖⠒⠒⢤⡀⠀⢀⡼⠿⢇⡣⢬⣶⠷⢿⣤⡾⠁⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⠷⠾⠷⠖⠛⠛⠲⠶⠿⠤⣤⠤⠤⢷⣶⠋⠀⠀⠀⣱⠞⠁⠀⠈⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠛⠓⠒⠚⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+""", style=f"bold {ACCENT}")
     if open_mode:                      # impossible to miss: this session can reach the whole disk
         
         left.append("full disk access\n", style="bold red")
@@ -493,12 +481,14 @@ def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.4.0
         right.append("No recent activity", style="dim")
     else:
         lines = []
-        for info in infos:
+        for info in infos[:4]:
             text = Text()
             text.append(info["id"], style="dim")
             text.append(f" {info.get('title') or info['preview']}", style="bold")
             lines.append(text)
         right.append(Text("\n").join(lines))
+        if len(infos) > 4:
+            right.append(f"\n… and {len(infos) - 4} more", style="dim")
 
     # Calculate required height for the vertical divider
     left_height = left.plain.count("\n") + 1
@@ -527,7 +517,7 @@ def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.4.0
         title=f" Danica v{version} ",
         title_align="left",
         border_style="bold red" if open_mode else ACCENT,
-        box=box.ASCII3, 
+        box=box.ROUNDED,
         padding=(1, 1)
     )
 
@@ -769,6 +759,7 @@ class BusyLine(Static):
     def __init__(self, **kwargs) -> None:
         super().__init__("", **kwargs)
         self._label = ""
+        self._stoppable = False
         self._t0 = 0.0
         self._i = 0
         self._timer = None
@@ -777,9 +768,10 @@ class BusyLine(Static):
         """Initialize the animation when the status line mounts."""
         self._timer = self.set_interval(0.1, self._tick, pause=True)
 
-    def start(self, label: str) -> None:
+    def start(self, label: str, stoppable: bool = False) -> None:
         """Start the working status animation."""
-        self._label, self._t0, self._i = label, time.monotonic(), 0
+        self._label, self._stoppable = label, stoppable
+        self._t0, self._i = time.monotonic(), 0
         if self._timer:
             self._timer.resume()
         self._tick()
@@ -795,11 +787,10 @@ class BusyLine(Static):
         secs = int(time.monotonic() - self._t0)
         t = Text()
         t.append(self.FRAMES[self._i % len(self.FRAMES)] + " ", style=f"bold {ACCENT}")
-        t.append(f"{self._label}… ({secs}s · Esc to stop)", style=ACCENT)
+        suffix = " · Esc to stop" if self._stoppable else ""
+        t.append(f"{self._label}… ({secs}s{suffix})", style="#d8deeb")
         self.update(t)
 
 
 class StatusBar(Static):
-    """Render session, model, and request status in the footer."""
-
-    pass
+    """Render compact session and context status in the footer."""

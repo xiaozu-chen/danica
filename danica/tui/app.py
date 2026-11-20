@@ -15,7 +15,6 @@ Threading model (the important part):
 from __future__ import annotations
 
 import argparse
-import random
 import threading
 from collections import deque
 from datetime import datetime
@@ -70,48 +69,8 @@ from danica.seal import is_sealed_html
 from danica import perf, titles, vision
 from danica.interactive import page_kind
 
-IDLE_PLACEHOLDER = f"Ask Danica…"
-BUSY_PLACEHOLDER = "Working…  Esc stops the task"
-
-WORKING_LABELS = [
-    # Original labels
-    "Working",
-    "I Hate Work",
-    "My Name is Dan btw",
-    "badda bing, badda boom",
-    "Existential crisis",
-    "Hi Boss!!!",
-    "Shush, I'm Working",
-    " ",
-    "Thinking harder than Claude himself",
-    "I Think Hard, ChatGPT Think Smart",
-    "Why Not Give this Task to Claude? I mean he's better.",
-    "I'm Doing Rocket Science",
-    "...Code goes KABOOM!",
-    "Danica'ing"
-    # AI & Bot Banter
-    "Consulting my single remaining brain cell",
-    "Beep boop, pretend I'm working",
-    "Overthinking this so you don't have to",
-    "Gemini is typing... aggressively",
-    "Whispering to the GPUs",
-    # Coding & Tech Humor
-    "Asking Stack Overflow for emotional support",
-    "It worked on my machine",
-    "Turning coffee into broken code",
-    "Ctrl+C, Ctrl+V, call it a day",
-    "Shh... if I don't move, the bugs can't see me",
-    # General Productivity Memes
-    "1% actual work, 99% staring at the screen",
-    "Error 404: Motivation Not Found",
-    "Wait, you guys are getting paid?",
-    "I promise I know what I'm doing (I don't)",
-    "Applying aggressive keyboard tapping for effect",
-    "Simulating productivity",
-    "If it works, don't touch it",
-    "Fueled by panic and cold coffee",
-    "Brb, questioning all my life choices",
-]
+IDLE_PLACEHOLDER = "Ask Danica…  / commands · Ctrl+J new line"
+BUSY_PLACEHOLDER = "Working…"
 
 class _PlanCancelled(Exception):
     pass
@@ -443,7 +402,7 @@ class DanicaApp(App):
         self._reset_stream_state()
         forced = force_plan or self.plan_next
         self.plan_next = False
-        self.set_working(True, random.choice(WORKING_LABELS), kind="request")
+        self.set_working(True, "Working", kind="request")
         self.engine.submit(self._request_worker, text, forced)
 
     def _reset_stream_state(self) -> None:
@@ -791,7 +750,7 @@ class DanicaApp(App):
         busy = self.query_one(BusyLine)
         prompt = self.query_one(PromptInput)
         if working:
-            busy.start(label)
+            busy.start(label, stoppable=kind == "request")
             prompt.placeholder = BUSY_PLACEHOLDER
         else:
             busy.stop()
@@ -806,29 +765,47 @@ class DanicaApp(App):
         if agent is None:
             return Text("starting…", style="dim")
         level = agent.tracker.level(agent.messages)
-        color = {"ok": "white", "prune": "yellow", "compact": "orange", "stop": "red"}.get(level, "white")
+        color = {
+            "ok": "#a9b4c8",
+            "prune": "#e0af68",
+            "compact": "#ff9e64",
+            "stop": "#f7768e",
+        }.get(level, "#a9b4c8")
+        width = self.size.width
         t = Text()
         if self.open_root is not None:                # first, so a narrow terminal can never cut it off
-            t.append(" OPEN MODE ", style="bold #000000 on #F14C4C")
-            t.append(" ")
+            t.append(" OPEN ", style="bold #11131a on #f7768e")
+            t.append(" · ")
         if self.session_title:
-            t.append(f"\u270e {self.session_title[:40]}  ", style="bold #ff9e64")
-        t.append(f"ctx {agent.tracker.bar(agent.messages)}", style=color)
-        t.append(" | " + ("think" if agent.thinking else "fast"))
+            title_limit = 16 if width < 92 else 28
+            title = self.session_title
+            if len(title) > title_limit:
+                title = title[: title_limit - 1].rstrip() + "…"
+            t.append(f"{title} · ", style="bold #c0caf5")
+        if width < 92:
+            t.append(f"ctx {agent.tracker.fraction(agent.messages):.0%}", style=color)
+        else:
+            t.append(f"ctx {agent.tracker.bar(agent.messages, width=6)}", style=color)
+        t.append(" · " + ("think" if agent.thinking else "fast"))
         if self.policy is not None and self.policy.full_access:
-            t.append(" | FULL ACCESS", style="bold red")
-        if self.project:
-            t.append(f" | project: {self.project['name']}")
-        if self.plan_next:
-            t.append(" | plan next")
-        if agent.proposals and agent.proposals.count():
-            t.append(f" | {agent.proposals.count()} proposed note(s)")
+            t.append(" · FULL ACCESS", style="bold #f7768e")
+        if self.plan_next and width >= 92:
+            t.append(" · plan next", style="#e0af68")
+        if agent.proposals and agent.proposals.count() and width >= 140:
+            t.append(f" · {agent.proposals.count()} proposed note(s)", style="#e0af68")
         if self.ws is not None and self.ws.web and self.ws.web.tainted:
-            t.append(" | TAINTED", style="bold red")
-        if self.ws is not None:
-            label = "Start folder: " if self.open_root is not None else "Workspace: "
-        t.append(" | " + label + short_path(self.ws.root), style="#C6C0BE")
+            t.append(" · TAINTED", style="bold #f7768e")
+        if self.project and width >= 116:
+            t.append(f" · {self.project['name']}", style="#a9b4c8")
+        if self.ws is not None and width >= 140:
+            t.append(f" · {short_path(self.ws.root)}", style="#7f8aa3")
+        if width >= 160:
+            t.append(" · Ctrl+O tools · Ctrl+G agents · Ctrl+E files", style="#7f8aa3")
         return t
+
+    def on_resize(self, event: Any) -> None:
+        """Refresh compact status labels when the terminal size changes."""
+        self.refresh_status()
 
     def set_session_title(self, title: str) -> None:
         """UI thread. Show the session title in the status bar and as the terminal window title."""

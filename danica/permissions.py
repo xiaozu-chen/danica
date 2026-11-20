@@ -11,10 +11,10 @@ that deletes things when run). Real containment comes from the sandbox levels
 """
 
 import re
-from collections.abc import AbstractSet, Sequence
+from collections.abc import Sequence
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable
+from typing import AbstractSet, Any, Callable
 
 from danica.openmode import outputs_dir, shell_protected_hit
 from danica.tools.registry import TOOLS
