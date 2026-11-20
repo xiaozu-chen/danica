@@ -22,9 +22,9 @@ if TYPE_CHECKING:
 MAX_CHILDREN = 5
 MAX_ACTIVE = 1
 MAX_DEPTH = 1
-MAX_TASK_CHARS = 12_000
-MAX_RESULT_BYTES = 32_000
-MAX_SUMMARY_CHARS = 8_000
+MAX_TASK_CHARS = 12_000_000
+MAX_RESULT_BYTES = 32_000_000
+MAX_SUMMARY_CHARS = 8_000_000
 
 # agent events worth showing to a human watching a subagent.
 # tool_start/tool_delta are skipped: they fire for every streamed token.

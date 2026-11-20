@@ -28,6 +28,34 @@ def _read_text(path) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
+DOCUMENT_SUFFIXES = {".pdf", ".docx"}   # read_file shows these as text (they are binary files, so edit_file still refuses them)
+MAX_DOC_PAGES = 200                     # a PDF longer than this is read up to here (the rest would never fit the context anyway)
+
+
+def _document_text(path) -> str:
+    """Plain text out of a .pdf or .docx, so read_file can show it. Pages are marked "--- page N ---" in a PDF."""
+    if path.suffix.lower() == ".pdf":
+        from pypdf import PdfReader
+        reader = PdfReader(str(path))
+        if reader.is_encrypted:
+            raise ValueError("this PDF is password-protected, so it cannot be read")
+        pages = reader.pages[:MAX_DOC_PAGES]
+        text = "\n\n".join(f"--- page {n} ---\n{(page.extract_text() or '').strip()}" for n, page in enumerate(pages, start=1))
+        if not any((page.extract_text() or "").strip() for page in pages):
+            # Scanned PDFs are pictures of text: there is nothing to extract without OCR
+            raise ValueError("this PDF has no text layer (it is probably a scan: pictures of pages), so there is nothing to read")
+        if len(reader.pages) > MAX_DOC_PAGES:
+            text += f"\n\n[only the first {MAX_DOC_PAGES} of {len(reader.pages)} pages were read]"
+        return text
+    from docx import Document
+    doc = Document(str(path))
+    lines = [paragraph.text for paragraph in doc.paragraphs]
+    for table in doc.tables:                                   # tables are not part of doc.paragraphs
+        for row in table.rows:
+            lines.append(" | ".join(cell.text.strip() for cell in row.cells))
+    return "\n".join(lines)
+
+
 def _protected(ws: Workspace, p) -> str | None:
     """Error messages if p is a credential file the model must not touch."""
     reason = is_sensitive_path(ws.rel(p))
@@ -62,7 +90,7 @@ def _write_guard(ws: Workspace, p) -> str | None:
 
 @tool(
     "read_file",
-    "Read a text file. Returns numbered lines. Use offset/limit for big files.",
+    "Read a text file, or the text inside a .pdf or .docx. Returns numbered lines. Use offset/limit for big files.",
     {
         "path": {"type": "string", "description": "File path relative to the workspace"},
         "offset": {"type": "integer", "description": "First line to read (1-based)", "default": 1},
@@ -79,7 +107,9 @@ def read_file(ws: Workspace, path: str, offset: int = 1, limit: int = 200) -> st
     if blocked:
         return blocked
 
-    lines = _read_text(p).splitlines()
+    # A PDF / Word file is binary on disk but has text inside: show that text. Everything else must be plain text.
+    text = _document_text(p) if p.suffix.lower() in DOCUMENT_SUFFIXES else _read_text(p)
+    lines = text.splitlines()
     total = len(lines)
     offset = max(1, offset)
     limit = min(max(1, limit), MAX_READ_LINES)

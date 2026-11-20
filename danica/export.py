@@ -30,7 +30,7 @@ EXPORTS_DIR = APP_DIR / "exports"
 MAX_RESULT_CHARS = 300      # tool results are shortened to this
 MAX_ARG_CHARS = 120         # long tool-call arguments (file contents) are shortened to this
 MAX_COPY_FILES = 500
-MAX_COPY_BYTES = 20_000_000
+MAX_COPY_BYTES = 25_000_000
 MAX_SCAN_BYTES = 1_000_000  # bigger files are copied without a secret scan
 MAX_LISTED = 30             # how many skipped files the README names
 
@@ -223,4 +223,4 @@ def export_session(
     (out / "README.md").write_text(
         build_readme(session_dir.name, project, records, state, copied, skipped,
                      bool(summaries), todo.is_file()), encoding="utf-8")
-    return out
+    return out

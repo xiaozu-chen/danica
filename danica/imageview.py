@@ -23,7 +23,7 @@ from rich.text import Text
 from danica.config import CONFIG
 from danica.workspace import PathJailError, Workspace
 
-MAX_BYTES = 5_000_000          # file size limit
+MAX_BYTES = 25_000_000          # file size limit
 MAX_PIXELS = 25_000_000        # checked from the header, BEFORE the image is decoded
 MAX_W, MAX_H = 960, 720        # bigger pictures are scaled down to fit (never scaled up)
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
