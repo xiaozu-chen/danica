@@ -737,27 +737,38 @@ class SubagentPane(Vertical):
             if described:
                 log.write(Text(described[1], style=described[0]))
 
-class BusyLine(Static):
-    """Render an animated status line while the agent is working."""
+import random
+import time
+from collections import deque
 
-    FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+class BusyLine(Static):
+    """Render an animated wave status line: each wave is big, the next is smaller or same."""
+
+    WAVE_PATTERN = "▁▂▃▄▅▆▇▇▆▅▄▃▂"
+    BARS = "▁▂▃▄▅▆▇"
+    WIDTH = 12  # fits two full waves
 
     def __init__(self, **kwargs) -> None:
         super().__init__("", **kwargs)
         self._label = ""
         self._stoppable = False
         self._t0 = 0.0
-        self._i = 0
         self._timer = None
+        self._amp = 0
+        self._pending: deque[str] = deque()
+        self._line: deque[str] = deque(maxlen=self.WIDTH)
 
     def on_mount(self) -> None:
         """Initialize the animation when the status line mounts."""
-        self._timer = self.set_interval(0.1, self._tick, pause=True)
+        self._timer = self.set_interval(0.08, self._tick, pause=True)
 
     def start(self, label: str, stoppable: bool = False) -> None:
         """Start the working status animation."""
         self._label, self._stoppable = label, stoppable
-        self._t0, self._i = time.monotonic(), 0
+        self._t0 = time.monotonic()
+        self._amp = 0
+        self._pending.clear()
+        self._line = deque(self.BARS[0] * self.WIDTH, maxlen=self.WIDTH)
         if self._timer:
             self._timer.resume()
         self._tick()
@@ -768,11 +779,33 @@ class BusyLine(Static):
             self._timer.pause()
         self.update("")
 
+    def _next_amplitude(self) -> int:
+        """Big wave first, then each following wave is the same size or smaller."""
+        top = len(self.BARS) - 1
+        if self._amp <= 1:
+            return random.randint(top - 2, top)  # start a new big wave
+        return max(1, self._amp - random.randint(0, 4))
+
+    def _build_wave(self) -> list[str]:
+        """Scale the wave pattern to the current amplitude, keeping its shape."""
+        top = len(self.BARS) - 1
+        wave = []
+        for ch in self.WAVE_PATTERN:
+            level = round(self.BARS.index(ch) * self._amp / top)
+            wave.append(self.BARS[level])
+        # Bars enter from the left, so feed them in reverse to keep the shape upright
+        return wave[::-1]
+
     def _tick(self) -> None:
-        self._i += 1
+        if not self._pending:
+            self._amp = self._next_amplitude()
+            self._pending.extend(self._build_wave())
+        # New bar enters on the left; the wave rolls left-to-right
+        self._line.appendleft(self._pending.popleft())
+
         secs = int(time.monotonic() - self._t0)
         t = Text()
-        t.append(self.FRAMES[self._i % len(self.FRAMES)] + " ", style=f"bold {ACCENT}")
+        t.append("".join(self._line) + " ", style=f"bold {ACCENT}")
         suffix = " · Esc to stop" if self._stoppable else ""
         t.append(f"{self._label}… ({secs}s{suffix})", style="#f0f0f0")
         self.update(t)

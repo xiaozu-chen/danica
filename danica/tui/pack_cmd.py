@@ -56,7 +56,7 @@ def render_help_menu() -> Any:
     return Panel(
         Columns(category_panels, equal=True, expand=True),
         title=Text("Command Reference Help", style="#ffffff"),
-        subtitle=Text("Type a command to execute", style="dim"),
+        subtitle=Text("Type a command to execute", style="#ffffff"),
         subtitle_align="center",
         box=box.ASCII3,
         border_style="#3B3B3B",
