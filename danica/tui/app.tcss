@@ -23,7 +23,7 @@ Screen {
 .citations { margin: 1 0 0 0; }
 .artifacts { margin: 1 0 0 0; }
 .thinking { margin: 1 0 0 0; padding: 0 1; color: #9aa4bf; }
-.toolcall { margin: 1 0 0 0; padding: 0 1; background: #141720; border-left: round #39445f; }
+.toolcall { margin: 1 0 0 0; padding: 0 1; background: transparent; border-left: round #39445f; }
 
 AssistantMessage {
     margin: 1 0 0 0;
@@ -78,7 +78,7 @@ AssistantMessage {
     max-height: 10;
     margin: 0 1;
     padding: 0;
-    background: #191d27;
+    background: transparent;
     border: round #39445f;
     outline: none;
     scrollbar-size-vertical: 1;
@@ -113,7 +113,7 @@ PermissionScreen, ConfirmScreen, ChoiceScreen, TextScreen {
     height: auto;
     max-height: 90%;           /* was 50%: it clipped the bottom of tall dialogs */
     padding: 1 2;
-    background: #191d27;
+    background: transparent;
     border: round #39445f;
 }
 
@@ -126,7 +126,7 @@ PermissionScreen, ConfirmScreen, ChoiceScreen, TextScreen {
     height: auto;
     max-height: 12;            /* was 18: keeps the buttons on screen on short terminals */
     margin-bottom: 1;
-    background: #141720;
+    background: transparent;
     padding: 0 1;
     overflow-y: auto;          /* long commands scroll instead of pushing the buttons away */
 }
@@ -137,11 +137,11 @@ PermissionScreen, ConfirmScreen, ChoiceScreen, TextScreen {
     width: 1fr;                /* equal shares of the row, so every button fits */
     min-width: 0;
     margin-right: 2;
-    background: #252b3a;
+    background: transparent;
 }
 
 .dialog-buttons Button:last-of-type { margin-right: 0; }
-.dialog-buttons Button:focus { background: #343d54; text-style: bold; }
+.dialog-buttons Button:focus { background: transparent; text-style: bold; }
 
 /* ---- split screen: chat | subagent pane ---- */
 #main { height: 1fr; }
@@ -157,5 +157,5 @@ PermissionScreen, ConfirmScreen, ChoiceScreen, TextScreen {
 #sub-log  { height: 1fr; padding: 0 1; background: transparent; scrollbar-size-vertical: 1; }
 #sub-live { height: auto; max-height: 3; padding: 0 1; }
 
-#agents-pane, #viewer-pane { border: round #39445f; background: #141720; }
+#agents-pane, #viewer-pane { border: round #39445f; background: transparent; }
 
