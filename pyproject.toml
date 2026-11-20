@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "danica"
+version = "0.1.0"
+requires-python = ">=3.11"
+# Everything Danica imports that is not in the standard library
+dependencies = ["httpx", "rich", "prompt_toolkit", "pypdf", "sqlite-vec", "matplotlib", "pillow", "python-docx", "reportlab", "python-pptx"]
+
+[project.scripts]
+# Gives you a `danica` command that runs cli.main()
+danica = "danica.tui.app:main"
+
+[tool.setuptools]
+# Listed by hand because scripts/ and evals/ sit next to danica/ and are not part of the app
+packages = ["danica", "danica.tools", "danica.tui]

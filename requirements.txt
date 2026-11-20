@@ -8,7 +8,6 @@ click==8.5.1
 colorama==0.4.6
 contourpy==1.3.3
 cycler==0.12.1
--e git+https://github.com/xiaozu-chen/danica.git@fda7cac6b696bb7e54b6d93dabdd0bd260ab1a81#egg=danica
 ddgs==9.16.1
 fonttools==4.68.0
 greenlet==3.5.6
