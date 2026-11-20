@@ -181,17 +181,37 @@ def _new(app, args):
 @command("/sessions")
 def _sessions(app, args):
     from danica.sessions import list_sessions
+    from rich import box
+    from rich.style import Style
+    from rich.text import Text
+    from rich.table import Table
     infos = list_sessions()
     if not infos:
         app.ui.say("(no saved sessions yet)")
         return
-    lines = []
+    table = Table(box=box.SIMPLE, show_header=True, header_style="bold #ffffff",
+                  expand=True, pad_edge=False)
+    table.session_list = True
+    table.add_column("#", justify="right", style="bold #ffffff", width=3, no_wrap=True)
+    table.add_column("Session (click to resume)", ratio=1, overflow="fold")
+    table.add_column("Last active", style="#c0c0c0", width=14, no_wrap=True)
+    table.add_column("Activity", style="#c0c0c0", width=17, no_wrap=True)
     for n, info in enumerate(infos, start=1):
-        tag = "  (current)" if info["id"] == app.session_id else ""
-        lines.append(f"{n:>2}. {info['id']}  {info['modified']:%d %b %H:%M}  "
-                     f"{info['requests']} request(s), {info['compactions']} compaction(s){tag}")
-        lines.append(f"      {info.get('title') or info['preview']}")
-    app.ui.say("\n".join(lines))
+        current = info["id"] == app.session_id
+        requests = info["requests"]
+        compactions = info["compactions"]
+        activity = f"{requests} request" + ("s" if requests != 1 else "")
+        if compactions:
+            activity += f", {compactions} compact" + ("s" if compactions != 1 else "")
+        title = info.get("title") or info["preview"]
+        if current:
+            label = Text(f"• {title} (current)", style="bold #CCCCFF")
+            modifed = Text(info["modified"].strftime("%d %b %H:%M"), style="bold #CCCCFF")
+        else:
+            label = Text(title, style=Style(meta={"@click": f"app.resume_session({n})"}, underline=False))
+            modifed = Text(info["modified"].strftime("%d %b %H:%M"))
+        table.add_row(str(n), label, modifed, activity)
+    app.ui.show(table)
 
 
 @command("/resume")
@@ -359,7 +379,7 @@ def _fullaccess(app, args):
     app.audit.append("full_access", enabled=policy.full_access)
     if policy.full_access:
         app.ui.say("FULL ACCESS ON: Danica can run ANY command without asking. "
-                   "/fullaccess again to turn it off.", style="bold red")
+                   "/fullaccess again to turn it off.", style="bold white")
     else:
         app.ui.log("warning", "full access off")
 
@@ -388,7 +408,7 @@ def _audit(app, args):
     if ok:
         app.ui.log("ok", f"audit log OK: {count} entries. chain intact")
     else:
-        app.ui.say(f"AUDIT LOG PROBLEM: {problem}", style="bold red")
+        app.ui.say(f"AUDIT LOG PROBLEM: {problem}", style="bold white")
 
 
 @command("/undo", "/rewind")

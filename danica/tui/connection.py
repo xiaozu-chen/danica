@@ -19,9 +19,9 @@ from danica.server import ServerError, normalize_url, probe
 INTRO = (
     "A local-first, CLI-only agentic assistant for coding, research, presentations, notes and productivity.\n\n"
     "Start llama-server with a model first, for example:\n"
-    "  [yellow]llama-server -m your-model.gguf -c 65536 --jinja --port 8080[/yellow]\n\n"
+    "  [white]llama-server -m your-model.gguf -c 65536 --jinja --port 8080[/white]\n\n"
     "Having trouble connecting? See the llama-server documentation:\n"
-    "  [cyan]https://llama.app/docs/serve[/cyan]\n\n"
+    "  [white]https://llama.app/docs/serve[/white]\n\n"
     "Recommended model: Qwen3.5 family\n\n"
     "then press Start.\n"
     ""
@@ -30,7 +30,7 @@ INTRO = (
 _FORM_CSS = """
 {S} { align: center middle; }
 {S} {BOX} { width: 90%; min-width: 0; max-width: 100; height: auto;
-            padding: 1 3; background: transparent; border: round #39445f; }
+            padding: 1 3; background: transparent; border: round #4a4a4a; }
 {S} .heading { text-style: bold; margin-top: 1; }
 {S} #status { height: auto; margin: 1 0; text-wrap: wrap; }
 {S} .buttons { height: auto; }
@@ -103,10 +103,10 @@ class _ServerForm:
         try:
             url = normalize_url(self.query_one("#url", Input).value)
         except ServerError as exc:
-            self._status(str(exc), "red")
+            self._status(str(exc), "white")
             return
         self._busy(True)
-        self._status("Checking...", "yellow")
+        self._status("Checking...", "white")
         self.run_worker(lambda: self._check(url), thread=True, exclusive=True, group="check")
 
     def _check(self, url: str) -> None:                  # worker thread
@@ -119,12 +119,12 @@ class _ServerForm:
 
     def _failed(self, message: str) -> None:
         self._busy(False)
-        self._status(message, "red")
+        self._status(message, "white")
         self.query_one("#url", Input).focus()
 
     def _succeeded(self, url: str, n_ctx: int) -> None:
         set_server(url, n_ctx)                           # updates CONFIG and saves a changed URL
-        self._status(f"Connected. Context window: {n_ctx:,} tokens.", "green")
+        self._status(f"Connected. Context window: {n_ctx:,} tokens.", "white")
         if self in self.app.screen_stack:                # the monitor may have closed us already
             self.dismiss(n_ctx)
 

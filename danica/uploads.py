@@ -325,20 +325,27 @@ def model_note(items: list[Stored]) -> str:
 
 # ------------------------------------------------------------------ the file dialog
 
-PICKER_CODE = (
-    "import tkinter as tk\n"
-    "from tkinter import filedialog\n"
-    "root = tk.Tk(); root.withdraw(); root.attributes('-topmost', True)\n"
-    "files = filedialog.askopenfilenames(title='Choose files to give Danica (a .zip is unzipped)')\n"
-    "print('\\n'.join(files))\n"
-)
-
-
-def pick_files() -> list[Path]:
+def pick_files(images_only: bool = False) -> list[Path]:
     """Open the operating system's file dialog (in its own process, so it can't disturb the terminal) and return
-    the chosen files. An empty list means the dialog was cancelled. Raises UploadError if no dialog is available."""
+    the chosen files. An empty list means the dialog was cancelled. Raises UploadError if no dialog is available.
+    Set images_only to restrict the picker to formats supported by /attach."""
+    if images_only:
+        title = "Choose images to attach"
+        filetypes = "filetypes=[('Images', '*.png *.jpg *.jpeg *.webp *.gif *.bmp')]"
+        picker = "askopenfilename"
+    else:
+        title = "Choose files to give Danica (a .zip is unzipped)"
+        filetypes = ""
+        picker = "askopenfilenames"
+    picker_code = (
+        "import tkinter as tk\n"
+        "from tkinter import filedialog\n"
+        "root = tk.Tk(); root.withdraw(); root.attributes('-topmost', True)\n"
+        f"files = filedialog.{picker}(title={title!r}, {filetypes})\n"
+        "print(files if isinstance(files, str) else '\\n'.join(files))\n"
+    )
     try:
-        done = subprocess.run([sys.executable, "-c", PICKER_CODE], capture_output=True, text=True, timeout=PICKER_TIMEOUT)
+        done = subprocess.run([sys.executable, "-c", picker_code], capture_output=True, text=True, timeout=PICKER_TIMEOUT)
     except (OSError, subprocess.TimeoutExpired):
         raise UploadError("the file dialog could not open. Type the path instead: /upload C:\\path\\to\\file")
     if done.returncode != 0:

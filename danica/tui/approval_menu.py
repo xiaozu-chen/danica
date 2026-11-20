@@ -55,16 +55,16 @@ class ApprovalMenu(Vertical):
     NO_MATCH = object()
 
     DEFAULT_CSS = """
-    ApprovalMenu { height: auto; max-height: 22; margin: 0 1; padding: 0 1; background: #191d27; border: round #e0af68; }
-    ApprovalMenu.-danger { border: round #e0556a; }
-    ApprovalMenu .am-title { height: auto; text-style: bold; color: #e0af68; }
-    ApprovalMenu.-danger .am-title { color: #f7768e; }
-    ApprovalMenu .am-reason { height: auto; color: #a9b4c8; }
-    ApprovalMenu .am-body { height: auto; max-height: 8; margin: 0; background: #141720; }
+    ApprovalMenu { height: auto; max-height: 22; margin: 0 1; padding: 0 1; background: transparent; border: round #d0d0d0; }
+    ApprovalMenu.-danger { border: round #b0b0b0; }
+    ApprovalMenu .am-title { height: auto; text-style: bold; color: #d0d0d0; }
+    ApprovalMenu.-danger .am-title { color: #d0d0d0; }
+    ApprovalMenu .am-reason { height: auto; color: #c0c0c0; }
+    ApprovalMenu .am-body { height: auto; max-height: 8; margin: 0; background: transparent; }
     ApprovalMenu .am-body Static { color: #ffffff; }
-    ApprovalMenu .am-choices { height: auto; max-height: 8; background: #191d27; border: none; padding: 0; }
-    ApprovalMenu .am-choices > .option-list--option-highlighted { background: #343d54; }
-    ApprovalMenu .am-hint { height: 1; color: #7f8aa3; }
+    ApprovalMenu .am-choices { height: auto; max-height: 8; background: transparent; border: none; padding: 0; }
+    ApprovalMenu .am-choices > .option-list--option-highlighted { background: #333333; }
+    ApprovalMenu .am-hint { height: 1; color: #999999; }
     """
 
     def __init__(self, spec: dict, on_done) -> None:
@@ -88,7 +88,7 @@ class ApprovalMenu(Vertical):
     @staticmethod
     def _label(index: int, option: dict) -> Text:
         label = Text()
-        label.append(f"{option.get('shown_key', index + 1)}  ", style="bold #7aa2f7")
+        label.append(f"{option.get('shown_key', index + 1)}  ", style="bold #ffffff")
         label.append(option["label"])
         return label
 

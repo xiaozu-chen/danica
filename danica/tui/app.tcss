@@ -1,7 +1,7 @@
 Screen {
     layout: vertical;
     background: ansi_default;
-    color: #d8deeb;
+    color: #f0f0f0;
 }
 
 /* ---- transcript ---- */
@@ -17,13 +17,21 @@ Screen {
 }
 
 .welcome { margin: 1 0 0 0; }
-.user { margin: 1 0 0 0; padding: 0 1; color: #e6eaf2; background: #171b26; border-left: heavy #7aa2f7; }
+.user { margin: 1 0 0 0; padding: 0 1; color: #ffffff; background: transparent; border-left: heavy #ffffff; }
 .notice { margin: 1 0 0 0; }
 .say { margin: 1 0 0 0; }
+.session-list {
+    link-style: not underline;
+    link-style-hover: not underline;
+    link-color: #ffffff;
+    link-color-hover: #000000;
+    link-background: transparent;
+    link-background-hover: #ffffff;
+}
 .citations { margin: 1 0 0 0; }
 .artifacts { margin: 1 0 0 0; }
-.thinking { margin: 1 0 0 0; padding: 0 1; color: #9aa4bf; }
-.toolcall { margin: 1 0 0 0; padding: 0 1; background: transparent; border-left: round #39445f; }
+.thinking { margin: 1 0 0 0; padding: 0 1; color: #b0b0b0; }
+.toolcall { margin: 1 0 0 0; padding: 0 1; background: transparent; border-left: round #4a4a4a; }
 
 AssistantMessage {
     margin: 1 0 0 0;
@@ -41,17 +49,18 @@ AssistantMessage {
     height: auto;
     margin: 0 1;
     padding: 0 1;
-    border: round #39445f;
+    border: round #4a4a4a;
     background: transparent;
 }
 
 #caret {
     width: 2;
-    color: #7aa2f7;
+    color: #ffffff;
     text-style: bold;
 }
 
 #prompt {
+    width: 1fr;
     height: auto;
     min-height: 1;
     max-height: 8;
@@ -72,6 +81,24 @@ AssistantMessage {
 
 #prompt .text-area--cursor-line { background: transparent; }
 
+#upload-button {
+    width: auto;
+    height: 1;
+    margin-left: 1;
+    background: transparent;
+    color: #ffffff;
+    link-color: #ffffff;
+    link-color-hover: #000000;
+    link-background: transparent;
+    link-background-hover: #ffffff;
+    link-style: not underline;
+    link-style-hover: bold not underline;
+}
+
+#upload-button:hover {
+    background: transparent;
+}
+
 #popup {
     display: none;
     height: auto;
@@ -79,7 +106,7 @@ AssistantMessage {
     margin: 0 1;
     padding: 0;
     background: transparent;
-    border: round #39445f;
+    border: round #4a4a4a;
     outline: none;
     scrollbar-size-vertical: 1;
     scrollbar-color: #5e5e5e;
@@ -88,22 +115,22 @@ AssistantMessage {
     scrollbar-color-active: #5a5a5a;
 }
 
-#popup > .option-list--option-highlighted { background: #343d54; }
+#popup > .option-list--option-highlighted { background: #333333; }
 
 #caret { height: 1; }
 
 #status {
     height: 2;
     padding: 0 2;
-    color: #a9b4c8;
+    color: #c0c0c0;
     background: transparent;
-    border-top: solid #2b3040;
+    border-top: solid #404040;
 }
 
 /* ---- dialogs ---- */
 PermissionScreen, ConfirmScreen, ChoiceScreen, TextScreen {
     align: center middle;
-    background: black 60%;
+    background: transparent;
 }
 
 .dialog {
@@ -114,13 +141,25 @@ PermissionScreen, ConfirmScreen, ChoiceScreen, TextScreen {
     max-height: 90%;           /* was 50%: it clipped the bottom of tall dialogs */
     padding: 1 2;
     background: transparent;
-    border: round #39445f;
+    border: round #4a4a4a;
 }
 
-.dialog.warn { border: round #e0af68; }
+.dialog.warn { border: round #d0d0d0; }
 
 .dialog-title { text-style: bold; margin-bottom: 1; }
 .dialog-reason { margin-bottom: 1; }
+
+TextScreen #answer {
+    width: 1fr;
+    background: transparent;
+    color: #f0f0f0;
+    border: round #4a4a4a;
+    padding: 0 1;
+}
+
+TextScreen #answer:focus {
+    border: round #ffffff;
+}
 
 .dialog-body {
     height: auto;
@@ -157,5 +196,5 @@ PermissionScreen, ConfirmScreen, ChoiceScreen, TextScreen {
 #sub-log  { height: 1fr; padding: 0 1; background: transparent; scrollbar-size-vertical: 1; }
 #sub-live { height: auto; max-height: 3; padding: 0 1; }
 
-#agents-pane, #viewer-pane { border: round #39445f; background: transparent; }
+#agents-pane, #viewer-pane { border: round #4a4a4a; background: transparent; }
 

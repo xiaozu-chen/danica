@@ -1,7 +1,7 @@
 """
 commands_vision.py - /attach, /detach and /vision.
 
-    /attach <picture>   send a picture with your NEXT message (drag a file into the terminal to paste its path).
+    /attach [picture]   choose or name a picture to send with your NEXT message (drag a file into the terminal to paste its path).
                         A copy is kept in the workspace (uploads/), so Danica can look at it again with view_image.
     /detach             forget the pictures you attached
     /vision             does the server see pictures? (and how to turn it on)
@@ -15,7 +15,7 @@ from danica import uploads, vision
 from danica.tui.commands import DESCRIPTIONS, command
 
 DESCRIPTIONS.update({
-    "/attach": "send a picture with your next message",
+    "/attach": "choose or name a picture to send with your next message",
     "/detach": "forget attached pictures",
     "/vision": "does the model see pictures?",
 })
@@ -36,11 +36,18 @@ def _vision(app, args):
 
 @command("/attach")
 def _attach(app, args):
-    """/attach <path>   path of a png / jpg / webp / gif; quotes are fine (drag-and-drop adds them)."""
+    """/attach [path]   choose a picture or provide its path (png / jpg / webp / gif / bmp)."""
     raw = args.strip().strip('"').strip("'")
     if not raw:
-        app.ui.log("info", "usage: /attach <picture path>   (then type your message)")
-        return
+        try:
+            paths = uploads.pick_files(images_only=True)
+        except uploads.UploadError as e:
+            app.ui.log("error", str(e))
+            return
+        if not paths:
+            app.ui.log("info", "cancelled: no picture chosen.")
+            return
+        raw = str(paths[0])
     if not vision.available() and not vision.refresh():
         app.ui.log("warning", "the server has no vision, so the picture would be ignored.\n" + HOW_TO)
         return

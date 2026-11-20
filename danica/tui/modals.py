@@ -41,7 +41,7 @@ class PermissionScreen(ModalScreen[str]):
     def compose(self) -> ComposeResult:
         """Compose the permission request screen."""
         with Vertical(classes="dialog warn"):
-            yield Static(Text(f"Permission needed ({self.tier})", style="bold #ffff00"), classes="dialog-title")
+            yield Static(Text(f"Permission needed ({self.tier})", style="bold #ffffff"), classes="dialog-title")
             yield Static(Text(self.reason), classes="dialog-reason")
             with VerticalScroll(classes="dialog-body"):
                 yield Static(Text(self.summary))
@@ -84,7 +84,7 @@ class ConfirmScreen(ModalScreen[bool]):
     def compose(self) -> ComposeResult:
         """Compose the confirmation dialog."""
         with Vertical(classes="dialog"):
-            yield Static(Text(self.title_text, style="bold #ff9e64"), classes="dialog-title")
+            yield Static(Text(self.title_text, style="bold #e0e0e0"), classes="dialog-title")
             if self.body:
                 with VerticalScroll(classes="dialog-body"):
                     yield Static(Text(self.body))
@@ -123,7 +123,7 @@ class ChoiceScreen(ModalScreen):
     def compose(self) -> ComposeResult:
         """Compose the option selection dialog."""
         with Vertical(classes="dialog"):
-            yield Static(Text(self.title_text, style="bold #ff9e64"), classes="dialog-title")
+            yield Static(Text(self.title_text, style="bold #e0e0e0"), classes="dialog-title")
             if self.body:
                 with VerticalScroll(classes="dialog-body"):
                     yield Static(Text(self.body))
@@ -169,7 +169,7 @@ class TextScreen(ModalScreen):
     def compose(self) -> ComposeResult:
         """Compose the text input dialog."""
         with Vertical(classes="dialog"):
-            yield Static(Text(self.title_text, style="bold #ff9e64"), classes="dialog-title")
+            yield Static(Text(self.title_text, style="bold #e0e0e0"), classes="dialog-title")
             yield Input(value=self.default, id="answer", password=self.secret)
             yield Static(Text("Enter to confirm, Esc to cancel", style="dim"), classes="dialog-reason")
 

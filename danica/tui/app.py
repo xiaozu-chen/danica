@@ -15,6 +15,7 @@ Threading model (the important part):
 from __future__ import annotations
 
 import argparse
+from importlib.metadata import PackageNotFoundError, version
 import threading
 from collections import deque
 from datetime import datetime
@@ -22,10 +23,12 @@ from pathlib import Path
 from typing import Any
 
 from rich.text import Text
+from rich.style import Style
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll, Vertical
 from textual.widgets import Static
+from textual.theme import Theme
 
 from danica.app_core import build_session, shutdown, short_path
 from danica.artifacts import collect
@@ -95,7 +98,39 @@ class DanicaApp(App):
 
     def __init__(self, bypass: bool = False) -> None:
         super().__init__()
-        self.theme = "ansi-dark"
+        self.register_theme(Theme(
+            name="monochrome",
+            ansi=True,
+            primary="ansi_white",
+            secondary="ansi_bright_black",
+            warning="ansi_bright_white",
+            error="ansi_white",
+            success="ansi_bright_white",
+            accent="ansi_white",
+            foreground="ansi_default",
+            background="ansi_default",
+            surface="ansi_default",
+            panel="ansi_default",
+            boost="ansi_default",
+            dark=True,
+            variables={
+                "ansi-background": "ansi_black",
+                "ansi-foreground": "ansi_white",
+                "border-blurred": "ansi_bright_black",
+                "block-cursor-foreground": "ansi_black",
+                "block-cursor-background": "ansi_white",
+                "input-cursor-background": "ansi_black",
+                "input-cursor-foreground": "ansi_bright_white",
+                "input-cursor-text-style": "none",
+                "input-selection-background": "ansi_bright_white",
+                "input-selection-foreground": "ansi_black",
+                "screen-selection-background": "ansi_bright_white",
+                "screen-selection-foreground": "ansi_black",
+                "link-color": "ansi_white",
+                "link-color-hover": "ansi_bright_white",
+            },
+        ))
+        self.theme = "monochrome"
         self.ui_thread = 0
         self.ui = TextualUI(self)
         self.engine = Engine(self._engine_error)
@@ -146,6 +181,8 @@ class DanicaApp(App):
         with Horizontal(id="prompt-box"):
             yield Static(">", id="caret")
             yield PromptInput(placeholder=IDLE_PLACEHOLDER, id="prompt")
+            yield Static(Text("[···]", style=Style(color="#ffffff", meta={"@click": "app.open_add_menu"})),
+                         id="upload-button")
         yield StatusBar(id="status")
 
     def on_mount(self) -> None:
@@ -278,7 +315,9 @@ class DanicaApp(App):
         transcript.remove_children()
         transcript.mount(Static(welcome_panel(self.project["name"] if self.project else None,
                                       short_path(self.ws.root),
-                                      open_mode=self.open_root is not None), classes="welcome"))
+                                      open_mode=self.open_root is not None,
+                                      current_session_id=self.session_id),
+                         classes="welcome session-list"))
         if history:                                   # a resumed session: replay the last exchanges
             from danica.compaction import is_summary
             entries = []
@@ -310,7 +349,8 @@ class DanicaApp(App):
 
     def add_renderable(self, renderable: Any) -> None:
         """Add a Rich renderable to the conversation view."""
-        self.mount_block(Static(renderable))
+        classes = "session-list" if getattr(renderable, "session_list", False) else ""
+        self.mount_block(Static(renderable, classes=classes))
 
     # ------------------------------------------------------------------ input
 
@@ -342,6 +382,67 @@ class DanicaApp(App):
         except Exception as exc:
             self.ui.log("error", f"{type(exc).__name__}: {exc}")
         self._call(self._finish_command, follow)
+
+    def action_resume_session(self, number: int) -> None:
+        """Resume a saved session selected from the clickable /sessions table."""
+        if self.working or self.engine.busy:
+            self.add_notice("warning", "Danica is busy. Wait for the current task to finish first.")
+            return
+        self.set_working(True, "command", kind="command")
+        self.engine.submit(self.run_command, f"/resume {int(number)}")
+
+    def action_show_sessions(self) -> None:
+        """Show the full saved-session list from the welcome panel."""
+        if self.working or self.engine.busy:
+            self.add_notice("warning", "Danica is busy. Wait for the current task to finish first.")
+            return
+        self.set_working(True, "command", kind="command")
+        self.engine.submit(self.run_command, "/sessions")
+
+    def action_open_artifact(self, number: int) -> None:
+        """Open a file selected from the clickable artifact list."""
+        if self.working or self.engine.busy:
+            self.add_notice("warning", "Danica is busy. Wait for the current task to finish first.")
+            return
+        self.set_working(True, "command", kind="command")
+        self.engine.submit(self.run_command, f"/open {int(number)}")
+
+    def action_open_add_menu(self) -> None:
+        """Open a compact menu for files and session modes."""
+        self._start_toolbar_command(self.choose_add_action)
+
+    def _start_toolbar_command(self, fn, *args) -> bool:
+        if self.working or self.engine.busy:
+            self.add_notice("warning", "Danica is busy. Wait for the current task to finish first.")
+            return False
+        self.set_working(True, "command", kind="command")
+        self.engine.submit(fn, *args)
+        return True
+
+    def choose_add_action(self) -> None:
+        """Worker-thread menu for attach, upload, and mode commands."""
+        thinking = bool(self.agent and self.agent.thinking)
+        full_access = bool(self.policy and self.policy.full_access)
+        choice = self.ui.choose(
+            "Quick actions",
+            "Choose what to add. Images are attached to your next message; other files go into the workspace.",
+            [
+                ("i", "Attach image"),
+                ("f", "Upload file"),
+                ("t", f"Think mode: {'On' if thinking else 'Off'} (toggle)"),
+                ("p", f"Permission mode: {'Full Access' if full_access else 'Ask when needed'} (toggle)"),
+            ],
+        )
+        if choice == "i":
+            self.run_command("/attach")
+        elif choice == "f":
+            self.run_command("/upload")
+        elif choice == "t":
+            self.run_command("/think")
+        elif choice == "p":
+            self.run_command("/fullaccess")
+        else:
+            self._call(self._finish_command, None)
 
     def _finish_command(self, follow) -> None:
         self.set_working(False)
@@ -717,7 +818,7 @@ class DanicaApp(App):
 
     def show_reminder(self, message: str) -> None:
         """Display a reminder from the background poller."""
-        self.mount_block(Say(f"REMINDER: {message}", "bold yellow"))
+        self.mount_block(Say(f"REMINDER: {message}", "bold white"))
         self.notify(message, title="Reminder", severity="warning", timeout=10)
 
     # ------------------------------------------------------------------ output helpers (UI thread)
@@ -766,41 +867,41 @@ class DanicaApp(App):
             return Text("starting…", style="dim")
         level = agent.tracker.level(agent.messages)
         color = {
-            "ok": "#a9b4c8",
-            "prune": "#e0af68",
-            "compact": "#ff9e64",
-            "stop": "#f7768e",
-        }.get(level, "#a9b4c8")
+            "ok": "#c0c0c0",
+            "prune": "#d0d0d0",
+            "compact": "#e0e0e0",
+            "stop": "#d0d0d0",
+        }.get(level, "#c0c0c0")
         width = self.size.width
         t = Text()
         if self.open_root is not None:                # first, so a narrow terminal can never cut it off
-            t.append(" OPEN ", style="bold #11131a on #f7768e")
+            t.append(" OPEN ", style="bold #11131a on #d0d0d0")
             t.append(" · ")
         if self.session_title:
             title_limit = 16 if width < 92 else 28
             title = self.session_title
             if len(title) > title_limit:
                 title = title[: title_limit - 1].rstrip() + "…"
-            t.append(f"{title} · ", style="bold #c0caf5")
+            t.append(f"{title} · ", style="bold #ffffff")
         if width < 92:
             t.append(f"ctx {agent.tracker.fraction(agent.messages):.0%}", style=color)
         else:
             t.append(f"ctx {agent.tracker.bar(agent.messages, width=6)}", style=color)
         t.append(" · " + ("think" if agent.thinking else "fast"))
         if self.policy is not None and self.policy.full_access:
-            t.append(" · FULL ACCESS", style="bold #f7768e")
+            t.append(" · FULL ACCESS", style="bold #d0d0d0")
         if self.plan_next and width >= 92:
-            t.append(" · plan next", style="#e0af68")
+            t.append(" · plan next", style="#d0d0d0")
         if agent.proposals and agent.proposals.count() and width >= 140:
-            t.append(f" · {agent.proposals.count()} proposed note(s)", style="#e0af68")
+            t.append(f" · {agent.proposals.count()} proposed note(s)", style="#d0d0d0")
         if self.ws is not None and self.ws.web and self.ws.web.tainted:
-            t.append(" · TAINTED", style="bold #f7768e")
+            t.append(" · TAINTED", style="bold #d0d0d0")
         if self.project and width >= 116:
-            t.append(f" · {self.project['name']}", style="#a9b4c8")
+            t.append(f" · {self.project['name']}", style="#c0c0c0")
         if self.ws is not None and width >= 140:
-            t.append(f" · {short_path(self.ws.root)}", style="#7f8aa3")
+            t.append(f" · {short_path(self.ws.root)}", style="#999999")
         if width >= 160:
-            t.append(" · Ctrl+O tools · Ctrl+G agents · Ctrl+E files", style="#7f8aa3")
+            t.append(" · Ctrl+O tools · Ctrl+G agents · Ctrl+E files", style="#999999")
         return t
 
     def on_resize(self, event: Any) -> None:
@@ -862,12 +963,19 @@ class DanicaApp(App):
     
 def main() -> None:
     """Start the Textual application."""
-    parser = argparse.ArgumentParser(prog="danica")           # NEW
-    parser.add_argument("--bypass", action="store_true",      # NEW
-                        help="skip the llama-server check (testing and debugging)")
-    args = parser.parse_args()                                # NEW
+    try:
+        current_version = version("danica")
+    except PackageNotFoundError:
+        current_version = "unknown"
 
-    DanicaApp(bypass=args.bypass).run()           # was: DanicaApp().run()
+    parser = argparse.ArgumentParser(prog="danica")
+    parser.add_argument("--version", action="version", version=f"Danica {current_version}",
+                        help="show the current version and exit")
+    parser.add_argument("--bypass", action="store_true",
+                        help="skip the llama-server check (testing and debugging)")
+    args = parser.parse_args()
+
+    DanicaApp(bypass=args.bypass).run()
 
 
 if __name__ == "__main__":
@@ -878,6 +986,6 @@ if __name__ == "__main__":
     # except KeyboardInterrupt:
     #     Console.print("[bold #000000 on red] ERROR [/] Aborted")
     # except EOFError:
-    #     Console.print("[bold red on #555555] CRITICAL [/] Hard Stop")
+    #     Console.print("[bold white on #555555] CRITICAL [/] Hard Stop")
     # except Exception as e:
     #     Console.print(f"[bold #000000 on red] ERROR [/] {escape(str(e))}")

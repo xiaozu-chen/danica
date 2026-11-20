@@ -28,7 +28,7 @@ from danica.partial_json import partial_fields
 
 from danica.ui import format_log
 
-ACCENT = "#7aa2f7"
+ACCENT = "#ffffff"
 HISTORY_PATH = APP_DIR / "history.txt"
 
 TIPS_LABEL = [
@@ -154,7 +154,7 @@ def highlighted(code: str, lexer: str) -> Text:
     for number, line in enumerate(plain.split("\n", allow_blank=True), start=1):
         if number > 1:
             out.append("\n")
-        out.append(f"{number:>4} ", style="#4a5070")
+        out.append(f"{number:>4} ", style="#555555")
         out.append_text(line)
     return out
 
@@ -237,19 +237,19 @@ class ToolCall(Static):
 
     def _header(self) -> Text:
         t = Text()
-        t.append("● ", style="bold #7aa2f7" if self.result is None else "bold #9ece6a")
+        t.append("● ", style="bold #ffffff" if self.result is None else "bold #e0e0e0")
         t.append(self.title_text, style="bold")
         args = self.call_args
         if self.edit or self.ckey:
-            t.append("  " + str(args.get("path")), style="#7aa2f7")
+            t.append("  " + str(args.get("path")), style="#ffffff")
         elif self.command is not None:
             hidden = summarize_args(args, hide=("command",))
             if hidden:
-                t.append("  " + hidden, style="#7aa2f7")
+                t.append("  " + hidden, style="#ffffff")
         else:
             summary = summarize_args(args)
             if summary:
-                t.append("  " + summary, style="#7aa2f7")
+                t.append("  " + summary, style="#ffffff")
         return t
 
     def _more(self, hidden: int) -> Text | None:
@@ -265,18 +265,18 @@ class ToolCall(Static):
                     if not line.startswith(("---", "+++"))]
             added = sum(1 for line in diff if line.startswith("+"))
             removed = sum(1 for line in diff if line.startswith("-"))
-            header.append(f"  +{added}", style="#9ece6a")
-            header.append(f" -{removed}", style="#f7768e")
+            header.append(f"  +{added}", style="#e0e0e0")
+            header.append(f" -{removed}", style="#d0d0d0")
             if not diff:
                 return Text("(no change)", style="dim")
             body = Text(no_wrap=False)
             for line in diff[:limit]:
                 if line.startswith("+"):
-                    body.append(line + "\n", style="#9ece6a on #1a2b1a")
+                    body.append(line + "\n", style="#e0e0e0 on #252525")
                 elif line.startswith("-"):
-                    body.append(line + "\n", style="#f7768e on #2e1a1f")
+                    body.append(line + "\n", style="#d0d0d0 on #252525")
                 elif line.startswith("@@"):
-                    body.append(line + "\n", style="#6b7089")
+                    body.append(line + "\n", style="#888888")
                 else:
                     body.append(line + "\n", style="dim")
             body.rstrip()
@@ -284,8 +284,8 @@ class ToolCall(Static):
         if self.ckey:
             code = self.call_args[self.ckey]
             lines = code.splitlines()
-            header.append(f"  +{len(lines):,}", style="#9ece6a")
-            header.append(" -0", style="#f7768e")
+            header.append(f"  +{len(lines):,}", style="#e0e0e0")
+            header.append(" -0", style="#d0d0d0")
             shown = "\n".join(lines[:limit])
             try:
                 path = str(self.call_args.get("path"))
@@ -297,7 +297,7 @@ class ToolCall(Static):
                 *filter(None, [self._more(len(lines) - limit)]),
             )
         if self.command is not None:
-            return Text("$ " + self.command, style="#c0caf5")
+            return Text("$ " + self.command, style="#ffffff")
         return None
 
     def _result(self) -> Text | None:
@@ -312,7 +312,7 @@ class ToolCall(Static):
             more = len(self.result) - len(body)
             if more > 0:
                 body += f"… ({more:,} more chars, click to expand)"
-        return Text(body, style="#f7768e" if is_error else "dim")
+        return Text(body, style="#d0d0d0" if is_error else "dim")
 
     def _build(self):
         header = self._header()
@@ -395,7 +395,7 @@ class Citations(Static):
     """Render citation links and validation details."""
 
     def __init__(self, text: str) -> None:
-        super().__init__(Text(text, style="yellow" if "WARNING" in text else "green"),
+        super().__init__(Text(text, style="white" if "WARNING" in text else "white"),
                          classes="citations")
 
 
@@ -403,15 +403,11 @@ class ArtifactsList(Static):
     """Render the files produced or changed by a request."""
 
     def __init__(self, found) -> None:
-        from rich.style import Style
         t = Text("Files from this request:", style="dim")
         for n, a in enumerate(found.items, start=1):
             size = f"{a.size / 1_000_000:.1f} MB" if a.size >= 1_000_000 else f"{max(1, a.size // 1024)} KB"
             line = f"\n  {n}. {a.status:<7} {a.rel}  {size}"
-            try:
-                t.append(line, style=Style(link=a.path.as_uri()))
-            except Exception:
-                t.append(line)
+            t.append(line, style=Style(meta={"@click": f"app.open_artifact({n})"}))
         if found.more:
             t.append(f"\n  ... and {found.more} more", style="dim")
         if found.deleted:
@@ -419,25 +415,8 @@ class ArtifactsList(Static):
         super().__init__(t, classes="artifacts")
 
 
-"""
-⣇⣿⠘⣿⣿⣿⡿⡿⣟⣟⢟⢟⢝⠵⡝⣿⡿⢂⣼⣿⣷⣌⠩⡫⡻⣝⠹⢿⣿⣷
-⡆⣿⣆⠱⣝⡵⣝⢅⠙⣿⢕⢕⢕⢕⢝⣥⢒⠅⣿⣿⣿⡿⣳⣌⠪⡪⣡⢑⢝⣇
-⡆⣿⣿⣦⠹⣳⣳⣕⢅⠈⢗⢕⢕⢕⢕⢕⢈⢆⠟⠋⠉⠁⠉⠉⠁⠈⠼⢐⢕⢽
-⡗⢰⣶⣶⣦⣝⢝⢕⢕⠅⡆⢕⢕⢕⢕⢕⣴⠏⣠⡶⠛⡉⡉⡛⢶⣦⡀⠐⣕⢕
-⡝⡄⢻⢟⣿⣿⣷⣕⣕⣅⣿⣔⣕⣵⣵⣿⣿⢠⣿⢠⣮⡈⣌⠨⠅⠹⣷⡀⢱⢕
-⡝⡵⠟⠈⢀⣀⣀⡀⠉⢿⣿⣿⣿⣿⣿⣿⣿⣼⣿⢈⡋⠴⢿⡟⣡⡇⣿⡇⡀⢕
-⡝⠁⣠⣾⠟⡉⡉⡉⠻⣦⣻⣿⣿⣿⣿⣿⣿⣿⣿⣧⠸⣿⣦⣥⣿⡇⡿⣰⢗⢄
-⠁⢰⣿⡏⣴⣌⠈⣌⠡⠈⢻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣬⣉⣉⣁⣄⢖⢕⢕⢕
-⡀⢻⣿⡇⢙⠁⠴⢿⡟⣡⡆⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣵⣵⣿
-⡻⣄⣻⣿⣌⠘⢿⣷⣥⣿⠇⣿⣿⣿⣿⣿⣿⠛⠻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
-⣷⢄⠻⣿⣟⠿⠦⠍⠉⣡⣾⣿⣿⣿⣿⣿⣿⢸⣿⣦⠙⣿⣿⣿⣿⣿⣿⣿⣿⠟
-⡕⡑⣑⣈⣻⢗⢟⢞⢝⣻⣿⣿⣿⣿⣿⣿⣿⠸⣿⠿⠃⣿⣿⣿⣿⣿⣿⡿⠁⣠
-⡝⡵⡈⢟⢕⢕⢕⢕⣵⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣶⣿⣿⣿⣿⣿⠿⠋⣀⣈⠙
-⡝⡵⡕⡀⠑⠳⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠿⠛⢉⡠⡲⡫⡪⡪⡣ 
-"""
-
-def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.4.0",
-                  open_mode: bool = False) -> Panel:
+def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.0.0",
+                  open_mode: bool = False, current_session_id: str = "") -> Panel:
     """Build the welcome panel with session tips and recent activity."""
     left = Text(justify="center")
     left.append("Welcome to Danica\n\n", style=f"bold {ACCENT}")
@@ -458,7 +437,7 @@ def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.4.0
 """, style=f"bold {ACCENT}")
     if open_mode:                      # impossible to miss: this session can reach the whole disk
         
-        left.append("full disk access\n", style="bold red")
+        left.append("full disk access\n", style="bold white")
         left.append("start folder:\n", style="dim")
     else:
         left.append(f"project: {project_name}\n" if project_name else "chat mode\n", style="dim")
@@ -481,14 +460,21 @@ def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.4.0
         right.append("No recent activity", style="dim")
     else:
         lines = []
-        for info in infos[:4]:
+        for n, info in enumerate(infos[:4], start=1):
             text = Text()
-            text.append(info["id"], style="dim")
-            text.append(f" {info.get('title') or info['preview']}", style="bold")
+            current = info["id"] == current_session_id
+            action = Style(meta={"@click": f"app.resume_session({n})"})
+            text.append(info["id"], style=Style(dim=True, meta={} if current else action.meta))
+            text.append(" ")
+            title = info.get("title") or info["preview"]
+            text.append(title + (" (current)" if current else ""),
+                        style=Style(color="#CCCCFF", bold=True, meta={} if current else action.meta))
             lines.append(text)
         right.append(Text("\n").join(lines))
         if len(infos) > 4:
-            right.append(f"\n… and {len(infos) - 4} more", style="dim")
+            right.append("\n\n… [ Show more ]", style=Style(color="#000000",
+                                                        bold=True,
+                                                        meta={"@click": "app.show_sessions"}))
 
     # Calculate required height for the vertical divider
     left_height = left.plain.count("\n") + 1
@@ -516,7 +502,7 @@ def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.4.0
         body, 
         title=f" Danica v{version} ",
         title_align="left",
-        border_style="bold red" if open_mode else ACCENT,
+        border_style="bold white" if open_mode else ACCENT,
         box=box.ROUNDED,
         padding=(1, 1)
     )
@@ -727,7 +713,7 @@ class SubagentPane(Vertical):
             if log.lines:                                 # a second subagent: separate the runs
                 log.write(Text("─" * 40, style="dim"))
             self._text = ""
-            self._head(f"● {child_id} running", "bold green")
+            self._head(f"● {child_id} running", "bold white")
             log.write(Text("Task: " + " ".join(str(data).split())[:300], style="bold"))
         elif kind == "content":
             self._text += str(data)
@@ -740,8 +726,8 @@ class SubagentPane(Vertical):
             self._live("thinking… " + " ".join(str(data).split()), "dim italic")
         elif kind in ("done", "failed", "killed"):
             self._flush()
-            label = {"done": ("✔ finished", "bold green"), "failed": ("✘ failed", "bold red"),
-                     "killed": ("■ stopped", "bold yellow")}[kind]
+            label = {"done": ("✔ finished", "bold white"), "failed": ("✘ failed", "bold white"),
+                     "killed": ("■ stopped", "bold white")}[kind]
             self._head(f"{label[0]}  {child_id}", label[1])
             if kind != "done":                            # "done" carries the summary, and the
                 log.write(Text(str(data), style=label[1]))   # main transcript already gets it
@@ -788,7 +774,7 @@ class BusyLine(Static):
         t = Text()
         t.append(self.FRAMES[self._i % len(self.FRAMES)] + " ", style=f"bold {ACCENT}")
         suffix = " · Esc to stop" if self._stoppable else ""
-        t.append(f"{self._label}… ({secs}s{suffix})", style="#d8deeb")
+        t.append(f"{self._label}… ({secs}s{suffix})", style="#f0f0f0")
         self.update(t)
 
 

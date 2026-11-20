@@ -36,7 +36,7 @@ def render_help_menu() -> Any:
             t = Text()
             t.append(base_cmd, style="bold bright_white")
             if args:
-                t.append(args, style="dim cyan")
+                t.append(args, style="dim white")
             command_lines.append(t)
 
         body = Text("\n").join(command_lines)
@@ -44,7 +44,7 @@ def render_help_menu() -> Any:
         category_panels.append(
             Panel(
                 body,
-                title=Text(section["name"], style="yellow"),
+                title=Text(section["name"], style="white"),
                 title_align="left",
                 box=box.ROUNDED,
                 border_style="bright_black",
@@ -55,7 +55,7 @@ def render_help_menu() -> Any:
 
     return Panel(
         Columns(category_panels, equal=True, expand=True),
-        title=Text("Command Reference Help", style="#4CAF50"),
+        title=Text("Command Reference Help", style="#ffffff"),
         subtitle=Text("Type a command to execute", style="dim"),
         subtitle_align="center",
         box=box.ASCII3,

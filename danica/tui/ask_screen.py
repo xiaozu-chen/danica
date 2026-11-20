@@ -26,16 +26,16 @@ class AskScreen(ModalScreen):
     DEFAULT_CSS = """
     AskScreen { align: center middle; background: black 60%; }
     AskScreen .ask-box { width: 90%; min-width: 0; max-width: 96; height: auto; max-height: 92%;
-                         padding: 1 2; background: #191d27; border: round #39445f; }
+                         padding: 1 2; background: transparent; border: round #4a4a4a; }
     AskScreen .ask-scroll { height: auto; max-height: 26; margin-bottom: 1; }
-    AskScreen .ask-q { text-style: bold; margin-top: 1; color: #c0caf5; }
+    AskScreen .ask-q { text-style: bold; margin-top: 1; color: #ffffff; }
     AskScreen .ask-q:first-child { margin-top: 0; }
-    AskScreen RadioSet, AskScreen SelectionList { height: auto; max-height: 9; background: #141720; border: none; padding: 0 1; }
+    AskScreen RadioSet, AskScreen SelectionList { height: auto; max-height: 9; background: transparent; border: none; padding: 0 1; }
     AskScreen Input { margin-top: 0; }
     AskScreen .ask-buttons { height: auto; }
-    AskScreen .ask-buttons Button { width: 1fr; min-width: 0; margin-right: 2; background: #252b3a; }
+    AskScreen .ask-buttons Button { width: 1fr; min-width: 0; margin-right: 2; background: transparent; }
     AskScreen .ask-buttons Button:last-of-type { margin-right: 0; }
-    AskScreen .ask-buttons Button:focus { background: #343d54; text-style: bold; }
+    AskScreen .ask-buttons Button:focus { background: #333333; text-style: bold; }
     """
 
     def __init__(self, questions: list[dict]) -> None:
@@ -51,7 +51,7 @@ class AskScreen(ModalScreen):
         many = len(self.questions) > 1
         with Vertical(classes="ask-box"):
             yield Static(Text("Danica has " + ("some questions" if many else "a question")
-                              + "  (a few words each is enough)", style="bold #ff9e64"), classes="dialog-title")
+                              + "  (a few words each is enough)", style="bold #e0e0e0"), classes="dialog-title")
             with VerticalScroll(classes="ask-scroll"):
                 for i, q in enumerate(self.questions):
                     yield Static(Text(f"{i + 1}. {q['question']}" + ("   (pick any)" if q.get("multi") else "")), classes="ask-q")
