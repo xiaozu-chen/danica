@@ -7,6 +7,8 @@ UI never freezes while it waits for the server.
 
 from __future__ import annotations
 
+from importlib.metadata import version
+
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -156,13 +158,13 @@ class SetupScreen(_ServerForm, Screen[int]):
     def compose(self) -> ComposeResult:
         """Compose the server setup screen."""
         with Vertical(id="setup"):
-            yield Static("""
+            yield Static(f"""
 
 ██████   █████  ███    ██ ██  ██████  █████ 
 ██   ██ ██   ██ ████   ██ ██ ██      ██   ██
 ██   ██ ███████ ██ ██  ██ ██ ██      ███████
 ██   ██ ██   ██ ██  ██ ██ ██ ██      ██   ██
-██████  ██   ██ ██   ████ ██  ██████ ██   ██   ✦ v1.4.0
+██████  ██   ██ ██   ████ ██  ██████ ██   ██   ✦ v{version("danica")}
 
 """, classes="heading")
             yield Static(INTRO)

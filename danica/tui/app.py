@@ -15,6 +15,7 @@ Threading model (the important part):
 from __future__ import annotations
 
 import argparse
+import pyfiglet
 from importlib.metadata import PackageNotFoundError, version
 import threading
 from collections import deque
@@ -904,8 +905,9 @@ class DanicaApp(App):
         width = self.size.width
         t = Text()
         if self.open_root is not None:                # first, so a narrow terminal can never cut it off
-            t.append(" OPEN ", style="bold #11131a on #d0d0d0")
+            t.append(" OPEN ", style="bold #010101 on #ff4a4a")
             t.append(" · ")
+            
         if self.session_title:
             title_limit = 16 if width < 92 else 28
             title = self.session_title
@@ -995,14 +997,26 @@ def main() -> None:
     """Start the Textual application."""
     try:
         current_version = version("danica")
+        banner = pyfiglet.figlet_format(current_version, font="ansi_shadow").rstrip()
     except PackageNotFoundError:
         current_version = "unknown"
+        banner = "unknown"
 
-    parser = argparse.ArgumentParser(prog="danica")
-    parser.add_argument("--version", action="version", version=f"Danica {current_version}",
-                        help="show the current version and exit")
-    parser.add_argument("--bypass", action="store_true",
-                        help="skip the llama-server check (testing and debugging)")
+    parser = argparse.ArgumentParser(
+        prog="danica",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=banner.replace("%", "%%"),  # argparse %-formats this string
+        help="show the current version and exit",
+    )
+    parser.add_argument(
+        "--bypass",
+        action="store_true",
+        help="skip the llama-server check (testing and debugging)",
+    )
     args = parser.parse_args()
 
     DanicaApp(bypass=args.bypass).run()

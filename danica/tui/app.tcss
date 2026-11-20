@@ -17,7 +17,7 @@ Screen {
 }
 
 .welcome { margin: 1 0 0 0; }
-.user { margin: 1 0 0 0; padding: 0 1; color: #ffffff; background: transparent; border-left: heavy #ffffff; }
+.user { margin: 1 0 0 0; padding: 0 1; color: #ffffff; background: #3e3e3e; border-left: heavy #ffffff; }
 .notice { margin: 1 0 0 0; }
 .say { margin: 1 0 0 0; }
 .session-list {

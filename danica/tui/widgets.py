@@ -10,6 +10,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from importlib.metadata import version
 
 from rich import box
 from rich.console import Group
@@ -414,12 +415,37 @@ class ArtifactsList(Static):
             t.append(f"\n  ({found.deleted} file(s) deleted)", style="dim")
         super().__init__(t, classes="artifacts")
 
+def get_greeting():
+    hour = datetime.now().hour
 
-def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.0.0",
+    if 0 <= hour < 3:
+        options = ["Burning the midnight oil", "Still up", "Hello, night owl"]
+    elif 3 <= hour < 5:
+        options = ["Wow, you're up early", "Hello, early bird", "Rise and shine"]
+    elif 5 <= hour < 9:
+        options = ["Good morning", "Rise and shine", "Top of the morning"]
+    elif 9 <= hour < 12:
+        options = ["Good morning", "Hope your morning is going well", "Hello"]
+    elif 12 <= hour < 14:
+        options = ["Good afternoon", "Enjoy your lunch", "Happy midday"]
+    elif 14 <= hour < 17:
+        options = ["Good afternoon", "Hope your afternoon is going well", "Hi there"]
+    elif 17 <= hour < 19:
+        options = ["Good evening", "Hope you had a great day", "Happy evening"]
+    elif 19 <= hour < 22:
+        options = ["Good evening", "Winding down?", "Hope you had a nice day"]
+    else:
+        options = ["Good night", "Time to rest soon", "Sleep well"]
+
+    return random.choice(options)
+
+def welcome_panel(project_name: str | None, ws_label: str, v: str = version("danica"),
                   open_mode: bool = False, current_session_id: str = "") -> Panel:
     """Build the welcome panel with session tips and recent activity."""
+
+    greeting = get_greeting()
     left = Text(justify="center")
-    left.append("Welcome to Danica\n\n", style=f"bold {ACCENT}")
+    left.append(f"{greeting}.\n(˵ •̀ ᴗ - ˵ ) ✧\n\n", style=f"bold {ACCENT}")
     left.append("""
 ⣿⠛⠛⠛⠛⠻⡆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
 ⠛⢛⣿⠋⢀⡾⠃⠀⠀⠀⠀⢀⣤⣤⠤⠤⣤⣤⣀⣀⣀⣠⠶⡶⣤⣀⣠⠾⡷⣦⣀⣤⣤⡤⠤⠦⢤⣤⣄⡀⠀⢠⡶⢶⡄⠀⠀
@@ -433,11 +459,39 @@ def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.0.0
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⡶⢀⣼⣿⣬⣽⠧⠬⠇⠀⠀⠀⠀⠀⠀⢞⣯⣭⢺⣔⣪⣾⣤⠺⡇⢳⠀⢠⣧⡾⠛⠛⠻⠶⠞⠁
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⠷⢿⠟⠉⡀⠈⢦⡀⠀⠀⣠⠖⠒⠒⢤⡀⠀⢀⡼⠿⢇⡣⢬⣶⠷⢿⣤⡾⠁⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⠷⠾⠷⠖⠛⠛⠲⠶⠿⠤⣤⠤⠤⢷⣶⠋⠀⠀⠀⣱⠞⠁⠀⠈⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠛⠓⠒⠚⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-""", style=f"bold {ACCENT}")
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠛⠓⠒⠚⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+""" if not open_mode else """
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⡤⠤⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⠁⣬⡳⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⢠⠊⣰⠀⣦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⡎⠀⢳⠈⢺⣦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⢠⡃⡁⡇⠀⠈⠛⢤⡀⠀⠀⠀⠀⠀⣀⣀⣀⣀⡀⠀⠀⢀⠔⠋⠀⠀⢸⢼⡄⠈⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⡏⣀⡏⡇⠀⠀⠉⠢⠈⣖⣉⡉⠉⣹⢧⣀⣀⠤⠬⠭⢹⣋⠀⠀⠀⠀⡜⠈⠹⣄⢹⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⢸⠻⡁⠀⢧⠀⠀⢀⡤⠚⠉⠀⠀⠀⠘⡾⣷⡀⠀⠀⠀⠀⠈⢍⡒⢤⣰⠃⠀⠀⣼⢸⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⢸⢶⡃⠀⠈⣦⠞⠁⠀⢠⣮⣤⣴⣾⣿⣷⠹⣿⣿⣷⣿⣿⣶⣦⣷⣄⣈⡳⣄⠀⡬⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⣠⣟⢀⡜⠁⠀⠀⢠⣿⣿⣿⣿⣿⣿⣽⣧⠹⣿⣿⣿⣯⣵⣾⣿⣶⣲⠃⠈⢳⣳⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⣸⠃⢸⠏⠀⠀⠀⢀⣿⣿⣿⠿⡿⢿⠿⠟⠛⢧⠙⢟⠉⠙⠛⠛⢻⠛⠻⡄⠀⢄⠹⣇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⣰⡏⢀⠏⠀⠀⠀⠀⡜⠁⠀⠀⢠⡇⡜⠀⠀⠀⠀⠳⡌⢻⡀⠀⠀⠈⡆⠀⢸⡀⠈⠆⠹⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⢰⠻⠀⡼⠀⠀⠀⠀⢰⠃⠀⠀⢠⠇⡇⣷⠀⣧⠀⠦⠀⢸⢦⡹⣄⠀⠀⢧⠀⠀⡇⠠⠘⡄⢱⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⢼⡇⢀⠇⠀⠀⠀⠀⢸⠀⠀⣾⣸⠀⡇⡿⡀⣿⡆⠀⠀⢸⡀⣷⢮⣦⡀⢸⡆⠀⢸⠀⠀⢱⡀⣇⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⣾⠀⢸⠀⠀⠀⠀⠀⠸⡆⢰⢹⡇⠀⢸⡇⢧⣷⣽⡄⠀⢸⣧⣻⣎⣿⡿⣾⣿⠀⢸⠀⠀⠀⢃⢸⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⡍⠀⡇⢀⠀⠀⠀⠀⠀⣷⢼⠬⣧⣀⣈⣷⠘⢧⣹⢿⣄⠈⣏⢻⣞⣿⣷⣼⠿⡷⣦⣀⠀⠀⠘⠌⡆⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⡇⠀⡆⠀⣇⠀⠀⠀⠀⡿⣼⠀⠀⠀⠀⠙⣍⠉⠃⠀⠉⠓⠾⣉⣙⣈⣈⠃⠀⣷⠃⠉⠓⡦⣄⡀⣇⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⡇⠀⡇⠀⠘⣆⠀⠀⠀⣇⠙⠟⠛⣻⣿⡏⠉⠀⠀⠀⠀⠀⠈⠉⢛⣿⣟⡟⠋⢸⠆⠀⣠⠇⠀⠈⡏⠙⠒⠲⠦⠤⠄⠀⠀
+⠀⠀⠀⡇⠀⡷⡀⠀⠘⣆⠀⠀⢹⠀⠀⠀⠙⠛⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠛⠋⠀⢸⠀⣠⠋⠀⠀⢀⡇⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠃⠀⣧⠱⡄⠀⠈⢧⡀⠘⣇⠀⣴⡶⡢⠾⠂⠀⠀⠀⠀⠀⠀⠀⠺⠊⢴⡷⢴⣏⡴⠃⠀⠀⢠⣾⠁⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⢧⠀⢸⡀⠙⢄⠀⠀⠙⢦⣘⣆⠉⠀⠀⠀⠀⠀⠀⠀⠀⠈⠀⠀⠀⠀⠀⢀⢾⡟⠀⠀⠀⡴⠃⡞⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⢸⡀⠀⢳⡀⠈⠣⡀⠀⠈⢻⡙⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⡼⠀⠀⢠⠞⠀⡼⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⢸⢃⠀⠀⠳⣄⠀⠈⢦⡀⠀⢧⣀⠀⠀⠀⠀⠀⠀⠉⠉⠀⠀⠀⠀⢀⡴⣾⠁⢀⡔⠁⢀⢾⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⡇⢸⡆⠀⠀⠈⡷⣦⡀⠙⢄⠘⣿⡝⠲⣤⣀⡀⠀⠀⠀⢀⣠⡴⠚⠁⣷⠇⡰⠋⣀⡴⠋⣸⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⡼⣡⢣⢷⠀⠀⢰⠀⡇⠈⠳⣄⠃⢹⣷⡿⠷⣄⣉⡉⠒⣊⡩⠿⣿⠀⠀⡟⣰⠕⣫⣾⠀⠀⣇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⣴⡵⠁⡜⠘⠀⣀⡦⠴⠥⢤⠤⢾⠳⣜⡏⡷⣤⠶⠤⣍⣷⣣⡤⠴⢻⢳⣶⣧⢣⠾⠖⠛⠒⠤⣼⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⡾⠋⢀⡜⠀⢠⠏⠁⠀⠀⠀⠈⣦⠎⠀⠘⢿⡇⢸⠀⢐⣺⣧⣿⣋⣀⣼⣀⣿⢰⢳⠀⠰⡄⠀⠀⠀⠙⡷⣄⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⣠⠎⠀⢠⠇⠀⠀⡄⠀⢀⠔⠃⠀⠀⢠⠟⡇⠈⡏⢡⣾⡿⠿⣿⡍⢹⡏⢹⡇⠈⠣⡀⡇⠀⠀⠀⠀⠘⡄⠉⠒⠒⠒⠢⣤⡶⠞
+⠞⠁⠀⠀⡸⠀⠀⠀⢸⣶⠋⢦⣀⣀⣴⡟⠀⢧⠀⡼⠼⣇⠀⠀⢀⠗⠛⣿⠘⣦⣀⠀⠈⢳⣄⠀⠀⠀⠀⢻⢿⣉⠉⠉⠉⠁⠀⠀
+""", style=f"bold {ACCENT}" if not open_mode else "bold red")
     if open_mode:                      # impossible to miss: this session can reach the whole disk
         
-        left.append("full disk access\n", style="bold white")
+        left.append("full disk access\n", style="bold red")
         left.append("start folder:\n", style="dim")
     else:
         left.append(f"project: {project_name}\n" if project_name else "chat mode\n", style="dim")
@@ -500,9 +554,9 @@ def welcome_panel(project_name: str | None, ws_label: str, version: str = "1.0.0
 
     return Panel(
         body, 
-        title=f" Danica v{version} ",
+        title=f" Danica v{v} ",
         title_align="left",
-        border_style="bold white" if open_mode else ACCENT,
+        border_style="bold red" if open_mode else ACCENT,
         box=box.ROUNDED,
         padding=(1, 1)
     )

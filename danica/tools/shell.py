@@ -19,8 +19,8 @@ from danica.workspace import Workspace
 from danica.config import CONFIG
 from danica.sandbox import Job, SandboxError
 
-DEFAULT_TIMEOUT = 30
-MAX_TIMEOUT = 120
+DEFAULT_TIMEOUT = 2500
+MAX_TIMEOUT = 3000
 MAX_OUTPUT_CHARS = 8000   # roughly 2-3k tokens
 
 # Only these variables are passed to the child process.
