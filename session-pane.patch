@@ -1,0 +1,232 @@
+diff --git a/danica/tui/app.py b/danica/tui/app.py
+index 607c937..c716bd0 100644
+--- a/danica/tui/app.py
++++ b/danica/tui/app.py
+@@ -66,6 +66,7 @@ from danica.tui.widgets import (
+ from danica.server import ServerError, ServerMonitor, probe
+ from danica.tui.connection import DisconnectedScreen, SetupScreen
+ from danica.tui.viewer_widgets import ArtifactPane, PresentLink
++from danica.tui.session_pane import SessionPane
+ from danica.htmlview import ViewerError, build_viewer
+ from danica.workspace import PathJailError
+ from danica.seal import is_sealed_html
+@@ -92,7 +93,8 @@ class DanicaApp(App):
+         Binding("ctrl+d", "eof", "Quit", priority=True, show=False),
+         Binding("ctrl+o", "toggle_tools", "Expand tool output", show=False),
+         Binding("ctrl+g", "toggle_agents", "Show/hide subagent pane", show=False),
+-        Binding("ctrl+e", "toggle_viewer", "Show/hide file viewer", show=False)
++        Binding("ctrl+e", "toggle_viewer", "Show/hide file viewer", show=False),
++        Binding("ctrl+b", "toggle_sessions", "Show/hide session list", show=False),
+     ]
+ 
+ 
+@@ -172,6 +174,7 @@ class DanicaApp(App):
+         # Split screen: chat on the left, subagent pane on the right (hidden until one runs)
+         """Compose the main application layout."""
+         with Horizontal(id="main"):
++            yield SessionPane(id="sessions-pane")          # left-hand column, hidden until toggled
+             yield VerticalScroll(id="transcript")
+             with Vertical(id="side"):
+                 yield SubagentPane(id="agents-pane")
+@@ -192,6 +195,7 @@ class DanicaApp(App):
+         if hasattr(transcript, "anchor"):        # stay pinned to the bottom until the user scrolls up
+             transcript.anchor()
+         self.query_one(CommandPopup).hide()
++        self.query_one("#sessions-pane", SessionPane).display = False
+         self.query_one("#agents-pane", SubagentPane).display = False
+         self.query_one("#viewer-pane", ArtifactPane).display = False
+         self.sync_side()
+@@ -311,6 +315,7 @@ class DanicaApp(App):
+ 
+     def after_session(self, note: str, history: list | None = None) -> None:
+         """Reset visible request state after a session change."""
++        self.refresh_sessions()
+         transcript = self.query_one("#transcript", VerticalScroll)
+         transcript.remove_children()
+         transcript.mount(Static(welcome_panel(self.project["name"] if self.project else None,
+@@ -399,6 +404,16 @@ class DanicaApp(App):
+         self.set_working(True, "command", kind="command")
+         self.engine.submit(self.run_command, "/sessions")
+ 
++    def action_resume_session_id(self, session_id: str) -> None:
++        """Resume the saved session clicked in the left-hand session pane."""
++        if session_id == self.session_id:
++            return
++        if self.working or self.engine.busy:
++            self.add_notice("warning", "Danica is busy. Wait for the current task to finish first.")
++            return
++        self.set_working(True, "command", kind="command")
++        self.engine.submit(self.run_command, f"/resume {session_id}")
++
+     def action_open_artifact(self, number: int) -> None:
+         """Open a file selected from the clickable artifact list."""
+         if self.working or self.engine.busy:
+@@ -572,6 +587,19 @@ class DanicaApp(App):
+         pane.display = not pane.display
+         self.sync_side()
+ 
++    def action_toggle_sessions(self) -> None:
++        """Ctrl+B / /sidebar: show or hide the saved-session list on the left."""
++        pane = self.query_one("#sessions-pane", SessionPane)
++        pane.display = not pane.display
++        self.refresh_sessions()
++
++    def refresh_sessions(self) -> None:
++        """UI thread. Redraw the left-hand session list (no-op while it is hidden)."""
++        try:
++            self.query_one("#sessions-pane", SessionPane).reload()
++        except Exception:                         # not mounted yet / shutting down
++            pass
++
+     def sync_side(self) -> None:
+         """Show the right-hand column only while one of its panes is visible."""
+         side = self.query_one("#side", Vertical)
+@@ -750,6 +778,7 @@ class DanicaApp(App):
+ 
+     def on_request_done(self, msg: RequestDone) -> None:
+         """Restore the interface after a request completes."""
++        self.refresh_sessions()                   # request counts / last-active time changed
+         if msg.error and self.monitor:
+             self.monitor.check_now()
+         for w in list(self._stream_queue):       # cancelled mid-stream: stop their spinners
+@@ -911,6 +940,7 @@ class DanicaApp(App):
+     def set_session_title(self, title: str) -> None:
+         """UI thread. Show the session title in the status bar and as the terminal window title."""
+         self.session_title = title
++        self.refresh_sessions()                   # the list shows titles and the current-session marker
+         self.title = f"Danica - {title}" if title else "Danica"
+         try:
+             self._driver.write(f"\x1b]0;{self.title}\x07")      # the terminal's window title (Windows Terminal etc.)
+diff --git a/danica/tui/commands_sessions.py b/danica/tui/commands_sessions.py
+index 459f0d1..ee82e1b 100644
+--- a/danica/tui/commands_sessions.py
++++ b/danica/tui/commands_sessions.py
+@@ -71,3 +71,12 @@ def _sessions(app, args):
+ 
+ COMMANDS["/sessions"] = _sessions
+ DESCRIPTIONS["/sessions"] = "list saved sessions; /sessions delete <n|2-5|id|empty|all> removes them"
++
++
++def _sidebar(app, args):
++    """/sidebar - show or hide the session list on the left (same as Ctrl+B)."""
++    app._call(app.action_toggle_sessions)
++
++
++COMMANDS["/sidebar"] = _sidebar
++DESCRIPTIONS["/sidebar"] = "show or hide the session list panel on the left (Ctrl+B)"
+diff --git a/danica/tui/session_pane.py b/danica/tui/session_pane.py
+new file mode 100644
+index 0000000..8fc3d98
+--- /dev/null
++++ b/danica/tui/session_pane.py
+@@ -0,0 +1,89 @@
++"""
++session_pane.py - Left-hand side panel that lists the saved sessions (click one to resume it).
++Same idea as the subagent / viewer panes on the right, but docked to the LEFT of the chat.
++Toggle: Ctrl+B or /sidebar.
++"""
++
++from __future__ import annotations
++
++from typing import Any
++
++from rich.style import Style
++from rich.text import Text
++from textual.containers import Vertical, VerticalScroll
++from textual.widgets import Static
++
++
++class SessionPane(Vertical):
++    """head = how many sessions        list = one clickable entry per saved session (newest first).
++    The list is read on a worker thread (it touches the disk); the widgets are only touched on the UI thread."""
++
++    def compose(self) -> Any:
++        """Compose the saved-session list pane."""
++        yield Static("", id="sess-head")
++        with VerticalScroll(id="sess-scroll"):
++            yield Static("", id="sess-body", classes="session-list")
++
++    def on_mount(self) -> None:
++        """Set the pane title."""
++        self.border_title = "Sessions"
++        self._loading = False
++        self._again = False
++
++    def reload(self) -> None:
++        """UI thread. Re-read the saved sessions in the background and redraw. Cheap to call often:
++        a reload that is already running is simply repeated once when it finishes."""
++        if not self.display:                  # hidden pane: nothing to draw, it reloads when it is shown
++            return
++        if self._loading:
++            self._again = True
++            return
++        self._loading = True
++        self.run_worker(self._read, thread=True, exclusive=False)
++
++    def _read(self) -> None:
++        """Worker thread."""
++        try:
++            from danica.sessions import list_sessions
++            infos = list(list_sessions())
++        except Exception:                     # a broken session folder must never break the UI
++            infos = None
++        try:
++            self.app.call_from_thread(self._done, infos)
++        except RuntimeError:                  # the app is shutting down
++            pass
++
++    def _done(self, infos: list[dict] | None) -> None:
++        """UI thread."""
++        self._loading = False
++        self._draw(infos)
++        if self._again:
++            self._again = False
++            self.reload()
++
++    def _draw(self, infos: list[dict] | None) -> None:
++        head = self.query_one("#sess-head", Static)
++        body = self.query_one("#sess-body", Static)
++        if infos is None:
++            head.update(Text("could not read the sessions", style="dim"))
++            body.update(Text(""))
++            return
++        head.update(Text(f"{len(infos)} saved", style="dim"))
++        if not infos:
++            body.update(Text("(no saved sessions yet)", style="dim"))
++            return
++        from rich import box
++        from rich.table import Table
++        current = getattr(self.app, "session_id", "")
++        # same look as /sessions (commands.py), but only the "#" and title columns
++        table = Table(box=box.SIMPLE, show_header=True, header_style="bold #ffffff", expand=True, pad_edge=False)
++        table.add_column("#", justify="right", style="bold #ffffff", width=3, no_wrap=True)
++        table.add_column("Session", ratio=1, overflow="fold")
++        for n, info in enumerate(infos, start=1):                  # numbers match /sessions and /resume <n>
++            title = (info.get("title") or info.get("preview") or "(untitled)").strip().replace("\n", " ")
++            if info["id"] == current:
++                label = Text(f"\u2022 {title}", style="bold #CCCCFF")
++            else:
++                label = Text(title, style=Style(meta={"@click": f"app.resume_session_id('{info['id']}')"}, underline=False))
++            table.add_row(str(n), label)
++        body.update(table)
+diff --git a/danica/tui/viewer.tcss b/danica/tui/viewer.tcss
+index 6a2a3bb..aa61890 100644
+--- a/danica/tui/viewer.tcss
++++ b/danica/tui/viewer.tcss
+@@ -16,3 +16,16 @@
+ #view-head { height: 1; padding: 0 1; }
+ #view-scroll { height: 1fr; scrollbar-size-vertical: 1; scrollbar-color: #606060; }
+ #view-body { padding: 0 1; }
++
++/* left-hand session list: the mirror image of #side */
++#sessions-pane {
++    width: 30;
++    height: 100%;
++    margin: 0 1 0 0;
++    border: round #4a4a4a;
++    background: transparent;
++}
++
++#sess-head { height: 1; padding: 0 1; }
++#sess-scroll { height: 1fr; scrollbar-size-vertical: 1; scrollbar-color: #606060; }
++#sess-body { padding: 0 1; }

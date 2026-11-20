@@ -71,3 +71,12 @@ def _sessions(app, args):
 
 COMMANDS["/sessions"] = _sessions
 DESCRIPTIONS["/sessions"] = "list saved sessions; /sessions delete <n|2-5|id|empty|all> removes them"
+
+
+def _sidebar(app, args):
+    """/sidebar - show or hide the session list on the left (same as Ctrl+B)."""
+    app._call(app.action_toggle_sessions)
+
+
+COMMANDS["/sidebar"] = _sidebar
+DESCRIPTIONS["/sidebar"] = "show or hide the session list panel on the left (Ctrl+B)"

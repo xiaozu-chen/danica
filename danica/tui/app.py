@@ -66,6 +66,7 @@ from danica.tui.widgets import (
 from danica.server import ServerError, ServerMonitor, probe
 from danica.tui.connection import DisconnectedScreen, SetupScreen
 from danica.tui.viewer_widgets import ArtifactPane, PresentLink
+from danica.tui.session_pane import SessionPane
 from danica.htmlview import ViewerError, build_viewer
 from danica.workspace import PathJailError
 from danica.seal import is_sealed_html
@@ -92,7 +93,8 @@ class DanicaApp(App):
         Binding("ctrl+d", "eof", "Quit", priority=True, show=False),
         Binding("ctrl+o", "toggle_tools", "Expand tool output", show=False),
         Binding("ctrl+g", "toggle_agents", "Show/hide subagent pane", show=False),
-        Binding("ctrl+e", "toggle_viewer", "Show/hide file viewer", show=False)
+        Binding("ctrl+e", "toggle_viewer", "Show/hide file viewer", show=False),
+        Binding("ctrl+b", "toggle_sessions", "Show/hide session list", show=False),
     ]
 
 
@@ -172,6 +174,7 @@ class DanicaApp(App):
         # Split screen: chat on the left, subagent pane on the right (hidden until one runs)
         """Compose the main application layout."""
         with Horizontal(id="main"):
+            yield SessionPane(id="sessions-pane")          # left-hand column, hidden until toggled
             yield VerticalScroll(id="transcript")
             with Vertical(id="side"):
                 yield SubagentPane(id="agents-pane")
@@ -192,6 +195,7 @@ class DanicaApp(App):
         if hasattr(transcript, "anchor"):        # stay pinned to the bottom until the user scrolls up
             transcript.anchor()
         self.query_one(CommandPopup).hide()
+        self.query_one("#sessions-pane", SessionPane).display = False
         self.query_one("#agents-pane", SubagentPane).display = False
         self.query_one("#viewer-pane", ArtifactPane).display = False
         self.sync_side()
@@ -311,6 +315,7 @@ class DanicaApp(App):
 
     def after_session(self, note: str, history: list | None = None) -> None:
         """Reset visible request state after a session change."""
+        self.refresh_sessions()
         transcript = self.query_one("#transcript", VerticalScroll)
         transcript.remove_children()
         transcript.mount(Static(welcome_panel(self.project["name"] if self.project else None,
@@ -398,6 +403,16 @@ class DanicaApp(App):
             return
         self.set_working(True, "command", kind="command")
         self.engine.submit(self.run_command, "/sessions")
+
+    def action_resume_session_id(self, session_id: str) -> None:
+        """Resume the saved session clicked in the left-hand session pane."""
+        if session_id == self.session_id:
+            return
+        if self.working or self.engine.busy:
+            self.add_notice("warning", "Danica is busy. Wait for the current task to finish first.")
+            return
+        self.set_working(True, "command", kind="command")
+        self.engine.submit(self.run_command, f"/resume {session_id}")
 
     def action_open_artifact(self, number: int) -> None:
         """Open a file selected from the clickable artifact list."""
@@ -571,6 +586,19 @@ class DanicaApp(App):
         pane = self.query_one("#viewer-pane", ArtifactPane)
         pane.display = not pane.display
         self.sync_side()
+
+    def action_toggle_sessions(self) -> None:
+        """Ctrl+B / /sidebar: show or hide the saved-session list on the left."""
+        pane = self.query_one("#sessions-pane", SessionPane)
+        pane.display = not pane.display
+        self.refresh_sessions()
+
+    def refresh_sessions(self) -> None:
+        """UI thread. Redraw the left-hand session list (no-op while it is hidden)."""
+        try:
+            self.query_one("#sessions-pane", SessionPane).reload()
+        except Exception:                         # not mounted yet / shutting down
+            pass
 
     def sync_side(self) -> None:
         """Show the right-hand column only while one of its panes is visible."""
@@ -750,6 +778,7 @@ class DanicaApp(App):
 
     def on_request_done(self, msg: RequestDone) -> None:
         """Restore the interface after a request completes."""
+        self.refresh_sessions()                   # request counts / last-active time changed
         if msg.error and self.monitor:
             self.monitor.check_now()
         for w in list(self._stream_queue):       # cancelled mid-stream: stop their spinners
@@ -911,6 +940,7 @@ class DanicaApp(App):
     def set_session_title(self, title: str) -> None:
         """UI thread. Show the session title in the status bar and as the terminal window title."""
         self.session_title = title
+        self.refresh_sessions()                   # the list shows titles and the current-session marker
         self.title = f"Danica - {title}" if title else "Danica"
         try:
             self._driver.write(f"\x1b]0;{self.title}\x07")      # the terminal's window title (Windows Terminal etc.)

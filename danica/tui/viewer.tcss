@@ -16,3 +16,16 @@
 #view-head { height: 1; padding: 0 1; }
 #view-scroll { height: 1fr; scrollbar-size-vertical: 1; scrollbar-color: #606060; }
 #view-body { padding: 0 1; }
+
+/* left-hand session list: the mirror image of #side */
+#sessions-pane {
+    width: 30;
+    height: 100%;
+    margin: 0 1 0 0;
+    border: round #4a4a4a;
+    background: transparent;
+}
+
+#sess-head { height: 1; padding: 0 1; }
+#sess-scroll { height: 1fr; scrollbar-size-vertical: 1; scrollbar-color: #606060; }
+#sess-body { padding: 0 1; }
