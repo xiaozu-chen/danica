@@ -400,6 +400,13 @@ class Citations(Static):
                          classes="citations")
 
 
+class TermChart(Static):
+    """A chart drawn in the terminal (termchart.py) under the chart tool's result."""
+
+    def __init__(self, renderable) -> None:
+        super().__init__(renderable, classes="termchart")
+
+
 class ArtifactsList(Static):
     """Render the files produced or changed by a request."""
 

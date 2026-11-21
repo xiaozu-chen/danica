@@ -33,7 +33,7 @@ DEFAULTS = {
                    "model_name": "nomic-embed-text-v1.5", "min_similarity": 0.50,
                    "merge_similarity": 0.88},
     # "sixel" draws images inside Windows Terminal (1.22+); "link" prints a clickable path; "off" prints the path only
-    "display": {"images": "sixel" if os.environ.get("WT_SESSION") else "link"},
+    "display": {"images": "sixel" if os.environ.get("WT_SESSION") else "link", "terminal_charts": True},
     "documents": {"page": "A4"},      # A4 or LETTER
     # engine: auto (Graphviz if found, else built-in), builtin, or graphviz. confine = run engines in a Job Object.
     "diagrams": {"engine": "auto", "confine": True, "dot_path": "", "mmdc_path": ""},

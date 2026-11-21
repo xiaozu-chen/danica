@@ -668,7 +668,9 @@ class DanicaApp(App):
             self._pending.append(widget)
         elif kind == "tool_result":
             if self._pending:
-                self._pending.popleft().set_result(data)
+                call = self._pending.popleft()
+                call.set_result(data)
+                self._show_chart_preview(call, data)
             else:
                 self.mount_block(Say(str(data)[:400], "dim"))
             self.refresh_status()
@@ -677,6 +679,16 @@ class DanicaApp(App):
             self.add_notice("error" if text.startswith("SECURITY") else "warning", text)
         elif kind == "citations":
             self.mount_block(Citations(str(data)))
+
+    def _show_chart_preview(self, call, result) -> None:
+        """A chart tool call finished: draw the same data in the terminal under it (the PNG and the interactive
+        chart are made as before). Switch off: Settings > Display & files > Charts in the terminal."""
+        from danica import termchart
+        from danica.tui.widgets import TermChart
+        width = max(40, self.size.width - 8)
+        preview = termchart.preview_for_tool(self.ws, getattr(call, "tool", ""), getattr(call, "call_args", None), result, width)
+        if preview is not None:
+            self.mount_block(TermChart(preview))
 
     def _emit(self, kind: str, value: str) -> None:
         """One piece from the PresentFilter: answer text, or a picture the answer presents."""

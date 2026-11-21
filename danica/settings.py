@@ -99,6 +99,9 @@ SETTINGS: tuple[Setting, ...] = (
     Setting("Display & files", "display", "images", "Show pictures", "choice",
             "sixel: draw them in the terminal (Windows Terminal 1.22+).  link: print a clickable path.  off: path only.",
             choices=(("sixel", "sixel"), ("link", "link"), ("off", "off"))),
+    Setting("Display & files", "display", "terminal_charts", "Charts in the terminal", "bool",
+            "Also draw a chart in the chat when Danica makes one (needs the plotext package). The PNG and the interactive "
+            "chart are made either way."),
     Setting("Display & files", "documents", "page", "Paper size", "choice",
             "For Word and PDF documents Danica makes.", choices=(("A4", "A4"), ("Letter", "LETTER"))),
     Setting("Display & files", "diagrams", "engine", "Diagram engine", "choice",

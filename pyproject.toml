@@ -7,10 +7,9 @@ name = "danica"
 version = "1.0.0"
 requires-python = ">=3.11"
 # Everything Danica imports that is not in the standard library
-dependencies = ["httpx", "rich", "prompt_toolkit", "pypdf", "sqlite-vec", "matplotlib", "pillow", "python-docx", "reportlab", "python-pptx"]
+dependencies = ["httpx", "rich", "prompt_toolkit", "textual>=0.80", "pypdf", "sqlite-vec", "matplotlib", "pillow", "python-docx", "reportlab", "python-pptx", "plotext==5.3.2"]
 
 [project.scripts]
-# Gives you a `danica` command that runs cli.main()
 danica = "danica.tui.app:main"
 
 [tool.setuptools]
