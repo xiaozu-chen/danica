@@ -66,7 +66,7 @@ TOOL_TIERS = {
     "mail_list": Tier.READ,
     "mail_read": Tier.READ,
     "mail_scan": Tier.READ,
-    "enable_tools": Tier.READ,     # only switches which tool definitions are sent (toolgroups.py)
+    "tool_book": Tier.READ,        # only lists tools and switches which tool definitions are sent (toolbook.py)
     "screen_windows": Tier.READ,   # computer use (computer.py): only windows the USER approved with /computer allow can be seen or driven
     "screen_shot": Tier.READ,
     "screen_click": Tier.EXECUTE,  # mouse and keyboard: ask once per session (one shared answer for all screen_* actions)

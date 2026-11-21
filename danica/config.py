@@ -4,6 +4,7 @@ config.py - Loads settings from %APPDATA%/Danica/config.toml.
 Anything the user doesn't set falls back to DEFAULTS, so the file is optional.
 """
 
+import json
 import os
 import tomllib # built into Python 3.11+, read-only TOML parser
 import re
@@ -50,9 +51,10 @@ DEFAULTS = {
     "mail": {"host": "", "user": "", "port": 993, "folder": "INBOX", "ssl": True, "timeout": 20,
              "max_list": 30, "snippet_chars": 240, "body_chars": 6000},
     # computer use (computer.py): smooth = glide the mouse, max_actions = per request, settle = seconds to wait after an action
-    # tools.lazy: send only the tools a request needs (toolgroups.py). verify.mode: "auto" = check only work that changed files or had
+    # tools.lazy: the tool book (toolbook.py): rarely used tools are one line each in tool_book instead of a full definition in
+    # every request; false = send every tool every time. verify.mode: "auto" = check only work that changed files or had
     # a plan/TODO; "always" = every tool-based answer; "off" = never
-    "tools": {"lazy": True},
+    "tools": {"lazy": False},
     "verify": {"mode": "auto"},
     "computer": {"smooth": True, "max_actions": 25, "settle": 0.35, "grid": True, "coords": "normalized"},   # coords: "normalized" = x,y 0-1000, "pixels" = picture pixels
     "mcp": {"servers": {}},
@@ -95,21 +97,68 @@ def get_llama_context_size(server_url: str, timeout: float = 2.0) -> int:
         # _log("error", f"Error connecting to llama-server: {e}")
         raise
 
+class ConfigWriteError(Exception):
+    """config.toml could not be changed safely (the message says why and is fit to show the user)."""
+
+
+def _toml_value(value) -> str:
+    """A Python value as TOML text (bool, int, float and str are all the settings pane ever writes)."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    return json.dumps(str(value), ensure_ascii=False)       # a JSON string is a valid TOML basic string
+
+
+def _write_checked(new_text: str, section: str, key: str, expect) -> None:
+    """Write config.toml only if the new text still parses (and, for a change, holds the value we meant to write).
+    A hand-made layout this editor can't handle (an inline table, say) is refused instead of corrupting the file."""
+    try:
+        parsed = tomllib.loads(new_text)
+    except tomllib.TOMLDecodeError as e:
+        raise ConfigWriteError(f"config.toml has a layout the settings pane can't edit safely ({e}). Edit it by hand.") from e
+    if expect is not None and (parsed.get(section) or {}).get(key) != expect:
+        raise ConfigWriteError(f"config.toml has a layout the settings pane can't edit safely ([{section}] {key}). Edit it by hand.")
+    APP_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_PATH.write_bytes(new_text.encode("utf-8"))
+
+
+def save_setting(section: str, key: str, value) -> None:
+    """Write `key = value` under [section] in config.toml. Everything else in the file (other keys, comments, the
+    line endings) stays as it is. Raises ConfigWriteError if the file can't be changed safely."""
+    text = CONFIG_PATH.read_bytes().decode("utf-8-sig") if CONFIG_PATH.exists() else ""
+    nl = "\r\n" if "\r\n" in text else "\n"
+    line = f"{key} = {_toml_value(value)}"
+    found = re.search(rf"(?ms)^\[{re.escape(section)}\][ \t]*\r?\n(.*?)(?=^\[|\Z)", text)
+    if found:
+        body = found.group(1)
+        pattern = rf"(?m)^[ \t]*{re.escape(key)}[ \t]*=[^\r\n]*"
+        if re.search(pattern, body):
+            body = re.sub(pattern, lambda _: line, body, count=1)
+        else:
+            body = line + nl + body
+        text = text[:found.start(1)] + body + text[found.end(1):]
+    else:
+        text = text.rstrip() + (nl * 2 if text.strip() else "") + f"[{section}]{nl}{line}{nl}"
+    _write_checked(text, section, key, value)
+
+
+def remove_setting(section: str, key: str) -> None:
+    """Delete `key` from [section] in config.toml, so the default applies again. Nothing to do if it isn't there."""
+    if not CONFIG_PATH.exists():
+        return
+    text = CONFIG_PATH.read_bytes().decode("utf-8-sig")
+    found = re.search(rf"(?ms)^\[{re.escape(section)}\][ \t]*\r?\n(.*?)(?=^\[|\Z)", text)
+    if not found:
+        return
+    body = re.sub(rf"(?m)^[ \t]*{re.escape(key)}[ \t]*=[^\r\n]*(\r?\n|\Z)", "", found.group(1), count=1)
+    if body != found.group(1):
+        _write_checked(text[:found.start(1)] + body + text[found.end(1):], section, key, None)
+
+
 def save_server_url(url: str) -> None:
     """Write base_url under [server] in config.toml, keeping everything else as it is."""
-    text = CONFIG_PATH.read_text(encoding="utf-8") if CONFIG_PATH.exists() else ""
-    line = f'base_url = "{url}"'
-    section = re.search(r"(?ms)^\[server\][ \t]*\n(.*?)(?=^\[|\Z)", text)
-    if section:
-        body = section.group(1)
-        if re.search(r"(?m)^[ \t]*base_url[ \t]*=", body):
-            body = re.sub(r"(?m)^[ \t]*base_url[ \t]*=.*$", lambda _: line, body)
-        else:
-            body = line + "\n" + body
-        text = text[:section.start(1)] + body + text[section.end(1):]
-    else:
-        text = text.rstrip() + ("\n\n" if text.strip() else "") + f"[server]\n{line}\n"
-    CONFIG_PATH.write_text(text, encoding="utf-8")
+    save_setting("server", "base_url", url)
 
 
 def set_server(url: str, n_ctx: int) -> None:

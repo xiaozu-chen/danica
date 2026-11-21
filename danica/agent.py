@@ -22,7 +22,7 @@ from typing import Callable
 
 from danica import autolook, vision
 from danica.llm import stream_chat
-from danica import toolgroups
+from danica import toolbook
 from danica.tools import run_tool, tool_schemas
 from danica.workspace import Workspace
 from danica.config import CONFIG
@@ -402,8 +402,8 @@ class Agent:
             f.write(todo_text(plan))
 
     def active_tools(self) -> list[dict]:
-        """The tool definitions sent to the model (core tools plus the groups switched on: see toolgroups.py)."""
-        return toolgroups.select(tool_schemas(), self.ws)
+        """The tool definitions sent to the model (everyday tools plus the book tools loaded so far: see toolbook.py)."""
+        return toolbook.select(tool_schemas(), self.ws)
 
     def _messages_for_model(self) -> list[dict]:
         """The history PLUS two harness reminders at the end: the saved-memory block
@@ -637,7 +637,7 @@ class Agent:
         # self.tracker = ContextTracker(refresh_context_size())
 
         self.denied_in_row = 0
-        toolgroups.from_history(self.ws, self.messages)    # tools the resumed conversation used stay loaded
+        toolbook.from_history(self.ws, self.messages)    # tools the resumed conversation used stay loaded
         # Taint is not saved in the transcript, so rebuild it: a resumed history that
         # contains web content is tainted. Sites the user typed stay trusted.
         state = state_for(self.ws)
@@ -812,7 +812,7 @@ class Agent:
 
         # Show the call BEFORE asking, so the user sees what is being approved
         self.on_event("tool_call", (call["name"], args))
-        toolgroups.from_tool(self.ws, call["name"])       # a tool of a group that was off: it stays on from now
+        toolbook.from_tool(self.ws, call["name"])        # a book tool called without loading it: it stays loaded from now
 
         # Canary: the model is trying to send out the secret token. Block it, and
         # count it as two denials so the circuit breaker stops this request.
@@ -1014,7 +1014,6 @@ class Agent:
         # Log only the size of the request, not its text (the transcript has the text)
         self._log("user_request", chars=len(user_text))
 
-        toolgroups.from_text(self.ws, user_text)      # the request talks about slides / email / a game...: load those tools
         should_reflect = bool(plan or read_todo(self.ws))
         return should_reflect
 

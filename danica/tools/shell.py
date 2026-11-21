@@ -12,6 +12,7 @@ Phase 2 adds permission prompts and Job Object limits.
 """
 
 import os
+import re
 import subprocess
 
 from danica.tools.registry import tool
@@ -47,6 +48,27 @@ def _cap(text: str) -> str:
     return f"{text[:half]}\n... [{skipped} characters truncated] ...\n{text[-half:]}"
 
 
+# `python game.py` / `py -3 game.py`: the script that would run
+_PY_SCRIPT = re.compile(r"\bpy(?:thon[\d.]*)?(?:\.exe)?\s+(?:-\S+\s+)*[\"']?([^\s;&|\"']+\.py)\b", re.I)
+
+
+def _pygame_script(ws: Workspace, command: str) -> str | None:
+    """The workspace path of the pygame game this command would start, or None. A pygame game opens a window and
+    never exits, so run_shell would just sit until its timeout. (A command that sets SDL_VIDEODRIVER is headless on
+    purpose and is left alone.)"""
+    if "sdl_videodriver" in command.lower():
+        return None
+    for name in _PY_SCRIPT.findall(command):
+        try:
+            path = ws.resolve(name)
+            head = path.read_text(encoding="utf-8", errors="ignore")[:30000] if path.is_file() else ""
+        except (OSError, ValueError):
+            continue
+        if re.search(r"^\s*(import pygame|from pygame)", head, re.M):
+            return name
+    return None
+
+
 @tool(
     "run_shell",
     "Run a Windows PowerShell command in the workspace folder. Use it to run scripts, "
@@ -60,6 +82,15 @@ def _cap(text: str) -> str:
 def run_shell(ws: Workspace, command: str, timeout: int = DEFAULT_TIMEOUT) -> str:
     """Run a Windows PowerShell command in the workspace folder."""
     timeout = min(max(1, timeout), MAX_TIMEOUT)
+
+    # A pygame game would open a window and never exit: point the model at game_run (and load it, if it was off)
+    game = _pygame_script(ws, command)
+    if game:
+        from danica import toolbook
+        toolbook.load(ws, ["game_run"])
+        return (f"ERROR: {game} is a pygame game. Running it with run_shell opens a window and never exits, so it was NOT run. "
+                f"Use the game_run tool instead (it is loaded now): game_run(game=\"{game}\", frames=120) plays it headless and "
+                f"returns a picture, crashes with a traceback and printed text. The user can open it in a real window with /play.")
 
     # Force UTF-8 output from PowerShell itself, then run the model's command
     full_command = "[Console]::OutputEncoding=[Text.Encoding]::UTF8; " + command
