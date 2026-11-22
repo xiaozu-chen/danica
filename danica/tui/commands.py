@@ -478,7 +478,7 @@ def _sources(app, args):
 @command("/artifacts")
 def _artifacts(app, args):
     if not app.artifacts:
-        app.ui.say("(no files from the last request)")
+        app.ui.say("(no files made in this session yet)")
         return
     app._call(app.show_artifacts_list, list(app.artifacts))
 

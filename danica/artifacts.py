@@ -7,6 +7,7 @@ types are opened with the default app; .pdf and .docx only if Danica itself made
 model-written .bat or .py can never run because you pressed a number.
 """
 
+import json
 import os
 import shutil
 import subprocess
@@ -19,6 +20,8 @@ from danica.secret_scan import is_sensitive_path
 from danica.workspace import PathJailError, Workspace
 
 MAX_LISTED = 12
+MAX_KEPT = 40                    # files remembered for the whole session (the artifacts pane, /artifacts, /open)
+LOG_NAME = "artifacts.json"      # saved in the session folder, next to title.txt
 OPEN_TYPES = {".md", ".txt", ".png", ".jpg", ".jpeg"}
 DOC_TYPES = {".pdf", ".docx", ".pptx", ".html"}   # opened only when Danica made them (for .html: its signature must verify)
 SKIP_SUFFIXES = {".pyc", ".pyo", ".tmp"}
@@ -249,3 +252,49 @@ def copy_contents(a: Artifact) -> int:
     except (OSError, subprocess.SubprocessError) as e:
         raise ArtifactError(f"could not reach the clipboard ({type(e).__name__}). Use /save instead")
     return len(text)
+
+
+# ------------------------------------------------------------------ the session's running list
+# `collect` answers "what did THIS request make?". The pane and /open need "what did this SESSION make?", and it must
+# survive a request that changed nothing, /resume, and restarting Danica. So the list is merged per request and saved.
+
+def merge(new: list[Artifact], old: list[Artifact]) -> list[Artifact]:
+    """The session list after a request: this request's files first (same order as the chat list, so `/open 1`
+    still means the first file shown there), then the older ones. A file made again moves to the front. Files that
+    were deleted since are dropped. At most MAX_KEPT are kept."""
+    seen = {a.path for a in new}
+    merged = list(new) + [a for a in old if a.path not in seen]
+    return [a for a in merged if a.path.is_file()][:MAX_KEPT]
+
+
+def save_log(session_dir: Path, items: list[Artifact]) -> None:
+    """Write the session list to <session folder>/artifacts.json (atomic replace). Never raises: losing the log only
+    means the pane starts empty next time."""
+    try:
+        rows = [{"rel": a.rel, "path": str(a.path), "status": a.status, "size": a.size} for a in items]
+        session_dir.mkdir(parents=True, exist_ok=True)
+        tmp = session_dir / (LOG_NAME + ".tmp")
+        tmp.write_text(json.dumps(rows, indent=1), encoding="utf-8")
+        tmp.replace(session_dir / LOG_NAME)
+    except OSError:
+        pass
+
+
+def load_log(ws: Workspace, session_dir: Path) -> list[Artifact]:
+    """Read the saved session list back. Every path is checked again against the workspace rules (a hand-edited or
+    old log can never point /open outside them), and files that no longer exist are skipped."""
+    try:
+        rows = json.loads((session_dir / LOG_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    items: list[Artifact] = []
+    for row in rows if isinstance(rows, list) else []:
+        try:
+            path = ws.resolve(str(row["path"]))
+            if not path.is_file() or is_sensitive_path(ws.rel(path)):
+                continue
+            items.append(Artifact(str(row.get("rel") or ws.display(path)), path,
+                                  str(row.get("status", "written")), path.stat().st_size))
+        except (PathJailError, OSError, ValueError, KeyError, TypeError):
+            continue
+    return items[:MAX_KEPT]

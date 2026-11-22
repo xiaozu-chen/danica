@@ -32,7 +32,7 @@ from textual.widgets import Static
 from textual.theme import Theme
 
 from danica.app_core import build_session, shutdown, short_path
-from danica.artifacts import collect
+from danica.artifacts import collect, load_log, merge, save_log
 from danica.config import CONFIG
 from danica.imageview import ImageError, check_image
 from danica.plan_flow import run_plan_mode
@@ -309,7 +309,8 @@ class DanicaApp(App):
         self.open_root = ws.root if ws.open_mode else None     # also right after /resume of an Open Mode session
         self._call(self.set_session_title, titles.read_title(session_id))   # a resumed session keeps its title
         vision.refresh()                                  # does this server have --mmproj? (/vision shows the answer)
-        self.artifacts = []
+        # The session's files come back with it (saved by save_log after each request); a new session starts empty
+        self.artifacts = load_log(ws, titles.SESSIONS / str(session_id))
         self._call(self.refresh_artifacts)
         # The TUI draws subagents itself, so the supervisor must not open a console window
         if ws.subagent_supervisor is not None:
@@ -900,7 +901,9 @@ class DanicaApp(App):
                 for p in todo:
                     self.show_image(p)
             if msg.found is not None:
-                self.artifacts = list(msg.found.items)
+                # Add this request's files to the session list (an empty request no longer empties it) and save it
+                self.artifacts = merge(list(msg.found.items), self.artifacts)
+                save_log(titles.SESSIONS / str(self.session_id), self.artifacts)
                 self.refresh_artifacts()
                 if msg.found.items or msg.found.deleted:
                     self.mount_block(ArtifactsList(msg.found))

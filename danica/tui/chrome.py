@@ -85,7 +85,7 @@ def side_menu_text() -> Text:
 
 
 class ArtifactsPane(Vertical):
-    """The files the last request made. A click opens one (text files go to the file view)."""
+    """The files this session has made. A click opens one (text files go to the file view)."""
 
     def compose(self) -> Any:
         """Compose the file list."""
@@ -103,9 +103,9 @@ class ArtifactsPane(Vertical):
         body = self.query_one("#art-body", Static)
         if not items:
             head.update(Text("nothing yet", style="dim"))
-            body.update(Text("Files Danica makes or changes in a request appear here.", style="dim"))
+            body.update(Text("Files Danica makes or changes appear here and stay with the session.", style="dim"))
             return
-        head.update(Text(f"{len(items)} from the last request", style="dim"))
+        head.update(Text(f"{len(items)} in this session", style="dim"))
         text = Text()
         for n, a in enumerate(items, start=1):
             size = f"{a.size / 1_000_000:.1f} MB" if a.size >= 1_000_000 else f"{max(1, a.size // 1024)} KB"
