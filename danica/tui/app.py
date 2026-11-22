@@ -48,6 +48,7 @@ from danica.tui.bridge import (
 )
 from danica.tui.commands import command_names, dispatch
 from danica.tui.engine import Engine
+from danica.tui.chrome import ArtifactsPane, TopBar
 from danica.tui.widgets import (
     ArtifactsList,
     AssistantMessage,
@@ -174,12 +175,14 @@ class DanicaApp(App):
     def compose(self) -> ComposeResult:
         # Split screen: chat on the left, subagent pane on the right (hidden until one runs)
         """Compose the main application layout."""
+        yield TopBar(id="topbar")                          # [ sidebar ] | chat title | [ subagents ] [ file view ] [ artifacts ]
         with Horizontal(id="main"):
             yield SessionPane(id="sessions-pane")          # left-hand column, hidden until toggled
             yield VerticalScroll(id="transcript")
             with Vertical(id="side"):
                 yield SubagentPane(id="agents-pane")
                 yield ArtifactPane(id="viewer-pane")
+                yield ArtifactsPane(id="artifacts-pane")
         yield BusyLine(id="busy")
         yield CommandPopup(id="popup")
         with Horizontal(id="prompt-box"):
@@ -199,7 +202,8 @@ class DanicaApp(App):
         self.query_one("#sessions-pane", SessionPane).display = False
         self.query_one("#agents-pane", SubagentPane).display = False
         self.query_one("#viewer-pane", ArtifactPane).display = False
-        self.sync_side()
+        self.query_one("#artifacts-pane", ArtifactsPane).display = False
+        self.sync_side()                                 # also draws the top bar
         self.query_one(PromptInput).focus()
         perf.mark("window drawn")
         self.set_working(True, "starting")
@@ -306,6 +310,7 @@ class DanicaApp(App):
         self._call(self.set_session_title, titles.read_title(session_id))   # a resumed session keeps its title
         vision.refresh()                                  # does this server have --mmproj? (/vision shows the answer)
         self.artifacts = []
+        self._call(self.refresh_artifacts)
         # The TUI draws subagents itself, so the supervisor must not open a console window
         if ws.subagent_supervisor is not None:
             ws.subagent_supervisor.on_event = self.subagent_bridge
@@ -593,6 +598,75 @@ class DanicaApp(App):
         pane = self.query_one("#sessions-pane", SessionPane)
         pane.display = not pane.display
         self.refresh_sessions()
+        self.refresh_topbar()
+
+    def action_toggle_artifacts(self) -> None:
+        """Top bar [ artifacts ]: show or hide the list of files the last request made."""
+        pane = self.query_one("#artifacts-pane", ArtifactsPane)
+        pane.display = not pane.display
+        self.refresh_artifacts()
+        self.sync_side()
+
+    def refresh_artifacts(self) -> None:
+        """UI thread. Redraw the artifacts pane from self.artifacts (no-op before it exists)."""
+        try:
+            self.query_one("#artifacts-pane", ArtifactsPane).show(self.artifacts)
+        except Exception:
+            pass
+
+    def refresh_topbar(self) -> None:
+        """UI thread. Redraw the top bar: which panes are open, and the chat title."""
+        try:
+            panes = {p for p in ("agents-pane", "viewer-pane", "artifacts-pane") if self.query_one("#" + p).display}
+            self.query_one("#topbar", TopBar).refresh_state(
+                self.query_one("#sessions-pane").display, panes, self.session_title, self.size.width)
+        except Exception:                                 # not mounted yet / shutting down
+            pass
+
+    # ------------------------------------------------------------------ sidebar menu and manager panes
+
+    def action_menu(self, name: str) -> None:
+        """A click in the sidebar menu (chrome.MENU)."""
+        if name.startswith("manage:"):
+            self.open_manager(name[len("manage:"):])
+        elif name == "settings":
+            from danica.tui.settings_screen import SettingsScreen
+            self.push_screen(SettingsScreen())
+        elif name == "new":
+            self._start_toolbar_command(self.run_command, "/new")
+        elif name == "help":
+            self._start_toolbar_command(self.run_command, "/help")
+        elif name == "project":
+            self._start_toolbar_command(self.menu_project)
+
+    def open_manager(self, key: str) -> None:
+        """UI thread. Open the manager pane for `key` (managers.MANAGERS)."""
+        from danica.managers import find_manager
+        from danica.tui.manager_screen import ManagerScreen
+        manager = find_manager(key)
+        if manager is None:
+            self.add_notice("warning", f"no manager called {key}")
+        elif not isinstance(self.screen, ManagerScreen):
+            self.push_screen(ManagerScreen(manager))
+
+    def menu_project(self) -> None:
+        """Worker thread. Sidebar [ Project mode ]: ask for a folder and open it as a project (or leave project mode)."""
+        if self.project is not None or self.open_root is not None:
+            where = self.project["name"] if self.project else "Open Mode"
+            choice = self.ui.choose("Project mode", f"Now in: {where}",
+                                    [("o", "Open another folder"), ("c", "Back to a normal chat")])
+            if choice == "c":
+                self.run_command("/chat")
+                return
+            if choice != "o":
+                self._call(self._finish_command, None)
+                return
+        raw = self.ui.ask_text("Project folder (it becomes the workspace)", default=str(self.launch_dir))
+        folder = (raw or "").strip().strip('"')
+        if folder:
+            self.run_command(f'/project "{folder}"')
+        else:
+            self._call(self._finish_command, None)
 
     def refresh_sessions(self) -> None:
         """UI thread. Redraw the left-hand session list (no-op while it is hidden)."""
@@ -605,6 +679,7 @@ class DanicaApp(App):
         """Show the right-hand column only while one of its panes is visible."""
         side = self.query_one("#side", Vertical)
         side.display = any(child.display for child in side.children)
+        self.refresh_topbar()                             # its buttons light up while their pane is open
 
     def view_artifact(
         self, rel: str, path: Path, text: str, cut: bool, left_out: int
@@ -826,6 +901,7 @@ class DanicaApp(App):
                     self.show_image(p)
             if msg.found is not None:
                 self.artifacts = list(msg.found.items)
+                self.refresh_artifacts()
                 if msg.found.items or msg.found.deleted:
                     self.mount_block(ArtifactsList(msg.found))
         self.set_working(False)
@@ -950,11 +1026,13 @@ class DanicaApp(App):
     def on_resize(self, event: Any) -> None:
         """Refresh compact status labels when the terminal size changes."""
         self.refresh_status()
+        self.refresh_topbar()
 
     def set_session_title(self, title: str) -> None:
         """UI thread. Show the session title in the status bar and as the terminal window title."""
         self.session_title = title
         self.refresh_sessions()                   # the list shows titles and the current-session marker
+        self.refresh_topbar()
         self.title = f"Danica - {title}" if title else "Danica"
         try:
             self._driver.write(f"\x1b]0;{self.title}\x07")      # the terminal's window title (Windows Terminal etc.)

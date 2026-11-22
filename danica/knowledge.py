@@ -504,6 +504,12 @@ class KnowledgeIndex:
                 "SELECT id,due,message FROM knowledge_reminders WHERE delivered IS NULL ORDER BY due"
             ).fetchall()
 
+    def delete_reminder(self, reminder_id: str) -> bool:
+        """Remove a pending reminder. True if there was one."""
+        with self._lock, self._connect() as db:
+            return db.execute("DELETE FROM knowledge_reminders WHERE id=? AND delivered IS NULL",
+                              (reminder_id,)).rowcount > 0
+
     def pop_due_reminders(self) -> list[tuple[str, str]]:
         """Return due reminders and mark them as delivered."""
         now = time.time()

@@ -13,6 +13,8 @@ from rich.text import Text
 from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Static
 
+from danica.tui.chrome import side_menu_text
+
 
 class SessionPane(Vertical):
     """head = how many sessions        list = one clickable entry per saved session (newest first).
@@ -20,6 +22,7 @@ class SessionPane(Vertical):
 
     def compose(self) -> Any:
         """Compose the saved-session list pane."""
+        yield Static(side_menu_text(), id="side-menu", classes="session-list")      # New chat, Project mode, managers...
         yield Static("", id="sess-head")
         with VerticalScroll(id="sess-scroll"):
             yield Static("", id="sess-body", classes="session-list")

@@ -739,3 +739,4 @@ from danica.tui import commands_sessions  # noqa: E402,F401
 from danica.tui import commands_computer  # noqa: E402,F401
 from danica.tui import commands_perf  # noqa: E402,F401
 from danica.tui import commands_config  # noqa: E402,F401
+from danica.tui import commands_manage  # noqa: E402,F401
