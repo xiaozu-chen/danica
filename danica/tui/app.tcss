@@ -30,9 +30,14 @@ Screen {
 }
 .citations { margin: 1 0 0 0; }
 .termchart { margin: 0 0 0 2; height: auto; }
-.artifacts { margin: 1 0 0 0; }
+/* the file cards under a response: a heading, then a grid of small rectangles (name / type / size) */
+.artifacts { margin: 1 0 0 0; height: auto; }
+.art-heading { height: 1; }
+.artgrid { layout: grid; grid-size: 2; grid-gutter: 0 1; height: auto; }
+.artcard { height: auto; border: round #4a4a4a; padding: 0 1; background: transparent; border-title-color: #808080; border-subtitle-color: #808080; }
+.artcard:hover { border: round #ffffff; background: #1c1c1c; }
 .thinking { margin: 1 0 0 0; padding: 0 1; color: #b0b0b0; }
-.toolcall { margin: 1 0 0 0; padding: 0 1; background: transparent; border-left: round #4a4a4a; }
+.toolcall { margin: 1 0 0 0; padding: 0; background: transparent; }   /* the box itself is drawn by Rich (widgets.ToolCall) */
 
 AssistantMessage {
     margin: 1 0 0 0;

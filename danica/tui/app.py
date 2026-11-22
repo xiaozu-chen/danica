@@ -691,6 +691,43 @@ class DanicaApp(App):
         pane.display = True
         self.sync_side()
 
+    def action_viewer_copy(self) -> None:
+        """Viewer [ copy ]: put the whole file on the clipboard."""
+        self._viewer_job("copy")
+
+    def action_viewer_save(self) -> None:
+        """Viewer [ save ]: copy the file into the Downloads folder (never overwrites)."""
+        self._viewer_job("save")
+
+    def _viewer_job(self, what: str) -> None:
+        """UI thread. Run copy/save for the file in the viewer on a worker thread, so a big file never freezes the screen
+        and the buttons work while Danica is busy with a request (the /copy and /save commands would have to wait)."""
+        current = self.query_one("#viewer-pane", ArtifactPane).current
+        if current is None:
+            self.notify("No file is open in the viewer.", severity="warning")
+            return
+        rel, path = current
+        self.run_worker(lambda: self._viewer_work(what, rel, path), thread=True, group="viewer-file")
+
+    def _viewer_work(self, what: str, rel: str, path: Path) -> None:
+        """Worker thread. Do the copy / save, then tell the user with a toast (always via call_from_thread)."""
+        from danica.artifacts import Artifact, ArtifactError, copy_contents, downloads_dir, save_copy
+        try:
+            if what == "copy":
+                chars = copy_contents(Artifact(rel, path, "", 0))
+                note = f"Copied {rel} ({chars:,} characters) to the clipboard"
+                event = ("artifact_copy", {"path": rel, "chars": chars})
+            else:
+                saved = save_copy(path, downloads_dir())
+                note = f"Saved a copy to {saved}"
+                event = ("artifact_save", {"path": rel, "to": str(saved.parent)})
+        except ArtifactError as e:
+            self.call_from_thread(self.notify, str(e), title="Viewer", severity="error", timeout=6)
+            return
+        self.call_from_thread(self.notify, note, title="Viewer", timeout=4)
+        # The audit log is a hash chain that only the engine thread may write, so queue the entry there
+        self.engine.submit(lambda: self.audit.append(event[0], **event[1]))
+
     def close_viewer(self) -> None:
         """/close: hide the viewer."""
         self.query_one("#viewer-pane", ArtifactPane).display = False
@@ -953,7 +990,7 @@ class DanicaApp(App):
     def show_artifacts_list(self, items: list) -> None:
         """Display files changed by the completed request."""
         from danica.artifacts import ArtifactList
-        self.mount_block(ArtifactsList(ArtifactList(items=items)))
+        self.mount_block(ArtifactsList(ArtifactList(items=items), "Files in this session"))   # /artifacts: the whole session
 
     def add_notice(self, level: str, text: str) -> None:
         """Add a notice to the conversation view."""

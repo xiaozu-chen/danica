@@ -15,15 +15,17 @@ from importlib.metadata import version
 from rich import box
 from rich.console import Group
 from rich.panel import Panel
+from rich.rule import Rule
 from rich.style import Style
 from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Span, Text
-from textual.containers import Vertical
+from textual.containers import Grid, Vertical
 from textual.message import Message
 from textual.widgets import Markdown, OptionList, RichLog, Static, TextArea
 from textual.widgets.option_list import Option
 
+from danica.artifacts import file_kind, human_size
 from danica.config import APP_DIR
 from danica.partial_json import partial_fields
 
@@ -191,13 +193,42 @@ def summarize_args(args: Any, hide: tuple[str, ...] = ()) -> str:
     return "  ".join(parts)
 
 
+class _ToolBox:
+    """Rich calls __rich_console__ with the width it is drawing at, so the title can be cut to fit that width."""
+
+    def __init__(self, call: "ToolCall") -> None:
+        self.call = call
+
+    def __rich_console__(self, console, options):
+        yield self.call._panel(options.max_width)
+
+
+# The box title says what Danica is doing: "Editing <file>", "Writing <file>", "Running <command>".
+# Any other tool is titled with its own name ("Web Search", "Read File"...).
+VERBS = {"edit_file": "Editing", "write_file": "Writing", "run_shell": "Running"}
+TITLE_MAX = 72                       # characters of the target kept in the title (the box also cuts it to the width)
+BORDER = {"running": "#ffffff", "ok": "#4a4a4a", "error": "#808080"}
+
+
+def clip(text: str, limit: int, keep_end: bool = False) -> str:
+    """Cut `text` to `limit` characters with an ellipsis. keep_end=True keeps the END (a long path keeps its file name)."""
+    if len(text) <= limit:
+        return text
+    return "\u2026" + text[-(limit - 1):] if keep_end else text[: limit - 1] + "\u2026"
+
+
 class ToolCall(Static):
-    """● Tool Name  path   then, depending on the tool:
-         write      the file's content, syntax highlighted, with line numbers
-         edit       a red/green diff of old -> new
-         run_shell  the command
-         other      arg=value summary
-       and the result below. Click or Ctrl+O expands everything that was cut short."""
+    """One tool call drawn as a box.
+
+    Title    a mark + what Danica is doing: "Editing <file>", "Writing <file>", "Running <command>"
+             (any other tool shows its own name). The mark is a dot while it runs, a tick when it
+             worked and a cross when it failed, and the border changes to match.
+    Input    what Danica sent the tool: edit = a red/green diff, write = the file (highlighted,
+             with line numbers), run_shell = the command, anything else = its arguments.
+    Output   the tool's result. It appears when the call finishes, under a divider.
+    Corner   "+3 -1" (lines added / removed) on the bottom edge for edits and writes.
+
+    Click or Ctrl+O expands everything that was cut short."""
 
     PREVIEW = 400
     FULL = 6000
@@ -207,6 +238,7 @@ class ToolCall(Static):
         self.title_text = name.replace("_", " ").title()
         self.result: str | None = None
         self.expanded = False
+        self.counts = Text()                # "+3 -1" for edits and writes, drawn on the box's bottom edge
         self.streaming = streaming          # True while the model is still writing the arguments
         self.raw = ""                       # the argument JSON received so far (streaming only)
         self._dirty = False
@@ -236,29 +268,45 @@ class ToolCall(Static):
 
     # -- pieces -------------------------------------------------------------------------
 
-    def _header(self) -> Text:
-        t = Text()
-        t.append("● ", style="bold #ffffff" if self.result is None else "bold #e0e0e0")
-        t.append(self.title_text, style="bold")
-        args = self.call_args
-        if self.edit or self.ckey:
-            t.append("  " + str(args.get("path")), style="#ffffff")
-        elif self.command is not None:
-            hidden = summarize_args(args, hide=("command",))
-            if hidden:
-                t.append("  " + hidden, style="#ffffff")
+    def _failed(self) -> bool:
+        """True when the result says the call failed (the harness starts error results with ERROR)."""
+        return self.result is not None and self.result.lstrip().startswith("ERROR")
+
+    def _state(self) -> str:
+        """running | ok | error: picks the mark in the title and the border colour."""
+        return "running" if self.result is None else "error" if self._failed() else "ok"
+
+    def _title(self, width: int = 80) -> Text:
+        """"\u25cf Editing src/app.py": a mark for the state, the verb, then what it is acting on.
+        `width` is the box's width: the target is cut to what is left, so the end of a long path (the file name) stays."""
+        state = self._state()
+        t = Text(no_wrap=True, overflow="ellipsis")
+        t.append({"running": "\u25cf ", "ok": "\u2713 ", "error": "\u2717 "}[state],
+                 style="bold #ffffff" if state == "running" else "bold #e0e0e0")
+        verb = VERBS.get(self.tool)
+        if verb is None:
+            t.append(self.title_text, style="bold #e0e0e0")      # any other tool: its own name (explicit colour: the title would otherwise take the dim border colour)
+            return t
+        t.append(verb + " ", style="bold #e0e0e0")
+        room = max(10, min(TITLE_MAX, width - 6 - len(t.plain)))  # 6 = the corner and padding characters around a title
+        args = self.call_args if isinstance(self.call_args, dict) else {}
+        if self.tool == "run_shell":
+            lines = str(args.get("command") or "").split("\n")
+            more = " \u2026" if len([x for x in lines if x.strip()]) > 1 else ""         # more lines follow the first
+            target = clip(" ".join(lines[0].split()) + more, room)
         else:
-            summary = summarize_args(args)
-            if summary:
-                t.append("  " + summary, style="#ffffff")
+            target = clip(str(args.get("path") or ""), room, keep_end=True)
+        t.append(target or "\u2026", style="#ffffff")
         return t
 
     def _more(self, hidden: int) -> Text | None:
         if hidden <= 0:
             return None
-        return Text(f"… {hidden:,} more line(s), click or Ctrl+O to expand", style="dim italic")
+        return Text(f"\u2026 {hidden:,} more line(s), click or Ctrl+O to expand", style="dim italic")
 
-    def _body(self, header: Text):
+    def _input(self):
+        """What Danica sent the tool (None when there was nothing). Also sets self.counts, shown at the bottom right."""
+        self.counts = Text()
         limit = FULL_LINES if self.expanded else PREVIEW_LINES
         if self.edit:
             old, new = self.call_args[self.edit[0]], self.call_args[self.edit[1]]
@@ -266,8 +314,7 @@ class ToolCall(Static):
                     if not line.startswith(("---", "+++"))]
             added = sum(1 for line in diff if line.startswith("+"))
             removed = sum(1 for line in diff if line.startswith("-"))
-            header.append(f"  +{added}", style="#e0e0e0")
-            header.append(f" -{removed}", style="#d0d0d0")
+            self.counts = Text(f"+{added} -{removed}", style="#e0e0e0")
             if not diff:
                 return Text("(no change)", style="dim")
             body = Text(no_wrap=False)
@@ -285,8 +332,7 @@ class ToolCall(Static):
         if self.ckey:
             code = self.call_args[self.ckey]
             lines = code.splitlines()
-            header.append(f"  +{len(lines):,}", style="#e0e0e0")
-            header.append(" -0", style="#d0d0d0")
+            self.counts = Text(f"+{len(lines):,} -0", style="#e0e0e0")
             shown = "\n".join(lines[:limit])
             try:
                 path = str(self.call_args.get("path"))
@@ -298,33 +344,60 @@ class ToolCall(Static):
                 *filter(None, [self._more(len(lines) - limit)]),
             )
         if self.command is not None:
-            return Text("$ " + self.command, style="#ffffff")
-        return None
+            lines = self.command.splitlines() or [""]
+            body = Text("\n".join(("$ " if n == 0 else "  ") + line for n, line in enumerate(lines[:limit])), style="#ffffff")
+            extra = summarize_args(self.call_args, hide=("command",))     # timeout=... and the like
+            parts = [body] + ([Text(extra, style="dim")] if extra else []) \
+                + list(filter(None, [self._more(len(lines) - limit)]))
+            return Group(*parts) if len(parts) > 1 else body
+        args = self.call_args
+        if isinstance(args, dict):
+            if not args:
+                return None
+            rows = Text(no_wrap=False)
+            for key, value in args.items():                               # one "name: value" line per argument
+                shown = clip(str(value).replace("\n", "\u23ce"), 200)
+                rows.append(f"{key}: ", style="dim")
+                rows.append(shown + "\n", style="#ffffff")
+            rows.rstrip()
+            return rows
+        return Text(clip(str(args), 200), style="#ffffff") if args else None
 
-    def _result(self) -> Text | None:
+    def _output(self) -> Text | None:
+        """What the tool returned (None while it is still running)."""
         if self.result is None:
             return None
-        is_error = self.result.lstrip().startswith("ERROR")
-        if (self.edit or self.ckey) and not is_error and not self.expanded:
+        if (self.edit or self.ckey) and not self._failed() and not self.expanded:
             body = self.result.strip().splitlines()[0][:200] if self.result.strip() else ""
         else:
             limit = self.FULL if self.expanded else self.PREVIEW
             body = self.result[:limit]
             more = len(self.result) - len(body)
             if more > 0:
-                body += f"… ({more:,} more chars, click to expand)"
-        return Text(body, style="#d0d0d0" if is_error else "dim")
+                body += f"\u2026 ({more:,} more chars, click to expand)"
+        return Text(body, style="#d0d0d0" if self._failed() else "dim")
+
+    def _panel(self, width: int) -> Panel:
+        """The whole box for a given width: title, an Input section and (once the call finished) an Output section."""
+        data = self._input()
+        out = self._output()
+        parts: list = []
+        if data is not None:
+            parts += [Text("Input", style="bold dim"), data]
+        if out is not None:
+            if parts:
+                parts.append(Rule(style="#3a3a3a"))                     # the divider between Input and Output
+            parts += [Text("Output", style="bold dim"), out]
+        return Panel(
+            Group(*parts) if parts else Text("(no arguments)", style="dim"),
+            title=self._title(width), title_align="left",
+            subtitle=self.counts if self.counts.plain else None, subtitle_align="right",
+            box=box.ROUNDED, border_style=BORDER[self._state()], padding=(0, 1), expand=True,
+        )
 
     def _build(self):
-        header = self._header()
-        body = self._body(header)          # may append counts to the header
-        parts = [header]
-        if body is not None:
-            parts.append(body)
-        result = self._result()
-        if result is not None:
-            parts.append(result)
-        return Group(*parts) if len(parts) > 1 else header
+        """What the widget shows. A tiny wrapper, so the box is built when the width is known (see _ToolBox)."""
+        return _ToolBox(self)
 
     # -- behaviour ----------------------------------------------------------------------
 
@@ -407,20 +480,50 @@ class TermChart(Static):
         super().__init__(renderable, classes="termchart")
 
 
-class ArtifactsList(Static):
-    """Render the files produced or changed by a request."""
+class ArtifactCard(Static):
+    """One file as a small rectangle: its name (the title), its type and its size.
+    The number in the top-left corner is what /open, /copy and /save take; the status (new / changed) is in the
+    bottom-right. Clicking the card opens the file, the same as /open <n>."""
 
-    def __init__(self, found) -> None:
-        t = Text("Files from this request:", style="dim")
-        for n, a in enumerate(found.items, start=1):
-            size = f"{a.size / 1_000_000:.1f} MB" if a.size >= 1_000_000 else f"{max(1, a.size // 1024)} KB"
-            line = f"\n  {n}. {a.status:<7} {a.rel}  {size}"
-            t.append(line, style=Style(meta={"@click": f"app.open_artifact({n})"}))
-        if found.more:
-            t.append(f"\n  ... and {found.more} more", style="dim")
-        if found.deleted:
-            t.append(f"\n  ({found.deleted} file(s) deleted)", style="dim")
-        super().__init__(t, classes="artifacts")
+    def __init__(self, number: int, item) -> None:
+        name = item.rel.replace("\\", "/").rsplit("/", 1)
+        title = Text(no_wrap=True, overflow="ellipsis")
+        title.append(name[-1], style="bold #ffffff")
+        if len(name) > 1:
+            title.append(f"  {name[0]}/", style="dim")                  # the folder it is in, if any
+        info = Text(f"{file_kind(item.rel)}  \u00b7  {human_size(item.size)}", style="#b0b0b0", no_wrap=True, overflow="ellipsis")
+        super().__init__(Group(title, info), classes="artcard")
+        self.number = number
+        self.border_title = f" {number} "
+        self.border_subtitle = f" {item.status} "
+
+    def on_click(self) -> None:
+        """Open this file (runs /open <number>)."""
+        self.app.action_open_artifact(self.number)
+
+
+class ArtifactsList(Vertical):
+    """The files a request produced, shown under the response as a grid of ArtifactCard rectangles
+    (two per row), with a heading and, if needed, "... and N more" / "(N file(s) deleted)"."""
+
+    def __init__(self, found, heading: str = "Files from this request") -> None:
+        super().__init__(classes="artifacts")
+        self.found, self.heading = found, heading
+
+    def compose(self):
+        """The heading, the cards, then the notes about files that are not shown."""
+        yield Static(Text(self.heading, style="dim"), classes="art-heading")
+        with Grid(classes="artgrid"):
+            for n, item in enumerate(self.found.items, start=1):
+                yield ArtifactCard(n, item)
+        notes = []
+        if self.found.more:
+            notes.append(f"... and {self.found.more} more")
+        if self.found.deleted:
+            notes.append(f"({self.found.deleted} file(s) deleted)")
+        if notes:
+            yield Static(Text("  ".join(notes), style="dim"))
+
 
 def get_greeting():
     hour = datetime.now().hour

@@ -254,6 +254,38 @@ def copy_contents(a: Artifact) -> int:
     return len(text)
 
 
+# ------------------------------------------------------------------ how a file is described on screen
+# Used by the file cards under a response, the artifacts pane and the viewer header, so they all agree.
+
+KINDS = {
+    ".md": "Markdown", ".txt": "Text", ".log": "Log", ".csv": "CSV table", ".json": "JSON", ".xml": "XML",
+    ".yaml": "YAML", ".yml": "YAML", ".toml": "TOML", ".html": "HTML page", ".css": "CSS",
+    ".py": "Python", ".js": "JavaScript", ".jsx": "JavaScript (React)", ".ts": "TypeScript",
+    ".tsx": "TypeScript (React)", ".sql": "SQL", ".sh": "Shell script", ".bat": "Batch script",
+    ".ps1": "PowerShell script", ".pdf": "PDF document", ".docx": "Word document", ".pptx": "PowerPoint",
+    ".xlsx": "Excel workbook", ".png": "PNG image", ".jpg": "JPEG image", ".jpeg": "JPEG image",
+    ".gif": "GIF image", ".svg": "SVG image", ".zip": "ZIP archive", ".mp3": "Audio", ".mp4": "Video",
+    ".exe": "Program",
+}
+
+
+def file_kind(name: str) -> str:
+    """A short human label for a file's type, from its extension ("Markdown", "PNG image"...)."""
+    ext = Path(name).suffix.lower()
+    if ext in KINDS:
+        return KINDS[ext]
+    return f"{ext[1:].upper()} file" if ext else "File"
+
+
+def human_size(n: int) -> str:
+    """12 B, 3 KB, 5.0 MB."""
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f} MB"
+    if n >= 1024:
+        return f"{n // 1024} KB"
+    return f"{n} B"
+
+
 # ------------------------------------------------------------------ the session's running list
 # `collect` answers "what did THIS request make?". The pane and /open need "what did this SESSION make?", and it must
 # survive a request that changed nothing, /resume, and restarting Danica. So the list is merged per request and saved.

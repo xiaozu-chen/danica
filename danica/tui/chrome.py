@@ -16,6 +16,8 @@ from rich.text import Text
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Static
 
+from danica.artifacts import human_size
+
 OPEN = "bold #ffffff on #4a4a4a"       # a button whose pane is open
 SHUT = "#c8c8c8"                       # a button whose pane is closed
 
@@ -108,7 +110,7 @@ class ArtifactsPane(Vertical):
         head.update(Text(f"{len(items)} in this session", style="dim"))
         text = Text()
         for n, a in enumerate(items, start=1):
-            size = f"{a.size / 1_000_000:.1f} MB" if a.size >= 1_000_000 else f"{max(1, a.size // 1024)} KB"
+            size = human_size(a.size)
             text.append(f"{n:>2}. ", style="dim")
             text.append(f"{a.rel}", style=Style(meta={"@click": f"app.open_artifact({n})"}))
             text.append(f"  {a.status}, {size}\n", style="dim")

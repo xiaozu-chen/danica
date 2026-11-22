@@ -13,7 +13,9 @@
     border: round #4a4a4a;
 }
 
-#view-head { height: 1; padding: 0 1; }
+#view-bar { height: 1; }                               /* file info on the left, [ copy ] [ save ] on the right */
+#view-head { width: 1fr; height: 1; padding: 0 1; }
+#view-actions { width: auto; height: 1; padding: 0 1; }
 #view-scroll { height: 1fr; scrollbar-size-vertical: 1; scrollbar-color: #606060; }
 #view-body { padding: 0 1; }
 
