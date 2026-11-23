@@ -10,19 +10,22 @@ import sys
 def launch() -> None:
     import os
     tauri_bin = os.environ.get("DANICA_TAURI_BIN")
-    if not tauri_bin and getattr(sys, "frozen", False):
-        tauri_bin = str(Path(sys.executable).with_name("danica-web.exe"))
-    if not tauri_bin:
-        candidates = [
-            Path(__file__).resolve().parent / "src-tauri" / "target" / "release" / "danica-web.exe",
-            Path(__file__).resolve().parent / "src-tauri" / "target" / "debug" / "danica-web.exe",
-        ]
-        tauri_bin = next((str(path) for path in candidates if path.is_file()), None)
-    if not tauri_bin or not Path(tauri_bin).is_file():
-        raise RuntimeError(
-            "The Tauri desktop app is not built. Run `cd web && npm install && npm run tauri build`."
-        )
     if tauri_bin:
         shell_env = os.environ.copy()
         shell_env["DANICA_API_URL"] = "http://127.0.0.1:8765"
         subprocess.run([tauri_bin], env=shell_env, check=False)
+    elif getattr(sys, "frozen", False):
+        shell = Path(sys.executable).with_name("danica-web.exe")
+        if not shell.is_file():
+            raise RuntimeError(f"Tauri desktop shell was not found: {shell}")
+        shell_env = os.environ.copy()
+        shell_env["DANICA_API_URL"] = "http://127.0.0.1:8765"
+        subprocess.run([str(shell)], env=shell_env, check=False)
+    else:
+        # Source installs launch Tauri's dev shell, which also starts Vite and the API sidecar.
+        web_dir = Path(__file__).resolve().parent
+        shell_env = os.environ.copy()
+        shell_env.setdefault("DANICA_PYTHON", sys.executable)
+        shell_env["DANICA_API_URL"] = "http://127.0.0.1:8765"
+        npm = "npm.cmd" if sys.platform == "win32" else "npm"
+        subprocess.run([npm, "run", "tauri", "dev"], cwd=web_dir, env=shell_env, check=False)

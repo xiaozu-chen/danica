@@ -2,6 +2,7 @@
 
 use std::{
     env,
+    io::{Read, Write},
     net::TcpStream,
     path::Path,
     process::{Child, Command, Stdio},
@@ -18,15 +19,31 @@ struct ManagedProcesses {
     sidecar: Mutex<Option<CommandChild>>,
 }
 
-fn wait_for_api() -> Result<(), String> {
+fn wait_for_api() -> std::io::Result<()> {
     let deadline = Instant::now() + Duration::from_secs(15);
     while Instant::now() < deadline {
-        if TcpStream::connect(("127.0.0.1", 8765)).is_ok() {
-            return Ok(());
+        if let Ok(mut stream) = TcpStream::connect(("127.0.0.1", 8765)) {
+            let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+            if stream
+                .write_all(b"GET /api/health HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n")
+                .is_ok()
+            {
+                let mut response = [0; 256];
+                if let Ok(size) = stream.read(&mut response) {
+                    if response[..size].starts_with(b"HTTP/1.1 200")
+                        || response[..size].starts_with(b"HTTP/1.0 200")
+                    {
+                        return Ok(());
+                    }
+                }
+            }
         }
         thread::sleep(Duration::from_millis(100));
     }
-    Err("Danica API sidecar did not become ready on port 8765".into())
+    Err(std::io::Error::new(
+        std::io::ErrorKind::TimedOut,
+        "Danica API sidecar did not become ready on port 8765",
+    ))
 }
 
 #[tauri::command]
@@ -86,7 +103,21 @@ fn main() {
                     }
                 });
             }
-            wait_for_api().map_err(std::io::Error::other)?;
+            if let Err(error) = wait_for_api() {
+                let state = app.state::<ManagedProcesses>();
+                if let Ok(mut children) = state.native.lock() {
+                    for child in children.iter_mut() {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                    }
+                }
+                if let Ok(mut sidecar) = state.sidecar.lock() {
+                    if let Some(child) = sidecar.take() {
+                        let _ = child.kill();
+                    }
+                }
+                return Err(error.into());
+            }
             let window = app.get_webview_window("main").expect("main Tauri window");
             if !dev {
                 window.navigate(api_url().parse().expect("valid local API URL"))?;
@@ -106,7 +137,7 @@ fn main() {
                     if let Some(child) = sidecar.take() {
                         let _ = child.kill();
                     }
-                }
+                };
             }
         })
         .run(tauri::generate_context!())

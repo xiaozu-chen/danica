@@ -7,6 +7,7 @@ type Message = { role: "user" | "assistant"; text: string };
 export default function App() {
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [online, setOnline] = useState(false);
+  const [checked, setChecked] = useState(false);
   const [sessionId, setSessionId] = useState(() => sessionStorage.getItem("danica-session") ?? "");
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
@@ -21,18 +22,22 @@ export default function App() {
         const origin = await invoke<string>("api_url");
         if (window.location.port === "1420") base = origin;
       } catch { /* browser mode uses same origin */ }
-      try {
-        const [health, app] = await Promise.all([fetch(`${base}/api/health`), fetch(`${base}/api/app`)]);
-        if (active) { setOnline(health.ok); if (app.ok) setInfo(await app.json()); }
-      } catch { if (active) setOnline(false); }
-      if (!sessionId) {
+      for (let attempt = 0; attempt < 20 && active; attempt += 1) {
         try {
-          const response = await fetch(`${base}/api/sessions`, { method: "POST" });
-          if (!response.ok) throw new Error("Could not create a session");
-          const data = await response.json();
-          if (active) { setSessionId(data.session_id); sessionStorage.setItem("danica-session", data.session_id); }
-        } catch { /* the first prompt can retry without a session id */ }
+          const health = await fetch(`${base}/api/health`);
+          if (!health.ok) throw new Error("API is not ready");
+          const app = await fetch(`${base}/api/app`);
+          if (active) {
+            setOnline(true);
+            if (app.ok) setInfo(await app.json());
+            setChecked(true);
+          }
+          return;
+        } catch {
+          if (attempt < 19) await new Promise((resolve) => window.setTimeout(resolve, 500));
+        }
       }
+      if (active) { setOnline(false); setChecked(true); }
     };
     void load();
     return () => { active = false; };
@@ -70,7 +75,7 @@ export default function App() {
         <div className="rail-bottom"><button className="nav" aria-label="Settings">⚙</button></div>
       </aside>
       <section className="main-panel">
-        <header><div className="crumb">DANICA <span>/</span> WORKSPACE</div><div className="status"><i className={online ? "dot online" : "dot"} />{online ? "Connected" : "Connecting"}</div></header>
+        <header><div className="crumb">DANICA <span>/</span> WORKSPACE</div><div className="status"><i className={online ? "dot online" : "dot"} />{online ? "Connected" : checked ? "Offline" : "Connecting"}</div></header>
         <div className="content">
           <div className="eyebrow">YOUR AI WORKSPACE</div>
           <h1>Good to see you.</h1>
@@ -78,10 +83,10 @@ export default function App() {
           {messages.length > 0 && <div className="messages" aria-live="polite">{messages.map((message, index) => <article className={`message ${message.role}`} key={index}><div>{message.role === "user" ? "YOU" : "DANICA"}</div><p>{message.text}</p></article>)}{sending && <article className="message assistant"><div>DANICA</div><p>Thinking…</p></article>}</div>}
           <form className="prompt-card" onSubmit={sendMessage}>
             <textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="What would you like to work on?" rows={3} disabled={sending} />
-            <div className="prompt-footer"><span>{error || (online ? "Danica can help with research, files, and more" : "Waiting for the local API…")}</span><button disabled={!draft.trim() || sending} aria-label="Send message">{sending ? "…" : "↑"}</button></div>
+            <div className="prompt-footer"><span>{error || (online ? "Danica can help with research, files, and more" : checked ? "The local API is unavailable" : "Waiting for the local API…")}</span><button disabled={!draft.trim() || sending} aria-label="Send message">{sending ? "…" : "↑"}</button></div>
           </form>
-          <div className="section-title">PICK UP WHERE YOU LEFT OFF <span>VIEW ALL&nbsp; ↗</span></div>
-          {messages.length === 0 && <div className="empty-card"><div className="empty-icon">◷</div><div><strong>Your workspace is ready</strong><p>Recent sessions will show up here.</p></div></div>}
+          <div className="section-title">YOUR WORKSPACE</div>
+          {messages.length === 0 && <div className="empty-card"><div className="empty-icon">◷</div><div><strong>Your workspace is ready</strong><p>Start a conversation to see it here.</p></div></div>}
           <div className="footer-note"><span className="spark">✳</span> {info?.name ?? "Danica"} <span className="version">v{info?.version ?? "1.0.0"}</span></div>
         </div>
       </section>

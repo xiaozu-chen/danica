@@ -5,7 +5,7 @@
   "identifier": "com.danica.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://127.0.0.1:1420",
     "beforeBuildCommand": "npm run build && npm run build:sidecar",
     "frontendDist": "../dist"
   },
@@ -16,9 +16,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "externalBin": ["binaries/danica-api"]
-  },
-  "plugins": {
-    "shell": { "scope": [{ "name": "binaries/danica-api", "sidecar": true, "args": ["--port", "8765"] }] }
+    "externalBin": ["binaries/danica-api"],
+    "icon": ["icons/icon.png", "icons/icon.ico"]
   }
 }

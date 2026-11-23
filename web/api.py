@@ -9,8 +9,8 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from danica.config import CONFIG
 
@@ -32,12 +32,30 @@ class ChatRequest(BaseModel):
 class _WebUI:
     """Noninteractive UI adapter. Danica's permission policy denies prompts without an approver."""
 
-    def log(self, level: str, text: str) -> None: pass
-    def say(self, text: str, style: str | None = None) -> None: pass
-    def confirm(self, title: str, body: str = "", detail: str = "", yes: str = "Yes", no: str = "No") -> bool: return False
-    def permission(self, tool: str, summary: str, tier: str, reason: str, can_remember: bool) -> str: return "deny"
-    def choose(self, title: str, body: str, options: list[tuple[str, str]], detail: str = "") -> str | None: return None
-    def ask_text(self, title: str, default: str = "") -> str | None: return None
+    def log(self, level: str, text: str) -> None:
+        pass
+
+    def say(self, text: str, style: str | None = None) -> None:
+        pass
+
+    def confirm(
+        self, title: str, body: str = "", detail: str = "",
+        yes: str = "Yes", no: str = "No",
+    ) -> bool:
+        return False
+
+    def permission(
+        self, tool: str, summary: str, tier: str, reason: str, can_remember: bool,
+    ) -> str:
+        return "deny"
+
+    def choose(
+        self, title: str, body: str, options: list[tuple[str, str]], detail: str = "",
+    ) -> str | None:
+        return None
+
+    def ask_text(self, title: str, default: str = "") -> str | None:
+        return None
 
 
 class _WebSession:
@@ -127,7 +145,11 @@ def chat(request: ChatRequest) -> dict[str, str]:
 
 
 def mount_frontend() -> None:
-    candidates = [Path(__file__).resolve().parent / "dist", Path(__file__).resolve().parents[1] / "web" / "dist", Path.cwd() / "web" / "dist"]
+    candidates = [
+        Path(__file__).resolve().parent / "dist",
+        Path(__file__).resolve().parents[1] / "web" / "dist",
+        Path.cwd() / "web" / "dist",
+    ]
     if getattr(__import__("sys"), "frozen", False):
         candidates.insert(0, Path(getattr(__import__("sys"), "_MEIPASS")) / "web" / "dist")
     frontend = next((path for path in candidates if (path / "index.html").is_file()), None)

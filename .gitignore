@@ -1,4 +1,9 @@
 .venv/
+web/node_modules/
+web/src-tauri/target/
+web/.sidecar-build/
+web/src-tauri/binaries/*
+web/tsconfig.tsbuildinfo
 __pycache__/
 evals/results/
 evals/phase3/

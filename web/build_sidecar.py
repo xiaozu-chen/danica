@@ -13,6 +13,7 @@ BINARIES = ROOT / "src-tauri" / "binaries"
 
 
 def main() -> None:
+    python = os.environ.get("DANICA_PYTHON", sys.executable)
     target = os.environ.get("TAURI_ENV_TARGET_TRIPLE") or os.environ.get("HOST_TRIPLE")
     if not target:
         machine = platform.machine().lower()
@@ -27,7 +28,7 @@ def main() -> None:
     output = BINARIES / f"danica-api-{target}{suffix}"
     BINARIES.mkdir(parents=True, exist_ok=True)
     subprocess.run([
-        sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile",
+        python, "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile",
         "--name", f"danica-api-{target}", "--distpath", str(BINARIES),
         "--workpath", str(ROOT / ".sidecar-build"), "--specpath", str(ROOT / ".sidecar-build"),
         "--paths", str(ROOT.parent), "--hidden-import", "web.api",
