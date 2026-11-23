@@ -39,7 +39,6 @@ class ManagerScreen(ModalScreen[None]):
     ManagerScreen #mgr-detail-scroll { width: 1fr; height: 100%; margin-left: 1; padding: 0 1; border: round #4a4a4a; scrollbar-size-vertical: 1; }
     ManagerScreen #mgr-input { margin-top: 1; background: transparent; }
     ManagerScreen .mgr-actions { height: auto; margin-top: 1; }
-    ManagerScreen .mgr-actions Button { margin-right: 1; min-width: 12; background: transparent; }
     ManagerScreen #mgr-status { height: auto; min-height: 1; margin-top: 1; }
     """
 

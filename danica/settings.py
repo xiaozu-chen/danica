@@ -89,6 +89,9 @@ SETTINGS: tuple[Setting, ...] = (
             "Needs the embedding server. Off: memory and the web cache match by keywords only."),
     Setting("Web & memory", "embeddings", "min_similarity", "Minimum match score", "float",
             "How close in meaning a note must be to be recalled (0 to 1). Higher = stricter.", lo=0.0, hi=1.0),
+    Setting("Web & memory", "memory", "auto_save", "Let Danica save global memory", "bool",
+            "Danica may save short notes about you (preferences, setup) for future conversations. Shown only as "
+            "\"Updated global memory\". See or delete them with /memory.", note="applies from the next message"),
     Setting("Web & memory", "webcache", "enabled", "Keep fetched web pages", "bool",
             "Store pages Danica reads so they can be searched again for free."),
     Setting("Web & memory", "webcache", "max_pages", "Web cache size (pages)", "int",

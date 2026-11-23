@@ -45,6 +45,7 @@ TOOL_TIERS = {
     "web_fetch": Tier.READ,
     "web_search": Tier.READ,
     "recall": Tier.READ,
+    "remember": Tier.READ,   # writes only global memory, and only when [memory] auto_save is on (tools/remember.py)
     "load_skill": Tier.READ,
     "chart": Tier.WRITE,
     "document": Tier.WRITE,
@@ -400,4 +401,4 @@ class PermissionPolicy:
             self.last_how = "asked-once"
             return True, ""
         self.last_how = "denied-by-user"
-        return False, DENIED_MESSAGE
+        return False, DENIED_MESSAGE

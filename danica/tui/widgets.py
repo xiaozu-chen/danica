@@ -395,8 +395,20 @@ class ToolCall(Static):
             box=box.ROUNDED, border_style=BORDER[self._state()], padding=(0, 1), expand=True,
         )
 
+    def _quiet_line(self) -> Text:
+        """The remember tool is NOT drawn as a box: no note text, no arguments. Just one dim line:
+        "Updated global memory" (or a short reason when the note was refused)."""
+        if self.result is None:
+            return Text("  \u25cf Updating global memory\u2026", style="dim")
+        if self._failed():
+            reason = self.result.replace("ERROR:", "", 1).strip().removeprefix("not saved:").strip()
+            return Text(f"  \u2717 Global memory not updated: {clip(reason, 100)}", style="dim")
+        return Text("  \u2713 Updated global memory", style="dim")
+
     def _build(self):
         """What the widget shows. A tiny wrapper, so the box is built when the width is known (see _ToolBox)."""
+        if self.tool == "remember":                 # quiet tool: one line instead of the Input / Output box
+            return self._quiet_line()
         return _ToolBox(self)
 
     # -- behaviour ----------------------------------------------------------------------

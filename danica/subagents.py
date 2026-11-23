@@ -416,7 +416,8 @@ def run_worker_connection(
             raise SubagentError("invalid inherited session permissions")
         policy.session_allowed = set(allowed)
         audit_path = Path(payload["audit_path"]) if payload.get("audit_path") else None
-        audit = AuditLog(audit_path, session=str(payload.get("session_id", ""))) if audit_path else None
+        # auto_repair=False: this process shares the parent's log; only the parent may repair (move or cut) it
+        audit = AuditLog(audit_path, session=str(payload.get("session_id", "")), auto_repair=False) if audit_path else None
         ws = Workspace(Path(payload["workspace"]), open_mode=policy.open_root is not None)
         from danica.web import state_for
         web_state = state_for(ws)

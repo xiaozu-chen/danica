@@ -56,7 +56,7 @@ DESCRIPTIONS = {
     "/artifacts": "files from the last request", "/open": "open a file from the last request",
     "/save": "copy a file out (default: Downloads)", "/memory": "saved notes (review, merge, forget…)",
     "/fullaccess": "toggle FULL ACCESS", "/sandbox": "explain the shell sandbox",
-    "/audit": "verify the audit log", "/undo": "undo the last request", "/rewind": "list or restore checkpoints",
+    "/audit": "verify the audit log (/audit repair fixes it)", "/undo": "undo the last request", "/rewind": "list or restore checkpoints",
     "/taint": "show untrusted web content", "/untaint": "clear the taint flag", "/sources": "web sources so far", "/webcache": "stored web pages (status, list, search, reindex, clear)",
     "/knowledge": "local notes index (index, search, watch…)", "/reminder": "add or list reminders",
     "/agents": "subagents (run, peek, wait, kill)", "/ws": "show the workspace path", "/skills": "list global skills",
@@ -403,12 +403,18 @@ def _sandbox(app, args):
 
 @command("/audit")
 def _audit(app, args):
+    """/audit = check the log's hash chain. /audit repair = fix it (a cut-off last line is removed; any other
+    break sets the old log aside and starts a new one: see audit.py)."""
     from danica.audit import verify
+    if args.strip().lower() == "repair":
+        rep = app.audit.repair()
+        app.ui.log("warning" if rep else "ok", rep.message() if rep else "audit log is fine: nothing to repair")
+        return
     ok, count, problem = verify(app.audit.path)
     if ok:
         app.ui.log("ok", f"audit log OK: {count} entries. chain intact")
     else:
-        app.ui.say(f"AUDIT LOG PROBLEM: {problem}", style="bold white")
+        app.ui.say(f"AUDIT LOG PROBLEM: {problem}\nRun /audit repair to fix it (nothing is deleted).", style="bold white")
 
 
 @command("/undo", "/rewind")

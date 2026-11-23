@@ -55,6 +55,8 @@ DEFAULTS = {
     # every request; false = send every tool every time. verify.mode: "auto" = check only work that changed files or had
     # a plan/TODO; "always" = every tool-based answer; "off" = never
     "tools": {"lazy": False},
+    # auto_save: Danica may save short notes to GLOBAL memory by herself (the remember tool). Off by default.
+    "memory": {"auto_save": False},
     "verify": {"mode": "auto"},
     "computer": {"smooth": True, "max_actions": 25, "settle": 0.35, "grid": True, "coords": "normalized"},   # coords: "normalized" = x,y 0-1000, "pixels" = picture pixels
     "mcp": {"servers": {}},

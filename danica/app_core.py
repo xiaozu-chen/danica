@@ -168,7 +168,9 @@ def build_session(
     save_session_meta(session_dir, project["path"] if project else None,
                       str(ws.root) if open_root is not None else None)
 
-    audit = AuditLog(APP_DIR / "logs" / "audit.jsonl", session=session_id)
+    audit = AuditLog(APP_DIR / "logs" / "audit.jsonl", session=session_id)   # checks the log and repairs it if needed
+    if audit.repaired:                                                       # never silent: say what was done
+        ui.log("warning", audit.repaired.message())
 
     git_dir = Path(project["dir"]) / "git" if project else session_dir / "checkpoints" / "git"
     # Open Mode: /undo can only cover the START folder, and only if it is a sensible size of folder
@@ -382,4 +384,4 @@ def shutdown(
         try:
             _EXTENSION_MANAGER.close()
         except ExtensionError as exc:
-            log("error", f"stopping extensions: {exc}")
+            log("error", f"stopping extensions: {exc}")

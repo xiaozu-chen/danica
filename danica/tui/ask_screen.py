@@ -35,7 +35,6 @@ class AskScreen(ModalScreen):
     AskScreen .ask-buttons { height: auto; }
     AskScreen .ask-buttons Button { width: 1fr; min-width: 0; margin-right: 2; background: transparent; }
     AskScreen .ask-buttons Button:last-of-type { margin-right: 0; }
-    AskScreen .ask-buttons Button:focus { background: #333333; text-style: bold; }
     """
 
     def __init__(self, questions: list[dict]) -> None:

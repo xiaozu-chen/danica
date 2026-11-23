@@ -194,6 +194,51 @@ TextScreen #answer:focus {
 .dialog-buttons Button:last-of-type { margin-right: 0; }
 .dialog-buttons Button:focus { background: transparent; text-style: bold; }
 
+/* ---- buttons inside panels: ONE grayscale look for the manager panes (.mgr-actions), the confirm / permission / choice
+   dialogs (.dialog-buttons) and the question form (.ask-buttons). Same states as the connection form:
+   resting = grey outline, hover and focus = white and bold, press = brief fill, disabled = dim.
+   Textual's own button style (a "tall" half-block border, a purple hover, a yellow focus ring, colour tints and the
+   green / red variants) is switched off; !important is needed because those defaults are set per state and variant. */
+.mgr-actions Button { margin-right: 1; min-width: 12; }                  /* layout of the manager's row of actions */
+
+.mgr-actions Button,
+.dialog-buttons Button,
+.ask-buttons Button {
+    height: 3;
+    padding: 0 2;
+    color: #c9c9c9 !important;
+    background: transparent !important;
+    background-tint: transparent !important;
+    tint: transparent !important;
+    border: round #808080 !important;                        /* "round" draws clean corners; the default "tall" leaves half-block marks */
+    text-style: none !important;
+}
+.mgr-actions Button:hover,
+.dialog-buttons Button:hover,
+.ask-buttons Button:hover,
+.mgr-actions Button:focus,
+.dialog-buttons Button:focus,
+.ask-buttons Button:focus {                                  /* hover and keyboard focus look the same: bright and bold */
+    color: #ffffff !important;
+    border: round #ffffff !important;
+    text-style: bold !important;                             /* also removes Textual's default "bold reverse" on focus */
+}
+.mgr-actions Button.-active,
+.dialog-buttons Button.-active,
+.ask-buttons Button.-active {                                /* the moment of the press */
+    color: #ffffff !important;
+    background: #3a3a3a !important;
+    border: round #ffffff !important;
+}
+.mgr-actions Button:disabled,
+.dialog-buttons Button:disabled,
+.ask-buttons Button:disabled {                               /* no row selected, or Danica is busy */
+    color: #6b6b6b !important;
+    border: round #3a3a3a !important;
+    opacity: 1 !important;                                   /* Textual would also fade it; the greys already say "off" */
+    text-style: none !important;
+}
+
 /* ---- split screen: chat | subagent pane ---- */
 #main { height: 1fr; }
 

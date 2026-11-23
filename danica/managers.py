@@ -496,8 +496,17 @@ def _safety_audit(app, row, text):
     from danica.audit import verify
     ok, count, problem = verify(app.audit.path)
     if not ok:
-        raise ManagerError(f"AUDIT LOG PROBLEM: {problem}")
+        raise ManagerError(f"AUDIT LOG PROBLEM: {problem}. Use Repair audit log (nothing is deleted).")
     return f"Audit log OK: {count} entries, chain intact"
+
+
+def _safety_audit_repair(app, row, text):
+    """Repair the audit log (audit.py): a cut-off last line is removed, any other break sets the old log aside."""
+    rep = app.audit.repair()
+    if rep is None:
+        return "Audit log is fine: nothing to repair"
+    app.ui.log("warning", rep.message())          # the full sentence goes in the chat, like the checkpoint actions
+    return rep.short()
 
 
 # ------------------------------------------------------------------ checkpoints
@@ -629,6 +638,8 @@ MANAGERS: dict[str, Manager] = {m.key: m for m in (
         Action("untaint", "Clear taint", _safety_untaint,
                confirm="Clear the taint flag? The web content stays in the conversation."),
         Action("audit", "Verify audit log", _safety_audit),
+        Action("audit_repair", "Repair audit log", _safety_audit_repair,
+               confirm="Repair the audit log? A cut-off last line is removed, or a broken log is set aside and a new one started. Nothing is deleted."),
     ]),
     Manager("sources", "Web sources", "No web pages read in this session yet.", _sources_load, [
         Action("copy", "Copy link", _sources_copy, needs_row=True),

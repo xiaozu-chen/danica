@@ -15,7 +15,7 @@ HELP = [
     {"name": "Sessions", "commands": ["/sessions [delete n]", "/resume [number|id]", "/export"]},
     {"name": "Files", "commands": ["/artifacts", "/open <n>", "/close", "/copy <n>", "/save <n> [folder]", "/upload [path]", "/attach <picture>", "/vision"]},
     {"name": "Productivity", "commands": ["/mail [login | test | logout]", "/play [file.py | log | stop]", "/computer [on | off | allow | deny | smooth | log]"]},
-    {"name": "Safety", "commands": ["/fullaccess", "/sandbox", "/audit", "/undo", "/rewind [id]", "/taint", "/untaint"]},
+    {"name": "Safety", "commands": ["/fullaccess", "/sandbox", "/audit [repair]", "/undo", "/rewind [id]", "/taint", "/untaint"]},
     {"name": "Web", "commands": ["/sources", "/webcache [status | list | search <words> | reindex | clear]"]},
     {"name": "Memory", "commands": ["/memory [list | add [scope] <text> | review | capture | search <words> | merge | forget <id> | show <id> | status | reindex | path]"]},
     {"name": "Knowledge", "commands": ["/knowledge [index|search|watch|stop|status|digest|graph|commit <preview-id>]"]},
