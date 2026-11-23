@@ -15,7 +15,6 @@ from datetime import datetime
 from pathlib import Path
 
 import httpx
-from pypdf import PdfReader
 
 from danica.embeddings import Embedder, EmbeddingError
 from danica.secret_scan import find_secrets, is_sensitive_path
@@ -111,6 +110,8 @@ def _split_text(text: str, prefix: str = "") -> list[tuple[str, str, str]]:
 def _document_chunks(path: Path) -> list[tuple[str, str, str]]:
     if path.suffix.lower() == ".pdf":
         try:
+            from pypdf import PdfReader
+
             reader = PdfReader(str(path))
             if reader.is_encrypted:
                 raise KnowledgeError(f"encrypted PDF cannot be indexed: {path.name}")

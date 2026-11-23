@@ -37,9 +37,9 @@ class TopBar(Horizontal):
 
     def compose(self) -> Any:
         """Compose the three parts of the bar."""
-        yield Static("", id="tb-left")
+        yield Static("", id="tb-left", classes="tb-list")
         yield Static("", id="tb-title")
-        yield Static("", id="tb-right")
+        yield Static("", id="tb-right", classes="tb-list")
 
     def refresh_state(self, sidebar_open: bool, open_panes: set[str], title: str, width: int) -> None:
         """Redraw the buttons (bright when their pane is open) and the title (cut to the room that is left)."""

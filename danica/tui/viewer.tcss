@@ -46,6 +46,16 @@
     link-style: not underline;
     link-style-hover: bold not underline;
 }
+
+.tb-list {
+    link-style: not underline;
+    link-style-hover: not underline;
+    link-color: #ffffff;
+    link-color-hover: #000000;
+    link-background: transparent;
+    link-background-hover: #ffffff;
+}
+
 #tb-left, #tb-right { width: auto; height: 1; }
 #tb-title { width: 1fr; height: 1; content-align: center middle; }
 
