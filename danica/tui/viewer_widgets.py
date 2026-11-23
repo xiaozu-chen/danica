@@ -14,9 +14,27 @@ from rich.text import Text
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Static
 
-from danica.artifacts import file_kind, human_size
+from danica.artifacts import TOO_LARGE, file_kind, human_size, view_mode
 from danica.tui.chrome import button
 from danica.tui.widgets import ACCENT, highlighted
+
+
+def view_body(text: str, path: Path, mode: str) -> Text:
+    """The text the viewer draws, with line numbers. mode "highlight" = syntax colours, "plain" = no colours (fast).
+    This is the slow part, so /open calls it on the worker thread and hands the result to the screen."""
+    if mode == "highlight":
+        try:
+            lexer = Syntax.guess_lexer(str(path), text) if text else "text"
+        except Exception:
+            lexer = "text"
+        return highlighted(text, lexer)
+    out = Text()
+    for number, line in enumerate(text.split("\n"), start=1):
+        if number > 1:
+            out.append("\n")
+        out.append(f"{number:>4} ", style="#555555")
+        out.append(line)
+    return out
 
 
 class PresentLink(Static):
@@ -71,14 +89,13 @@ class ArtifactPane(Vertical):
         self.border_title = "Viewer"
 
     def show_file(
-        self, rel: str, path: Path, text: str, cut: bool, left_out: int
+        self, rel: str, path: Path, text: str, cut: bool, left_out: int, body: Text | None = None
     ) -> None:
-        """Fill the pane. `text` is already tidied (artifacts.tidy_for_view)."""
+        """Fill the pane. `text` is already tidied (artifacts.tidy_for_view). `body` = the finished text from view_body
+        (built on the worker thread so the screen never waits for it); without it, it is built here.
+        Too much text (artifacts.view_mode) is NOT drawn: the pane says "File too large to display" instead."""
         self.current = (rel, path)                    # what the buttons act on
-        try:
-            lexer = Syntax.guess_lexer(str(path), text) if text else "text"
-        except Exception:
-            lexer = "text"
+        mode = view_mode(text)
         try:
             size = human_size(path.stat().st_size)
         except OSError:
@@ -86,11 +103,21 @@ class ArtifactPane(Vertical):
         head = Text(rel, style="bold", no_wrap=True, overflow="ellipsis")      # cut with "..." so the buttons stay visible
         head.append(f"   {file_kind(rel)}   {size}", style="dim")                  # short, so it fits beside the buttons
         n_lines = len(text.splitlines())
-        self.border_subtitle = f" {n_lines:,} line{'' if n_lines == 1 else 's'} "      # the line count lives on the bottom border
         self.query_one("#view-head", Static).update(head)
-        body = highlighted(text, lexer)
-        if cut or left_out:
-            body.append("\n\n  \u2026 the rest is not shown here ([ copy ] and [ save ] take the whole file)", style="dim")
+        if mode == "too_large":                       # draw none of it: say so, and say what still works
+            self.border_subtitle = " too large "
+            body = Text("\n  " + TOO_LARGE, style="bold")
+            body.append(f"\n\n  {rel} ({size}) has too much text to show here without slowing the screen down."
+                        "\n  [ copy ] and [ save ] still take the whole file."
+                        "\n  /open <n> ext opens it in its default app.", style="dim")
+        else:
+            self.border_subtitle = f" {n_lines:,} line{'' if n_lines == 1 else 's'} "      # the line count lives on the bottom border
+            if body is None:
+                body = view_body(text, path, mode)
+            if mode == "plain":
+                body.append("\n\n  (shown without colours: the file is large)", style="dim")
+            if cut or left_out:
+                body.append("\n\n  \u2026 the rest is not shown here ([ copy ] and [ save ] take the whole file)", style="dim")
         self.query_one("#view-body", Static).update(body)
         self.query_one("#view-scroll", VerticalScroll).scroll_home(animate=False)
         self.border_title = f"Viewer  (/close or Ctrl+E to hide)"

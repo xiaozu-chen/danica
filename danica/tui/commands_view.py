@@ -30,7 +30,9 @@ def _open_save(app, args):
         read_text,
         save_copy,
         tidy_for_view,
+        view_mode,
     )
+    from danica.tui.viewer_widgets import view_body
     parts = args.split(maxsplit=1)               # the number, then the rest (a folder path, or "ext")
     arg = parts[0] if parts else ""
     rest = parts[1] if len(parts) > 1 else ""
@@ -41,10 +43,14 @@ def _open_save(app, args):
                 try:                              # text first: the viewer
                     text, cut = read_text(item.path)
                     shown, left_out = tidy_for_view(text)
+                    mode = view_mode(shown)
+                    # The slow part (syntax colours) is built HERE, on the worker thread, so the screen stays alive.
+                    # "too_large" builds nothing: the pane just says so (viewer_widgets.show_file).
+                    body = None if mode == "too_large" else view_body(shown, item.path, mode)
                     app._call(
-                        app.view_artifact, item.rel, item.path, shown, cut, left_out
+                        app.view_artifact, item.rel, item.path, shown, cut, left_out, body
                     )
-                    app.audit.append("artifact_view", path=item.rel)
+                    app.audit.append("artifact_view", path=item.rel, mode=mode)
                     return
                 except ArtifactError:
                     pass                          # not text: fall through to the default app

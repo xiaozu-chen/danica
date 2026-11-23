@@ -694,11 +694,12 @@ class DanicaApp(App):
         self.refresh_topbar()                             # its buttons light up while their pane is open
 
     def view_artifact(
-        self, rel: str, path: Path, text: str, cut: bool, left_out: int
+        self, rel: str, path: Path, text: str, cut: bool, left_out: int, body=None
     ) -> None:
-        """UI thread. /open <n>: show a text file in the split-screen viewer."""
+        """UI thread. /open <n>: show a text file in the split-screen viewer. `body` = the finished text, built off
+        the UI thread (viewer_widgets.view_body); None = build it here."""
         pane = self.query_one("#viewer-pane", ArtifactPane)
-        pane.show_file(rel, path, text, cut, left_out)
+        pane.show_file(rel, path, text, cut, left_out, body)
         pane.display = True
         self.sync_side()
 

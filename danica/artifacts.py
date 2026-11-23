@@ -31,6 +31,10 @@ NON_TEXT_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".pdf", ".
 VIEW_MAX_BYTES = 400_000        # the split-screen viewer reads at most this much of a file
 VIEW_MAX_LINES = 1500           # ...and shows at most this many lines
 VIEW_MAX_COLS = 300             # a longer line is cut (a base64 image inside an .html would flood the pane)
+# What the viewer can show WITHOUT a slowdown, measured on the text it would actually draw (after tidy_for_view):
+VIEW_HIGHLIGHT_CHARS = 40_000   # up to this: syntax colours (colouring costs the most: about 1 s per 40,000 characters)
+VIEW_PLAIN_CHARS = 120_000      # up to this: plain text, no colours (still quick). Above it: "File too large to display"
+TOO_LARGE = "File too large to display"
 COPY_MAX_BYTES = 1_000_000      # /copy refuses files bigger than this
 
 
@@ -216,6 +220,15 @@ def read_text(path: Path, limit: int = VIEW_MAX_BYTES) -> tuple[str, bool]:
         raise ArtifactError(f"{path.name} is not a text file")
     cut = len(raw) > limit or size > limit
     return raw[:limit].decode("utf-8-sig", errors="replace"), cut
+
+
+def view_mode(shown: str) -> str:
+    """How the viewer should draw this (already tidied) text: "highlight" (colours), "plain" (no colours, so a big
+    file stays fast) or "too_large" (draw nothing of it: a few hundred thousand characters froze the screen).
+    Decided by the characters that would be drawn, not the file size: a 5 MB log whose first 1,500 lines are short
+    still shows, a 150 KB page of dense markup does not."""
+    n = len(shown)
+    return "highlight" if n <= VIEW_HIGHLIGHT_CHARS else "plain" if n <= VIEW_PLAIN_CHARS else "too_large"
 
 
 def tidy_for_view(text: str) -> tuple[str, int]:
