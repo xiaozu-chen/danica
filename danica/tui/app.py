@@ -1168,7 +1168,31 @@ def main() -> None:
         action="store_true",
         help="skip the llama-server check (testing and debugging)",
     )
+    parser.add_argument(
+        "--web",
+        action="store_true",
+        help="launch the Tauri web frontend",
+    )
+    parser.add_argument(
+        "--web-sidecar",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument("--port", type=int, default=8765, help=argparse.SUPPRESS)
     args = parser.parse_args()
+
+    if args.web_sidecar:
+        from web.sidecar import run as run_sidecar
+        run_sidecar(args.port)
+        return
+
+    if args.web:
+        from web.runtime import launch
+        launch()
+        return
+
+    if args.port != 8765:
+        parser.error("sidecar options require --web-sidecar")
 
     DanicaApp(bypass=args.bypass).run()
 

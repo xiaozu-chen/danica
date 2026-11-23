@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Danica",
+  "version": "1.0.0",
+  "identifier": "com.danica.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build && npm run build:sidecar",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{ "title": "Danica", "width": 1180, "height": 820, "minWidth": 760, "minHeight": 560 }],
+    "security": { "csp": "default-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:*; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:* https://fonts.googleapis.com https://fonts.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com" }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "externalBin": ["binaries/danica-api"]
+  },
+  "plugins": {
+    "shell": { "scope": [{ "name": "binaries/danica-api", "sidecar": true, "args": ["--port", "8765"] }] }
+  }
+}
