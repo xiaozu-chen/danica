@@ -48,7 +48,7 @@ from danica.tui.bridge import (
 )
 from danica.tui.commands import command_names, dispatch
 from danica.tui.engine import Engine
-from danica.tui.chrome import ArtifactsPane, TopBar
+from danica.tui.chrome import ArtifactsPane, TopBar, chip_style
 from danica.tui.widgets import (
     ArtifactsList,
     AssistantMessage,
@@ -640,6 +640,17 @@ class DanicaApp(App):
         elif name == "project":
             self._start_toolbar_command(self.menu_project)
 
+    def action_chip(self, name: str) -> None:
+        """A click on a piece of the status bar (made with chrome.chip_style in status_text)."""
+        if name in ("context", "safety"):
+            self.open_manager(name)
+        elif name == "think":
+            self._start_toolbar_command(self.run_command, "/think")        # the same toggle as the [···] menu
+        elif name == "plan_off":
+            self.plan_next = False
+            self.refresh_status()
+            self.notify("Plan mode cancelled: the next request runs normally.", timeout=3)
+
     def open_manager(self, key: str) -> None:
         """UI thread. Open the manager pane for `key` (managers.MANAGERS)."""
         from danica.managers import find_manager
@@ -1042,19 +1053,28 @@ class DanicaApp(App):
             if len(title) > title_limit:
                 title = title[: title_limit - 1].rstrip() + "…"
             t.append(f"{title} · ", style="bold #ffffff")
+        # Pieces made with chip_style() can be clicked: ctx -> Context panel, think/fast -> toggle thinking,
+        # the permission label and TAINTED -> Safety panel, "plan next" -> cancel it (see action_chip)
         if width < 92:
-            t.append(f"ctx {agent.tracker.fraction(agent.messages):.0%}", style=color)
+            t.append(f"ctx {agent.tracker.fraction(agent.messages):.0%}", style=chip_style(color, "context"))
         else:
-            t.append(f"ctx {agent.tracker.bar(agent.messages, width=6)}", style=color)
-        t.append(" · " + ("think" if agent.thinking else "fast"))
+            t.append(f"ctx {agent.tracker.bar(agent.messages, width=6)}", style=chip_style(color, "context"))
+        t.append(" · ")
+        t.append("think" if agent.thinking else "fast", style=chip_style("#c0c0c0", "think"))
         if self.policy is not None and self.policy.full_access:
-            t.append(" · FULL ACCESS", style="bold #d0d0d0")
+            t.append(" · ")
+            t.append("FULL ACCESS", style=chip_style("#d0d0d0", "safety", bold=True))
+        elif width >= 92:
+            t.append(" · ")
+            t.append("ask first", style=chip_style("#999999", "safety"))        # the normal mode, so the label is always there to click
         if self.plan_next and width >= 92:
-            t.append(" · plan next", style="#d0d0d0")
+            t.append(" · ")
+            t.append("plan next \u2715", style=chip_style("#d0d0d0", "plan_off"))     # click = cancel
         if agent.proposals and agent.proposals.count() and width >= 140:
             t.append(f" · {agent.proposals.count()} proposed note(s)", style="#d0d0d0")
         if self.ws is not None and self.ws.web and self.ws.web.tainted:
-            t.append(" · TAINTED", style="bold #d0d0d0")
+            t.append(" · ")
+            t.append("TAINTED", style=chip_style("#d0d0d0", "safety", bold=True))
         if self.project and width >= 116:
             t.append(f" · {self.project['name']}", style="#c0c0c0")
         if self.ws is not None and width >= 140:

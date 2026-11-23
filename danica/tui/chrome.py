@@ -57,33 +57,37 @@ class TopBar(Horizontal):
         self.query_one("#tb-title", Static).update(Text(shown, style="bold #ffffff", justify="center"))
 
 
-# ---- the sidebar menu: (label, what happens). Names starting with "manage:" open that manager pane.
+# ---- the sidebar menu. Each entry is one LINE of buttons (label, what happens); None is a blank line.
+# Names starting with "manage:" open that manager pane (managers.MANAGERS). The sidebar is 50 columns wide, so a line holds 3 buttons.
 MENU = (
-    ("[ New chat ]", "new"),
-    ("[ Project mode ]", "project"),
+    (("[ New chat ]", "new"), ("[ Project mode ]", "project")),
     None,
-    ("[ Memories ]", "manage:memories"),
-    ("[ Knowledge ]", "manage:knowledge"),
-    ("[ Skills ]", "manage:skills"),
-    ("[ Reminders ]", "manage:reminders"),
-    ("[ Web cache ]", "manage:webcache"),
+    (("[ Memories ]", "manage:memories"), ("[ Knowledge ]", "manage:knowledge"), ("[ Skills ]", "manage:skills")),
+    (("[ Reminders ]", "manage:reminders"), ("[ Web cache ]", "manage:webcache"), ("[ Sources ]", "manage:sources")),
     None,
-    ("[ Settings ]", "settings"),
-    ("[ Help ]", "help"),
+    (("[ Sessions ]", "manage:sessions"), ("[ Context ]", "manage:context"), ("[ Checkpoints ]", "manage:checkpoints")),
+    None,
+    (("[ Safety ]", "manage:safety"), ("[ Settings ]", "settings"), ("[ Help ]", "help")),
 )
 
 
 def side_menu_text() -> Text:
-    """The menu as clickable text (each line runs app.menu(<name>))."""
+    """The menu as clickable text: each button runs app.menu(<name>)."""
     text = Text()
-    for item in MENU:
-        if item is None:
-            text.append("\n")
-            continue
-        label, name = item
-        text.append(label + "\n", style=Style(meta={"@click": f"app.menu('{name}')"}))
+    for line in MENU:
+        if line is not None:
+            for n, (label, name) in enumerate(line):
+                if n:
+                    text.append("  ")
+                text.append(label, style=Style(meta={"@click": f"app.menu('{name}')"}))
+        text.append("\n")
     text.rstrip()
     return text
+
+
+def chip_style(color: str, name: str, bold: bool = False) -> Style:
+    """A piece of the status bar that can be clicked: its colour, plus the click that runs app.chip(<name>)."""
+    return Style(color=color, bold=bold, meta={"@click": f"app.chip('{name}')"})
 
 
 class ArtifactsPane(Vertical):

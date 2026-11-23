@@ -353,6 +353,226 @@ def _webcache_clear(app, row, text):
     return f"Cleared the web cache ({count} page(s))."
 
 
+# ------------------------------------------------------------------ sessions
+
+def _sessions_load(app):
+    """The saved sessions, newest first. The one you are in is marked "current"."""
+    from danica import sessions
+    rows = []
+    for info in sessions.list_sessions(sessions.SESSIONS_DIR):
+        title = info.get("title") or info["preview"] or "(untitled)"
+        here = info["id"] == app.session_id
+        detail = (f"{title}\n\nid {info['id']}\nlast active {info['modified']:%d %b %Y %H:%M}\n"
+                  f"{info['requests']} request(s), {info['compactions']} compaction(s)\n\nfirst message: {info['preview']}")
+        rows.append(Row(info["id"], title, detail, "current" if here else f"{info['modified']:%d %b %H:%M}"))
+    return rows, f"{len(rows)} saved session(s). Resume opens one; Delete removes it for good."
+
+
+def _sessions_delete(app, row, text):
+    from danica import sessions
+    from danica.uploads import human
+    if row.key == app.session_id:
+        raise ManagerError("this is the session you are in: start a New chat first, then delete it")
+    size = sessions.describe_session(sessions.SESSIONS_DIR, row.key)["size"]
+    try:
+        gone = sessions.delete_session(sessions.SESSIONS_DIR, row.key)       # only ever a folder named like a session id
+    except (ValueError, OSError) as e:
+        raise ManagerError(f"could not delete it: {e}") from e
+    if not gone:
+        raise ManagerError("could not fully delete it (a file may be open in another program)")
+    app.audit.append("sessions_deleted", ids=[row.key])
+    return f"Deleted session {row.key} (freed {human(size)})"
+
+
+# ------------------------------------------------------------------ context
+
+# What each kind of message in the conversation is, for the detail area
+ROLE_NOTES = {
+    "system": "Danica's standing instructions, the tool list and any project notes. Sent with every request.",
+    "user": "What you typed (and any attached pictures).",
+    "assistant": "Danica's replies and the tool calls she made.",
+    "tool": "What the tools returned: file contents, command output, web pages. Usually the biggest part; "
+            "Prune drops the old ones.",
+}
+
+
+def _context_load(app):
+    """Where the context window is going: one row per kind of message, then the compaction summary and the TODO list."""
+    from danica.compaction import is_summary
+    from danica.context import breakdown
+    from danica.tools.todo import counts, read_todo
+    agent = app.agent
+    if agent is None:
+        return [], "Danica is still starting"
+    messages = agent.messages
+    used = breakdown(messages)
+    total = sum(used.values()) or 1
+    rows = []
+    for role, tokens in sorted(used.items(), key=lambda item: -item[1]):
+        n = sum(1 for m in messages if m.get("role") == role)
+        detail = f"{role}: {n} message(s), about {tokens:,} tokens ({tokens * 100 // total}% of the conversation)\n\n" \
+                 + ROLE_NOTES.get(role, "")
+        rows.append(Row("role:" + role, f"{role:<10} ~{tokens:,} tokens", detail, f"{tokens * 100 // total}%"))
+    if len(messages) > 1 and is_summary(messages[1]):
+        rows.append(Row("summary", "Compaction summary", messages[1]["content"], "yes"))
+    else:
+        rows.append(Row("summary", "Compaction summary", "(no compaction has happened yet)", "none"))
+    todo = read_todo(app.ws)
+    if todo:
+        count, done = counts(todo)
+        rows.append(Row("todo", "TODO list", todo, f"{done}/{count} done"))
+    else:
+        rows.append(Row("todo", "TODO list", "(no TODO yet)", "none"))
+    return rows, agent.tracker.bar(messages) + f"   {len(messages)} messages"
+
+
+def _context_prune(app, row, text):
+    if not app.agent.prune(keep_recent=2):                 # keeps only the 2 newest tool results
+        raise ManagerError("nothing to prune")
+    return "Dropped the old tool results (kept the 2 newest)"
+
+
+def _context_clear_todo(app, row, text):
+    path = app.ws.todo_path
+    if path is None or not path.exists():
+        raise ManagerError("there is no TODO list")
+    path.unlink()
+    return "TODO cleared"
+
+
+# ------------------------------------------------------------------ safety
+
+def _safety_load(app):
+    """The switches that decide what Danica may do without asking, and the log that records it."""
+    from danica.config import CONFIG
+    policy, web = app.policy, app.ws.web
+    full = bool(policy.full_access)
+    tainted = bool(web and web.tainted)
+    sb = CONFIG["sandbox"]
+    rows = [
+        Row("access", "Permissions", (
+            "FULL ACCESS is ON: Danica runs ANY command without asking." if full else
+            "Ask first: Danica asks before commands that could change things, and before anything outside the workspace.")
+            + "\n\nAllow everything = full access.  Ask when needed = the normal mode.", "FULL ACCESS" if full else "ask first"),
+        Row("taint", "Untrusted web content", (
+            "Web content is in this conversation, from:\n" + "\n".join("  " + src for src in web.taint_sources)
+            + "\n\nWhile tainted, shell commands and fetches from new sites always ask.\n"
+              "Clear taint lowers the flag; it does not remove the content from the conversation." if tainted else
+            "Nothing untrusted is in the conversation, so no extra caution is needed."), "TAINTED" if tainted else "clean"),
+        Row("sandbox", "Shell sandbox", (
+            "level 1: workspace path jail for file tools, stripped environment variables, timeout, output cap, permission prompts\n"
+            f"level 2: Job Object: {sb['memory_mb']} MB memory cap, {sb['max_processes']} process, the whole process tree killed on "
+            "timeout/exit/crash, no clipboard/desktop access\nlevel 3: Docker/WSL isolation: not built yet\n\n"
+            "What this does NOT stop: a command reading or writing files outside the workspace (only the permission prompts guard "
+            "that), network access, CPU use."), "level 2"),
+        Row("audit", "Audit log", f"Every sensitive action is written to a hash-chained log:\n{app.audit.path}\n\n"
+            "Verify walks the whole chain and reports if any entry was changed or removed.", ""),
+    ]
+    return rows, f"Permissions: {'FULL ACCESS' if full else 'ask first'}   Web content: {'TAINTED' if tainted else 'clean'}"
+
+
+def _safety_full_on(app, row, text):
+    app.policy.full_access = True
+    app.audit.append("full_access", enabled=True)
+    return "FULL ACCESS ON: Danica runs any command without asking"
+
+
+def _safety_full_off(app, row, text):
+    app.policy.full_access = False
+    app.audit.append("full_access", enabled=False)
+    return "Back to asking when needed"
+
+
+def _safety_untaint(app, row, text):
+    web = app.ws.web
+    if not (web and web.tainted):
+        raise ManagerError("nothing is tainted")
+    web.clear_taint()
+    app.audit.append("untaint")
+    return "Taint cleared (the web content is still in the conversation)"
+
+
+def _safety_audit(app, row, text):
+    from danica.audit import verify
+    ok, count, problem = verify(app.audit.path)
+    if not ok:
+        raise ManagerError(f"AUDIT LOG PROBLEM: {problem}")
+    return f"Audit log OK: {count} entries, chain intact"
+
+
+# ------------------------------------------------------------------ checkpoints
+
+def _checkpoints_load(app):
+    """The snapshots Danica takes of the workspace at the start of every request (and safety copies from restores)."""
+    cps = app.checkpoints
+    if cps is None or not cps.available:
+        return [], "Checkpoints are off (git was not found)"
+    rows = []
+    for ident, when, label in cps.list_checkpoints():
+        rows.append(Row(ident, label or "(no label)", f"checkpoint {ident}\n{when}\n\n{label}\n\n"
+                        "Rewind makes the workspace match this snapshot again.", when))
+    return rows, f"{len(rows)} checkpoint(s). Undo reverts the last request; Rewind jumps to the selected one."
+
+
+def _checkpoint_result(app, command, summary, safety):
+    """Audit the restore, print the full summary (which files changed, how to undo it) in the chat like /undo does, and
+    return only its first line as the panel's message. Returning plain text, not (text, detail), makes the list reload,
+    so the new safety copy shows up."""
+    if safety:
+        app.audit.append("restore", command=command, safety=safety)
+    app.ui.log("ok", summary)
+    return summary.splitlines()[0]
+
+
+def _checkpoints_undo(app, row, text):
+    from danica.checkpoints import CheckpointError
+    try:
+        summary, safety = app.checkpoints.undo()
+    except CheckpointError as e:
+        raise ManagerError(str(e)) from e
+    return _checkpoint_result(app, "/undo", summary, safety)
+
+
+def _checkpoints_rewind(app, row, text):
+    from danica.checkpoints import CheckpointError
+    try:
+        summary, safety = app.checkpoints.rewind(row.key)
+    except CheckpointError as e:
+        raise ManagerError(str(e)) from e
+    return _checkpoint_result(app, "/rewind", summary, safety)
+
+
+# ------------------------------------------------------------------ web sources
+
+def _sources_load(app):
+    """The web pages Danica has read in this session. The row key is the page's address."""
+    web = app.ws.web
+    sources = list(web.by_id.values()) if web else []
+    rows = []
+    for s in sources:
+        url = s.final_url or s.url
+        rows.append(Row(url, s.title[:80] or "(no title)", f"{s.title or '(no title)'}\n\n{url}\n\n{len(s.passages)} passage(s) kept",
+                        f"[{s.id}]"))
+    return rows, f"{len(rows)} page(s) read in this session"
+
+
+def _sources_copy(app, row, text):
+    from danica import artifacts
+    try:
+        artifacts._clipboard(row.key)
+    except Exception as e:                                   # no PowerShell, clipboard locked...
+        raise ManagerError(f"could not copy: {type(e).__name__}") from e
+    return "Link copied to the clipboard"
+
+
+def _sources_open(app, row, text):
+    import webbrowser
+    if not row.key.lower().startswith(("http://", "https://")):          # never hand a file: or other scheme to the system
+        raise ManagerError("that is not a web address")
+    webbrowser.open(row.key)
+    return "Opened in your browser"
+
+
 # ------------------------------------------------------------------ the list
 
 MANAGERS: dict[str, Manager] = {m.key: m for m in (
@@ -384,10 +604,44 @@ MANAGERS: dict[str, Manager] = {m.key: m for m in (
         Action("reindex", "Rebuild index", _webcache_reindex),
         Action("clear", "Clear all", _webcache_clear, confirm="Delete every stored web page?"),
     ]),
+    Manager("sessions", "Sessions", "No saved sessions yet.", _sessions_load, [
+        Action("resume", "Resume", needs_row=True, command="/resume {key}"),
+        Action("export", "Export this chat", command="/export"),
+        Action("delete", "Delete", _sessions_delete, needs_row=True,
+               confirm="Delete this saved session for good? (Only Danica's saved conversation goes; a project folder is never touched.)"),
+    ]),
+    Manager("context", "Context", "Nothing in the conversation yet.", _context_load, [
+        Action("prune", "Prune", _context_prune, confirm="Drop all but the 2 newest tool results from the conversation?"),
+        Action("compact", "Compact", command="/compact"),
+        Action("compact_small", "Compact (keep less)", command="/compact 500"),
+        Action("cleartodo", "Clear TODO", _context_clear_todo, confirm="Delete the TODO list?"),
+    ]),
+    Manager("checkpoints", "Checkpoints", "No checkpoints yet. One is saved at the start of every request.", _checkpoints_load, [
+        Action("undo", "Undo last request", _checkpoints_undo,
+               confirm="Put the files back the way they were before the last request? (a safety copy is saved first)"),
+        Action("rewind", "Rewind to this", _checkpoints_rewind, needs_row=True,
+               confirm="Make the workspace match this checkpoint? (a safety copy is saved first)"),
+    ]),
+    Manager("safety", "Safety", "", _safety_load, [
+        Action("full_on", "Allow everything", _safety_full_on,
+               confirm="Turn FULL ACCESS on? Danica will run ANY command without asking."),
+        Action("full_off", "Ask when needed", _safety_full_off),
+        Action("untaint", "Clear taint", _safety_untaint,
+               confirm="Clear the taint flag? The web content stays in the conversation."),
+        Action("audit", "Verify audit log", _safety_audit),
+    ]),
+    Manager("sources", "Web sources", "No web pages read in this session yet.", _sources_load, [
+        Action("copy", "Copy link", _sources_copy, needs_row=True),
+        Action("open", "Open in browser", _sources_open, needs_row=True),
+    ]),
 )}
 
 ALIASES = {"memory": "memories", "notes": "memories", "note": "memories", "skill": "skills", "reminder": "reminders",
-           "web": "webcache", "cache": "webcache", "know": "knowledge"}
+           "web": "webcache", "cache": "webcache", "know": "knowledge",
+           "session": "sessions", "ctx": "context", "tokens": "context", "todo": "context",
+           "checkpoint": "checkpoints", "undo": "checkpoints", "rewind": "checkpoints", "history": "checkpoints",
+           "safe": "safety", "security": "safety", "permissions": "safety", "audit": "safety",
+           "source": "sources", "links": "sources"}
 
 
 def find_manager(name: str) -> Manager | None:

@@ -11,6 +11,8 @@ Keys: Esc closes (or cancels a half-typed button), arrow keys move in the list, 
 
 from __future__ import annotations
 
+import re
+
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -190,8 +192,14 @@ class ManagerScreen(ModalScreen[None]):
             self._status("select an entry first", "warn")
             return
         if action.command:                         # runs in the chat (it asks its own questions)
+            command = action.command
+            if row is not None and "{key}" in command:         # "/resume {key}" becomes "/resume <the selected row's key>"
+                if not re.fullmatch(r"[\w.:-]+", row.key):      # the key goes into a slash command: plain characters only
+                    self._status("that entry cannot be used here", "error")
+                    return
+                command = command.replace("{key}", row.key)
             self.dismiss(None)
-            self.app._start_toolbar_command(self.app.run_command, action.command)
+            self.app._start_toolbar_command(self.app.run_command, command)
         elif action.input_label:
             box = self.query_one("#mgr-input", Input)
             self.pending, box.display, box.value, box.placeholder = action, True, "", action.input_label

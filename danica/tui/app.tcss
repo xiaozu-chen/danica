@@ -131,6 +131,12 @@ AssistantMessage {
     color: #c0c0c0;
     background: transparent;
     border-top: solid #404040;
+    /* the clickable chips: ctx, think/fast, permissions, TAINTED, plan next */
+    link-color: #c0c0c0;
+    link-style: not underline;
+    link-color-hover: #000000;
+    link-background: transparent;
+    link-background-hover: #ffffff;
 }
 
 /* ---- dialogs ---- */
