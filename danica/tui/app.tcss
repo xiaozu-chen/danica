@@ -35,7 +35,7 @@ Screen {
 .art-heading { height: 1; }
 .artgrid { layout: grid; grid-size: 2; grid-gutter: 0 1; height: auto; }
 .artcard { height: auto; border: round #4a4a4a; padding: 0 1; background: transparent; border-title-color: #808080; border-subtitle-color: #808080; }
-.artcard:hover { border: round #ffffff; background: #1c1c1c; }
+.artcard:hover { border: round #ffffff; background: transparent; }
 .thinking { margin: 1 0 0 0; padding: 0 1; color: #b0b0b0; }
 .toolcall { margin: 1 0 0 0; padding: 0; background: transparent; }   /* the box itself is drawn by Rich (widgets.ToolCall) */
 

@@ -2,8 +2,9 @@
 memory.py - The memory store: Markdown pages with frontmatter, in three scopes.
 
     global   %APPDATA%/Danica/memory/                  things true everywhere
-    project  %APPDATA%/Danica/projects/<id>/memory/    things about one project
+    project  %APPDATA%/Danica/sessions/<id>/project-memory/ things about a project in one session
     chat     %APPDATA%/Danica/sessions/<id>/memory/    things about one session
+Only global notes are shared across sessions. Chat and project notes belong to one session.
 Precedence when notes conflict: chat > project > global (most specific wins).
 
 A page looks like this (every value is JSON-quoted, which is also valid YAML):
@@ -144,7 +145,8 @@ class MemoryStore:
         project_dir: Path | None = None,
         chat_dir: Path | None = None,
     ):
-        # Only scopes that exist in this session are listed: no project open = no project scope
+        # Only scopes that exist in this session are listed. The app places project
+        # notes under this session so they cannot leak into another session.
         self.dirs: dict[str, Path] = {"global": Path(global_dir)}
         if project_dir:
             self.dirs["project"] = Path(project_dir)
@@ -155,10 +157,9 @@ class MemoryStore:
         self.shown_ids: set[str] = set()   # ids the last digest() showed (auto-recall skips these)
 
     def owner(self, scope: str) -> str:
-        """Who a scope belongs to: "" for global, else the project id or session id.
-        By convention the memory folder sits directly inside its owner's folder
-        (projects/<id>/memory, sessions/<id>/memory), so the owner is the parent's name.
-        The index uses this to keep one project's notes away from another's."""
+        """Who a scope belongs to: "" for global, else the project or session id.
+        Session-owned memory folders sit inside the session folder. The index uses
+        this owner to keep chat and project notes isolated across sessions."""
         return "" if scope == "global" else self.dirs[scope].parent.name
 
     def list_pages(self, scope: str | None = None) -> list[Page]:

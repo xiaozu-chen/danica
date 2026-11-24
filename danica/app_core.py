@@ -203,8 +203,10 @@ def build_session(
         audit=audit,
         checkpoints=checkpoints,
     )
+    # Only global memory is shared across sessions. Project and chat notes stay
+    # with this session, even when it is opened in a project workspace.
     store = MemoryStore(APP_DIR / "memory",
-                        Path(project["dir"]) / "memory" if project else None,
+                        session_dir / "project-memory" if project else None,
                         session_dir / "memory")
     store.index = MemoryIndex(FACTS_DB, embedder=get_embedder(),
                               min_similarity=CONFIG["embeddings"]["min_similarity"])

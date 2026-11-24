@@ -204,8 +204,9 @@ class _ToolBox:
 
 
 # The box title says what Danica is doing: "Editing <file>", "Writing <file>", "Running <command>".
+# Once a file operation succeeds, its title switches to the past tense.
 # Any other tool is titled with its own name ("Web Search", "Read File"...).
-VERBS = {"edit_file": "Editing", "write_file": "Writing", "run_shell": "Running"}
+VERBS = {"edit_file": ("Editing", "Edited"), "write_file": ("Writing", "Wrote"), "run_shell": ("Running", "Ran")}
 TITLE_MAX = 72                       # characters of the target kept in the title (the box also cuts it to the width)
 BORDER = {"running": "#ffffff", "ok": "#4a4a4a", "error": "#808080"}
 
@@ -287,6 +288,8 @@ class ToolCall(Static):
         if verb is None:
             t.append(self.title_text, style="bold #e0e0e0")      # any other tool: its own name (explicit colour: the title would otherwise take the dim border colour)
             return t
+        if isinstance(verb, tuple):
+            verb = verb[1] if state == "ok" else verb[0]
         t.append(verb + " ", style="bold #e0e0e0")
         room = max(10, min(TITLE_MAX, width - 6 - len(t.plain)))  # 6 = the corner and padding characters around a title
         args = self.call_args if isinstance(self.call_args, dict) else {}
