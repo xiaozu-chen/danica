@@ -443,7 +443,8 @@ class DanicaApp(App):
 
     def choose_add_action(self) -> None:
         """Worker-thread menu for attach, upload, and mode commands."""
-        thinking = bool(self.agent and self.agent.thinking)
+        override = self.agent.thinking_override if self.agent else None
+        mode = "auto" if override is None else ("think" if override else "fast")
         full_access = bool(self.policy and self.policy.full_access)
         choice = self.ui.choose(
             "Quick actions",
@@ -451,7 +452,7 @@ class DanicaApp(App):
             [
                 ("i", "Attach image"),
                 ("f", "Upload file"),
-                ("t", f"Think mode: {'On' if thinking else 'Off'} (toggle)"),
+                ("t", f"Thinking mode: {mode} (cycle)"),
                 ("p", f"Permission mode: {'Full Access' if full_access else 'Ask when needed'} (toggle)"),
             ],
         )
@@ -1058,14 +1059,16 @@ class DanicaApp(App):
             if len(title) > title_limit:
                 title = title[: title_limit - 1].rstrip() + "…"
             t.append(f"{title} · ", style="bold #ffffff")
-        # Pieces made with chip_style() can be clicked: ctx -> Context panel, think/fast -> toggle thinking,
+        # Pieces made with chip_style() can be clicked: ctx -> Context panel, thinking -> cycle modes,
         # the permission label and TAINTED -> Safety panel, "plan next" -> cancel it (see action_chip)
         if width < 92:
             t.append(f"ctx {agent.tracker.fraction(agent.messages):.0%}", style=chip_style(color, "context"))
         else:
             t.append(f"ctx {agent.tracker.bar(agent.messages, width=6)}", style=chip_style(color, "context"))
         t.append(" · ")
-        t.append("think" if agent.thinking else "fast", style=chip_style("#c0c0c0", "think"))
+        override = agent.thinking_override
+        thinking_mode = "auto" if override is None else ("think" if override else "fast")
+        t.append(thinking_mode, style=chip_style("#c0c0c0", "think"))
         if self.policy is not None and self.policy.full_access:
             t.append(" · ")
             t.append("FULL ACCESS", style=chip_style("#d0d0d0", "safety", bold=True))

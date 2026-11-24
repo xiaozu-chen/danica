@@ -17,7 +17,7 @@ import httpx
 
 from danica.config import CONFIG
 
-RESERVED_PORTS = {8081, 8082}      # embeddings and the thinking classifier
+RESERVED_PORTS = {8081, 8082, 8080}      # embeddings and classifier endpoints
 
 
 class ServerError(Exception):
@@ -25,9 +25,10 @@ class ServerError(Exception):
 
 
 def reserved_ports() -> set[int]:
-    """8081/8082 plus whatever ports the config gives the embedding and classifier servers."""
+    """Reserved classifier and embedding ports, plus configured service ports."""
     ports = set(RESERVED_PORTS)
-    for url in (CONFIG.get("embeddings", {}).get("url"), CONFIG.get("thinking", {}).get("classifier_url")):
+    for url in (CONFIG.get("embeddings", {}).get("url"), CONFIG.get("thinking", {}).get("classifier_url"),
+                CONFIG.get("routing", {}).get("classifier_url")):
         if isinstance(url, str) and url:
             try:
                 ports.add(urlparse(url).port or 80)

@@ -21,7 +21,7 @@ from danica.server import ServerError, normalize_url, probe
 INTRO = (
     "A local-first, CLI-only agentic assistant for coding, research, presentations, notes and productivity.\n\n"
     "Start llama-server with a model first, for example:\n"
-    "  [white]llama-server -m your-model.gguf -c 65536 --jinja --port 8080[/white]\n\n"
+    "  [white]llama-server -m your-model.gguf -c <[n]> --jinja --port 8080[/white]\n\n"
     "Having trouble connecting? See the llama-server documentation:\n"
     "  [white]https://llama.app/docs/serve[/white]\n\n"
     "Recommended model: Qwen3.5 family\n\n"

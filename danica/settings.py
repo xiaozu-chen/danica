@@ -59,6 +59,8 @@ SETTINGS: tuple[Setting, ...] = (
     # ---- thinking and planning
     Setting("Thinking & plans", "thinking", "auto", "Automatic thinking", "bool",
             "Let Danica decide per message whether the model should think first."),
+    Setting("Thinking & plans", "routing", "classifier_enabled", "Classify agentic vs casual mode", "bool",
+            "When on, classify each message. Agentic mode gets the full prompt and tools; casual mode gets a short persona prompt and a small read-only tool set."),
     Setting("Thinking & plans", "planning", "auto", "Offer a plan for big requests", "choice",
             "ask: Danica offers a plan when a request looks big.  off: only when you type /plan.",
             choices=(("ask", "ask"), ("off", "off"))),

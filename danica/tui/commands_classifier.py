@@ -7,6 +7,7 @@ Imported at the bottom of commands.py, like commands_view.py and commands_vision
 """
 
 from danica import classifier, judge
+from danica.config import CONFIG
 from danica.thinking import ThinkingClassifier
 from danica.tui.commands import DESCRIPTIONS, command
 
@@ -18,7 +19,10 @@ SAMPLES_THINK = ("hi there", "find why the parser crashes on empty input and fix
 
 @command("/classifier")
 def _classifier(app, args):
-    """/classifier   shows slots, status and two quick tests."""
+    """/classifier   shows classifier status and quick tests."""
+    routing_cfg = CONFIG.get("routing") or {}
+    app.ui.log("info", f"routing classifier: {'ON' if routing_cfg.get('classifier_enabled') else 'OFF (agentic default)'}  "
+                       f"server {routing_cfg.get('classifier_url', 'http://127.0.0.1:8080')}")
     ok, why = classifier.status(refresh=True)
     cfg = classifier.settings()
     n = classifier.slots()
@@ -26,18 +30,17 @@ def _classifier(app, args):
                f"classifier: {'ON' if ok else 'OFF (rules only)'}  server {classifier.base_url()}  "
                f"slots {n if n is not None else 'unknown'}  can approve safe project commands: "
                f"{'yes' if cfg['judge_can_approve'] else 'no'}" + ("" if ok else f"\n  why: {why}"))
-    if not ok:
-        app.ui.log("info", "To turn it on, restart llama-server with two slots, for example:\n"
-                           "  llama-server -m model.gguf -c 131072 -np 2 --jinja --port 8080\n"
-                           "(the context is shared between the slots: -c 131072 -np 2 gives each 65536).")
-        return
     judge.clear_cache()
     lines = []
-    for text in SAMPLES_THINK:
-        d = ThinkingClassifier().classify(text)
-        lines.append(f"  thinking  {('on ' if d.thinking else 'off')}  {d.source:<14} {classifier.LAST['ms']:>5} ms  {text[:50]}")
+    if ok:
+        for text in SAMPLES_THINK:
+            d = ThinkingClassifier().classify(text)
+            lines.append(f"  thinking  {('on ' if d.thinking else 'off')}  {d.source:<14} {classifier.LAST['ms']:>5} ms  {text[:50]}")
+    else:
+        app.ui.log("info", "Thinking/shell classifiers are unavailable or off; routing uses its independent endpoint and setting.")
     for command_text in SAMPLES_JUDGE:
         v = judge.judge_command(command_text, "normal")
         shown = f"{v.verdict:<14} {v.reason[:50]}" if v else "no answer"
         lines.append(f"  shell     {classifier.LAST['ms']:>5} ms  {command_text[:34]:<34} -> {shown}")
-    app.ui.log("info", "tests:\n" + "\n".join(lines))
+    if lines:
+        app.ui.log("info", "tests:\n" + "\n".join(lines))

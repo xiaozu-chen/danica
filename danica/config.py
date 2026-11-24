@@ -47,6 +47,7 @@ DEFAULTS = {
         "log_decisions": True,
         "log_prompts": True,
     },
+    "routing": {"classifier_enabled": False, "classifier_url": "http://127.0.0.1:8080", "timeout": 4.0},
     # email (read-only IMAP, see mail.py). The PASSWORD is never stored here: /mail login keeps it in memory.
     "mail": {"host": "", "user": "", "port": 993, "folder": "INBOX", "ssl": True, "timeout": 20,
              "max_list": 30, "snippet_chars": 240, "body_chars": 6000},
@@ -185,6 +186,8 @@ def load_config() -> dict:
         # Merge section by section so a partial file doesn't wipe defaults
         for section, values in user.items():
             if section == "routing":
+                cfg.setdefault(section, {}).update({key: value for key, value in values.items()
+                                                    if key in cfg[section]})
                 continue
             cfg.setdefault(section, {}).update(values)
         legacy = user.get("routing", {})
@@ -200,6 +203,11 @@ def load_config() -> dict:
             }
             cfg["thinking"].update({key: value for key, value in legacy_values.items()
                                     if value is not None})
+            for key in cfg["routing"]:
+                if key in legacy:
+                    cfg["routing"][key] = legacy[key]
+            if "classifier_enabled" in legacy:
+                cfg["routing"]["classifier_enabled"] = legacy["classifier_enabled"]
         if isinstance(current, dict):
             cfg["thinking"].update(current)
     return cfg

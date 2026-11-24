@@ -8,6 +8,9 @@ from PyInstaller.utils.hooks import (
 datas = [('danica/tui/app.tcss', 'danica/tui'), ('danica/tui/viewer.tcss', 'danica/tui')]
 binaries = []
 hiddenimports = ['tkinter', 'tkinter.filedialog', 'danica.subagent_worker', 'danica.extension_worker', 'danica.shot', 'danica.gamerun']
+# Tools are imported dynamically by danica.tools.registry.ensure_tools(), so
+# PyInstaller cannot discover these modules by following normal import edges.
+hiddenimports += collect_submodules('danica.tools')
 datas += collect_data_files('pptx')
 datas += collect_data_files('docx')
 hiddenimports += collect_submodules('keyring.backends')

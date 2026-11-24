@@ -28,7 +28,7 @@ COMMANDS: dict[str, Callable] = {}
 NOT_PORTED = {"/imagetest"}
 
 HELP = """Commands
-  Chat      /think  toggle thinking      /think auto  use automatic setting      /new  fresh session, same mode      /exit
+  Chat      /think  cycle think / fast / auto      /new  fresh session, same mode      /exit
   Plans     /plan [<request>]  /plan show  /plan auto ask|off
   Project   /mode  /project [path]  /openmode [folder]  /chat  /instructions
   Context   /context  /prune  /compact [tokens]  /summary  /todo [clear]
@@ -45,7 +45,7 @@ Esc or Ctrl+C stops the current task. Ctrl+O expands tool output. Ctrl+D quits."
 
 
 DESCRIPTIONS = {
-    "/think": "toggle thinking (auto to reset)", "/new": "fresh session, same mode", "/exit": "quit",
+    "/think": "cycle think / fast / auto", "/new": "fresh session, same mode", "/exit": "quit",
     "/plan": "draft a plan first (show | auto ask|off)", "/mode": "chat or project mode",
     "/project": "trust and open a real folder",
     "/openmode": "OPEN MODE: whole-disk access (warns first)", "/chat": "back to a throwaway chat",
@@ -109,14 +109,32 @@ def _help(app, args):
 @command("/think")
 def _think(app, args):
     agent = app.agent
-    if args == "auto":
-        agent.thinking_override = None
-        agent.thinking = False
-        app.ui.log("info", "thinking override cleared; automatic setting will apply.")
+    mode = args.strip().lower()
+    if mode in {"auto", "think", "fast"}:
+        if mode == "auto":
+            agent.thinking_override = None
+            app.ui.log("info", "thinking mode: auto")
+        else:
+            agent.thinking_override = mode == "think"
+            agent.thinking = agent.thinking_override
+            app.ui.log("info", f"thinking mode: {mode}")
+        app.call_from_thread(app.refresh_status)
         return
-    agent.thinking = not agent.thinking
-    agent.thinking_override = agent.thinking
-    app.ui.log("info", f"thinking: {'on' if agent.thinking else 'off'} (manual override)")
+    if mode:
+        app.ui.log("warning", "usage: /think [think|fast|auto]")
+        return
+    if agent.thinking_override is None:
+        agent.thinking_override = False
+        agent.thinking = False
+        app.ui.log("info", "thinking mode: fast")
+    elif agent.thinking_override is False:
+        agent.thinking_override = True
+        agent.thinking = True
+        app.ui.log("info", "thinking mode: think")
+    else:
+        agent.thinking_override = None
+        app.ui.log("info", "thinking mode: auto")
+    app.call_from_thread(app.refresh_status)
 
 
 @command("/ws")
