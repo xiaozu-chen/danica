@@ -19,8 +19,6 @@ import os
 from collections.abc import Callable, Iterable
 from pathlib import Path
 
-from PIL import Image
-
 from danica.docgen import MARKER
 from danica.markdown_doc import DocError, labelled
 
@@ -288,6 +286,8 @@ def _picture(
     theme: dict,
 ) -> None:
     """A picture fitted inside the area (never stretched), centred, with the alt text as a caption."""
+    from PIL import Image
+
     caption_h = 0.45 if alt else 0.0
     with Image.open(path) as im:
         pw, ph = im.size

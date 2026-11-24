@@ -1,7 +1,9 @@
-"""
-Importing this package imports files.py, whose @tool decorators
-fill the registry. Later tool modules get imported here too.
+"""Tool package exports.
+
+Tool implementations are imported by the registry when their schemas are needed,
+or on first use for optional tool-book groups.
 """
 
-from danica.tools import chart, computer_tools, dashboard, deck, diagram, document, fetch, files, game_run, interactive_tools, knowledge, knowledge_synthesis, knowledge_write, mail_tools, mermaid, recall, remember, search, shell, dev_server, screenshot, skills, vision_tools, subagents, tool_book, todo, webcache_tool, websearch  # noqa: F401  (imported for their @tool side effects)
-from danica.tools.registry import run_tool, tool_schemas  # noqa: F401
+from danica.tools.registry import run_tool, tool_schemas
+
+__all__ = ["run_tool", "tool_schemas"]

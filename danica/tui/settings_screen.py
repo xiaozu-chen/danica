@@ -44,7 +44,7 @@ class SettingsScreen(ModalScreen[None]):
     SettingsScreen .cfg-reset { width: 9; min-width: 9; margin-left: 1; background: transparent; }
     SettingsScreen #cfg-status { height: auto; min-height: 1; margin-top: 1; }
     SettingsScreen .cfg-buttons { height: auto; margin-top: 1; }
-    SettingsScreen .cfg-buttons Button { width: 1fr; background: transparent; }
+    SettingsScreen .cfg-buttons Button { width: 1fr; min-width: 0; }
     """
 
     def __init__(self) -> None:

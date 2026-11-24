@@ -22,7 +22,7 @@ def _tokens(schemas) -> int:
 
 @command("/perf")
 def _perf(app, args):
-    every = tool_schemas()
+    every = tool_schemas(all_tools=True)
     sent = app.agent.active_tools()
     if args.strip().lower() == "tools":
         rows = sorted(((_tokens([s]), s["function"]["name"]) for s in every), reverse=True)

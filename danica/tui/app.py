@@ -995,9 +995,13 @@ class DanicaApp(App):
 
     def mount_block(self, widget: Any) -> None:
         """Mount a transcript block for an agent event."""
-        self.query_one("#transcript", VerticalScroll).mount(widget)
-        if not hasattr(VerticalScroll, "anchor"):
-            self.call_after_refresh(self.query_one("#transcript", VerticalScroll).scroll_end, animate=False)
+        transcript = self.query_one("#transcript", VerticalScroll)
+        transcript.mount(widget)
+        if hasattr(transcript, "anchor"):
+            # Modern Textual's anchor tracks whether the reader has scrolled away from the end.
+            # Let it preserve that choice instead of forcing the transcript to the latest block.
+            return
+        self.call_after_refresh(transcript.scroll_end, animate=False)
 
     def show_artifacts_list(self, items: list) -> None:
         """Display files changed by the completed request."""

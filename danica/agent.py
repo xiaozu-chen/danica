@@ -358,7 +358,7 @@ class Agent:
         calls is refused. The conversation itself is not changed. Raises PlanError."""
         msgs = ([self.messages[0]] + self._planning_context()
                 + [{"role": "user", "content": planning_prompt(request, feedback, previous)}])
-        schemas = [s for s in tool_schemas() if s["function"]["name"] in PLAN_TOOLS]
+        schemas = [s for s in tool_schemas(self.ws) if s["function"]["name"] in PLAN_TOOLS]
         retried = False
         self.cancel_event.clear()
         for _ in range(MAX_PLAN_STEPS):
@@ -404,7 +404,7 @@ class Agent:
 
     def active_tools(self) -> list[dict]:
         """The tool definitions sent to the model (everyday tools plus the book tools loaded so far: see toolbook.py)."""
-        schemas = toolbook.select(tool_schemas(), self.ws)
+        schemas = toolbook.select(tool_schemas(self.ws), self.ws)
         if not remember.enabled():                  # the remember tool exists only while [memory] auto_save is on
             schemas = [s for s in schemas if s["function"]["name"] != "remember"]
         return schemas

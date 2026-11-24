@@ -76,12 +76,17 @@ def load(ws: Workspace, tools: Iterable[str]) -> list[str]:
     wanted = {n for t in tools if t in PAGE for n in BOOK[PAGE[t]][0]}
     new = [n for names, _ in BOOK for n in names if n in wanted and n not in on]      # book order, so the list is stable
     on.update(new)
+    # Tool-book modules are imported only when their group is activated.
+    from danica.tools.registry import ensure_tools
+    ensure_tools(new)
     return new
 
 
 def from_tool(ws: Workspace, name: str) -> None:
     """The model called a book tool that was not loaded (it knew it from the book or a skill): load it from now on."""
     load(ws, [name])
+    from danica.tools.registry import ensure_tools
+    ensure_tools((name,))
 
 
 def from_history(ws: Workspace, messages: Iterable[dict[str, Any]]) -> None:

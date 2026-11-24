@@ -117,7 +117,7 @@ def _tools_of(agent: Any) -> list[dict[str, Any]]:
     if pick:
         return pick()
     from danica.tools.registry import tool_schemas
-    return tool_schemas()
+    return tool_schemas(all_tools=True)
 
 
 def first_request_text(agent: Any) -> str:

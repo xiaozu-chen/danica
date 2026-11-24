@@ -23,8 +23,6 @@ import base64
 import io
 from pathlib import Path
 
-from PIL import Image
-
 from danica.config import CONFIG
 from danica.workspace import Workspace
 
@@ -82,6 +80,8 @@ def check_file(path: Path) -> None:
 def load_data_uri(path: Path, max_side: int | None = None) -> tuple[str, int, int]:
     """(data URI, width, height) of the shrunk picture. Raises VisionError."""
     check_file(path)
+    from PIL import Image
+
     limit = max_side or int(CONFIG.get("vision", {}).get("max_side", MAX_SIDE))
     try:
         with Image.open(path) as im:

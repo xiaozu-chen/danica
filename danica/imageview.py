@@ -12,10 +12,11 @@ be small enough. HONEST LIMITS: Sixel pictures can disappear when the window is 
 scrollback is cleared; colours are reduced to 256.
 """
 
+from __future__ import annotations
+
 import sys
 from pathlib import Path
 
-from PIL import Image, ImageDraw
 from rich.console import Console
 from rich.style import Style
 from rich.text import Text
@@ -72,6 +73,8 @@ def check_image(ws: Workspace, rel: str) -> Path:
 
 def load_image(path: Path) -> Image.Image:
     """Open, flatten onto white, and shrink to fit the terminal."""
+    from PIL import Image
+
     try:
         img = Image.open(path)
         if img.width * img.height > MAX_PIXELS:       # header only: nothing is decoded yet
@@ -110,6 +113,8 @@ def encode_sixel(img: Image.Image) -> str:
     Format: ESC P q "1;1;W;H  (square pixels), then palette lines  #n;2;r;g;b  (percent),
     then bands of 6 pixel rows. In each band every colour has its own pass:  #n<chars>$
     where each char (63 + 6 bits) says which of the 6 pixels in that column use the colour."""
+    from PIL import Image
+
     q = img.convert("RGB").quantize(colors=256, method=Image.Quantize.MEDIANCUT,
                                     dither=Image.Dither.NONE)
     w, h = q.size
@@ -170,6 +175,8 @@ def show_image(path: Path, label: str, console: Console) -> None:
 
 def test_image() -> Image.Image:
     """A framed picture with six coloured bars and a grey gradient, for /imagetest."""
+    from PIL import Image, ImageDraw
+
     img = Image.new("RGB", (420, 160), "white")
     d = ImageDraw.Draw(img)
     for i, colour in enumerate(["#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00", "#111111"]):

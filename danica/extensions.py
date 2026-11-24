@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from danica.frozen import module_cmd
-from danica.tools.registry import register_external_tool, tool_schemas
+from danica.tools.registry import BUILTIN_TOOL_NAMES, TOOLS, register_external_tool
 
 MAX_EXTENSION_OUTPUT = 16_000
 MAX_EXTENSION_TOOLS = 64
@@ -311,7 +311,7 @@ class ExtensionManager:
 
                     registrations.append((full_name, str(item.get("description", "MCP tool")),
                                           schema, invoke))
-                existing = {item["function"]["name"] for item in tool_schemas()}
+                existing = BUILTIN_TOOL_NAMES | TOOLS.keys()
                 names = [entry[0] for entry in registrations]
                 if len(names) != len(set(names)) or existing.intersection(names):
                     raise ExtensionError("MCP tool name conflicts with an existing tool")

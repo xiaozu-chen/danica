@@ -203,7 +203,8 @@ TextScreen #answer:focus {
 
 .mgr-actions Button,
 .dialog-buttons Button,
-.ask-buttons Button {
+.ask-buttons Button,
+.cfg-buttons Button {
     height: 3;
     padding: 0 2;
     color: #c9c9c9 !important;
@@ -216,23 +217,27 @@ TextScreen #answer:focus {
 .mgr-actions Button:hover,
 .dialog-buttons Button:hover,
 .ask-buttons Button:hover,
+.cfg-buttons Button:hover,
 .mgr-actions Button:focus,
 .dialog-buttons Button:focus,
-.ask-buttons Button:focus {                                  /* hover and keyboard focus look the same: bright and bold */
+.ask-buttons Button:focus,
+.cfg-buttons Button:focus {                                  /* hover and keyboard focus look the same: bright and bold */
     color: #ffffff !important;
     border: round #ffffff !important;
     text-style: bold !important;                             /* also removes Textual's default "bold reverse" on focus */
 }
 .mgr-actions Button.-active,
 .dialog-buttons Button.-active,
-.ask-buttons Button.-active {                                /* the moment of the press */
+.ask-buttons Button.-active,
+.cfg-buttons Button.-active {                                /* the moment of the press */
     color: #ffffff !important;
     background: #3a3a3a !important;
     border: round #ffffff !important;
 }
 .mgr-actions Button:disabled,
 .dialog-buttons Button:disabled,
-.ask-buttons Button:disabled {                               /* no row selected, or Danica is busy */
+.ask-buttons Button:disabled,
+.cfg-buttons Button:disabled {                               /* no row selected, or Danica is busy */
     color: #6b6b6b !important;
     border: round #3a3a3a !important;
     opacity: 1 !important;                                   /* Textual would also fade it; the greys already say "off" */
